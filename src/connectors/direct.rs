@@ -1,6 +1,12 @@
 use async_trait::async_trait;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use easy_error::{Error, ResultExt};
+use log::{trace, warn};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    net::TcpSocket,
+};
 
+use super::copy::copy_bidirectional;
 use crate::context::Context;
 pub struct DirectConnector {}
 
@@ -11,27 +17,21 @@ impl super::Connector for DirectConnector {
     }
 
     async fn connect(&self, ctx: Context) -> Result<(), Box<dyn std::error::Error>> {
-        let mut socket = ctx.socket;
         tokio::spawn(async move {
-            let mut buf = [0; 1024];
+            let mut client = ctx.socket;
+            let target = ctx.target;
+            if let Err(err) = async {
+                trace!("connecting to {:?}", target);
+                let mut server = target.connect_tcp().await.context("connect")?;
+                trace!("connected to {:?}", target);
 
-            // In a loop, read data from the socket and write the data back.
-            loop {
-                let n = match socket.read(&mut buf).await {
-                    // socket closed
-                    Ok(n) if n == 0 => return,
-                    Ok(n) => n,
-                    Err(e) => {
-                        eprintln!("failed to read from socket; err = {:?}", e);
-                        return;
-                    }
-                };
-
-                // Write the data back
-                if let Err(e) = socket.write_all(&buf[0..n]).await {
-                    eprintln!("failed to write to socket; err = {:?}", e);
-                    return;
-                }
+                copy_bidirectional(&mut client, &mut server)
+                    .await
+                    .context("copy_bidirectional")
+            }
+            .await
+            {
+                warn!("connection failed {:?} {:?}", target, err);
             }
         });
         Ok(())

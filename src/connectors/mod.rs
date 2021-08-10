@@ -1,6 +1,7 @@
 use crate::context::Context;
 use async_trait::async_trait;
 
+mod copy;
 pub mod direct;
 #[async_trait]
 pub trait Connector {

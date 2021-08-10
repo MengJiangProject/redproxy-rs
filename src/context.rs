@@ -18,13 +18,22 @@ impl std::error::Error for InvalidAddress {}
 #[derive(Debug)]
 pub enum TargetAddress {
     DomainPort(String, u16),
-    SockAddr(SocketAddr),
+    SocketAddr(SocketAddr),
+}
+
+impl TargetAddress {
+    pub async fn connect_tcp(&self) -> std::io::Result<TcpStream> {
+        match self {
+            Self::DomainPort(host, port) => TcpStream::connect((host.as_str(), *port)).await,
+            Self::SocketAddr(addr) => TcpStream::connect(addr).await,
+        }
+    }
 }
 
 impl From<(Ipv4Addr, u16)> for TargetAddress {
     fn from((ip, port): (Ipv4Addr, u16)) -> Self {
         let a = SocketAddrV4::new(ip, port);
-        Self::SockAddr(SocketAddr::V4(a))
+        Self::SocketAddr(SocketAddr::V4(a))
     }
 }
 
@@ -32,7 +41,7 @@ impl FromStr for TargetAddress {
     type Err = InvalidAddress;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Ok(a) = SocketAddr::from_str(s) {
-            Ok(TargetAddress::SockAddr(a))
+            Ok(TargetAddress::SocketAddr(a))
         } else {
             let mut parts = s.rsplitn(2, ':');
             let port = parts.next().ok_or(InvalidAddress)?;
@@ -47,6 +56,7 @@ impl FromStr for TargetAddress {
 pub struct Context {
     pub socket: BufStream<TcpStream>,
     pub target: TargetAddress,
+    pub source: SocketAddr,
 }
 
 pub trait Router {}

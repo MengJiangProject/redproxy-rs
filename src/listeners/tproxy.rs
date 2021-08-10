@@ -29,8 +29,8 @@ impl super::Listener for TProxyListener {
         tokio::spawn(async move {
             loop {
                 if let Err(e) = async {
-                    let (socket, src) = listener.accept().await.context("accept")?;
-                    trace!("connected from {:?}", src);
+                    let (socket, source) = listener.accept().await.context("accept")?;
+                    trace!("connected from {:?}", source);
                     let dst = getsockopt(socket.as_raw_fd(), OriginalDst).context("getsockopt")?;
                     let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
                     let port = ntohs(dst.sin_port);
@@ -38,7 +38,11 @@ impl super::Listener for TProxyListener {
                     let socket = BufStream::new(socket);
                     let target = TargetAddress::from((addr, port));
                     queue
-                        .send(Context { socket, target })
+                        .send(Context {
+                            socket,
+                            target,
+                            source,
+                        })
                         .await
                         .context("enqueue")?;
                     Ok::<(), Error>(())

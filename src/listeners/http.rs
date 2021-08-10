@@ -33,23 +33,29 @@ impl super::Listener for HttpListener {
 }
 
 async fn accept(listener: &TcpListener, queue: &Sender<Context>) -> Result<(), Error> {
-    let (socket, src) = listener.accept().await.context("accept")?;
-    trace!("connected from {:?}", src);
+    let (socket, source) = listener.accept().await.context("accept")?;
+    trace!("connected from {:?}", source);
     let mut buf = String::with_capacity(256);
     let mut socket = BufStream::new(socket);
     read_line(&mut socket, &mut buf).await?;
     let target = parse_request(&buf)?;
-    while buf != "\r\n" {
+    trace!("dst={:?}", target);
+    while buf != "\r\n" && buf != "\n" {
         buf.clear();
-        read_line(&mut socket, &mut buf).await?
+        read_line(&mut socket, &mut buf).await?;
+        trace!("buf={:?}", buf);
     }
     socket
-        .write_all("200 OK HTTP/1.1\r\n\r\n".as_bytes())
+        .write_all("HTTP/1.1 200 Connection established\r\n\r\n".as_bytes())
         .await
         .context("write_all")?;
-    trace!("dst={:?}", target);
+    socket.flush().await.context("flush")?;
     queue
-        .send(Context { socket, target })
+        .send(Context {
+            socket,
+            target,
+            source,
+        })
         .await
         .context("enqueue")?;
     Ok::<(), Error>(())
