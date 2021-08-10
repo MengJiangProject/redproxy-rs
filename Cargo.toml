@@ -1,0 +1,15 @@
+[package]
+name = "redproxy-rs"
+version = "0.1.0"
+authors = ["Bearice Ren <bearice@icybear.net>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.9.0", features = ["full"] }
+nix = { version = "0.22.0"}
+async-trait = "0.1.51"
+easy-error = "1.0.0"
+log = "0.4"
+env_logger = "0.9.0"
