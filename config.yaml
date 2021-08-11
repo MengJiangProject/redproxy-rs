@@ -1,0 +1,13 @@
+listeners:
+  - name: http
+    bind: 0.0.0.0:8081
+  - name: tproxy
+    bind: 0.0.0.0:8080
+
+connectors:
+  - name: direct
+
+rules:
+  - target: direct
+
+extera: a

@@ -5,27 +5,34 @@ use easy_error::{Error, ResultExt};
 use log::{info, trace, warn};
 use nix::sys::socket::getsockopt;
 use nix::sys::socket::sockopt::OriginalDst;
+use serde_yaml::Value;
 use std::net::Ipv4Addr;
 use tokio::io::BufStream;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 
 use crate::context::{Context, TargetAddress};
+use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize, Debug)]
 pub struct TProxyListener {
-    listen_addr: String,
+    name: String,
+    bind: String,
+}
+
+pub fn from_value(value: &Value) -> Result<Box<dyn super::Listener>, Error> {
+    let ret: TProxyListener = serde_yaml::from_value(value.clone()).context("parse config")?;
+    Ok(Box::new(ret))
 }
 
 #[async_trait]
 impl super::Listener for TProxyListener {
-    async fn create(block: &str) -> Result<Box<Self>, Error> {
-        Ok(Box::new(TProxyListener {
-            listen_addr: block.to_owned(),
-        }))
+    async fn init(&mut self) -> Result<(), Error> {
+        Ok(())
     }
     async fn listen(&self, queue: Sender<Context>) -> Result<(), Error> {
-        info!("listening on {}", self.listen_addr);
-        let listener = TcpListener::bind(&self.listen_addr).await.context("bind")?;
+        info!("listening on {}", self.bind);
+        let listener = TcpListener::bind(&self.bind).await.context("bind")?;
         tokio::spawn(async move {
             loop {
                 if let Err(e) = async {
@@ -54,6 +61,10 @@ impl super::Listener for TProxyListener {
             }
         });
         Ok(())
+    }
+
+    fn name(&self) -> &str {
+        &self.name
     }
 }
 

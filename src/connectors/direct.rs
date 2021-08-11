@@ -5,12 +5,22 @@ use tokio::io::BufStream;
 
 use super::copy::copy_bidirectional;
 use crate::context::Context;
-pub struct DirectConnector {}
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DirectConnector {
+    name: String,
+}
+
+pub fn from_value(value: &serde_yaml::Value) -> Result<Box<dyn super::Connector>, Error> {
+    let ret: DirectConnector = serde_yaml::from_value(value.clone()).context("parse config")?;
+    Ok(Box::new(ret))
+}
 
 #[async_trait]
 impl super::Connector for DirectConnector {
-    async fn create(_block: &str) -> Result<Box<Self>, Error> {
-        Ok(Box::new(DirectConnector {}))
+    async fn init(&mut self) -> Result<(), Error> {
+        Ok(())
     }
 
     async fn connect(&self, ctx: Context) -> Result<(), Error> {

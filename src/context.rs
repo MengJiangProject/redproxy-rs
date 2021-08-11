@@ -58,5 +58,3 @@ pub struct Context {
     pub target: TargetAddress,
     pub source: SocketAddr,
 }
-
-pub trait Router {}

@@ -7,20 +7,35 @@ use tokio::sync::mpsc::Sender;
 
 use crate::context::{Context, TargetAddress};
 
+use super::tls::{acceptor, TlsOptions};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct HttpListener {
-    listen_addr: String,
+    name: String,
+    bind: String,
+    tls: Option<TlsOptions>,
+}
+
+pub fn from_value(value: &serde_yaml::Value) -> Result<Box<dyn super::Listener>, Error> {
+    let ret: HttpListener = serde_yaml::from_value(value.clone()).context("parse config")?;
+    Ok(Box::new(ret))
 }
 
 #[async_trait]
 impl super::Listener for HttpListener {
-    async fn create(block: &str) -> Result<Box<Self>, Error> {
-        Ok(Box::new(HttpListener {
-            listen_addr: block.to_owned(),
-        }))
+    async fn init(&mut self) -> Result<(), Error> {
+        Ok(())
     }
     async fn listen(&self, queue: Sender<Context>) -> Result<(), Error> {
-        info!("listening on {}", self.listen_addr);
-        let listener = TcpListener::bind(&self.listen_addr).await.context("bind")?;
+        info!("listening on {}", self.bind);
+        let listener = TcpListener::bind(&self.bind).await.context("bind")?;
+        let tls_acceptor = self.tls.as_ref().map(|options| acceptor(options));
+        if let Some(Err(e)) = tls_acceptor {
+            return Err(e);
+        }
+        // let tls_acceptor = tls_acceptor??;
+
         tokio::spawn(async move {
             loop {
                 if let Err(e) = accept(&listener, &queue).await {
@@ -29,6 +44,10 @@ impl super::Listener for HttpListener {
             }
         });
         Ok(())
+    }
+
+    fn name(&self) -> &str {
+        &self.name
     }
 }
 
