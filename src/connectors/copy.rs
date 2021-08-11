@@ -1,10 +1,12 @@
-use log::trace;
+// use log::trace;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+// use tokio::time::{Instant, Sleep};
 
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+// use std::time::Duration;
 
 macro_rules! ready {
     ($e:expr $(,)?) => {
@@ -23,6 +25,7 @@ struct CopyBuffer {
     cap: usize,
     amt: u64,
     buf: Box<[u8]>,
+    // timer: Pin<Box<Sleep>>,
 }
 
 impl CopyBuffer {
@@ -34,6 +37,7 @@ impl CopyBuffer {
             cap: 0,
             amt: 0,
             buf: vec![0; 2048].into_boxed_slice(),
+            // timer: Box::pin(tokio::time::sleep(Duration::from_millis(10))),
         }
     }
 
@@ -47,7 +51,28 @@ impl CopyBuffer {
         R: AsyncRead + ?Sized,
         W: AsyncWrite + ?Sized,
     {
+        // trace!("{} poll_copy begin", self.dir);
+
+        // {
+        //     let timer = &mut self.timer;
+        //     let p = timer.as_mut().poll(cx);
+        //     trace!("{} p={:?}", self.dir, p);
+        //     if let Poll::Ready(_) = p {
+        //         trace!(
+        //             "{} flush pos={}, cap={}, amt={}, read_done={}",
+        //             self.dir,
+        //             self.pos,
+        //             self.cap,
+        //             self.amt,
+        //             self.read_done,
+        //         );
+        //         ready!(writer.as_mut().poll_flush(cx))?
+        //     }
+        // }
+
         loop {
+            // trace!("{} poll_copy loop_begin", self.dir);
+
             // If our buffer is empty, then we need to read some data to
             // continue.
             if self.pos == self.cap && !self.read_done {
@@ -62,14 +87,14 @@ impl CopyBuffer {
                     self.cap = n;
                 }
             }
-            trace!(
-                "{} read pos={}, cap={}, amt={}, read_done={}",
-                self.dir,
-                self.pos,
-                self.cap,
-                self.amt,
-                self.read_done,
-            );
+            // trace!(
+            //     "{} read pos={}, cap={}, amt={}, read_done={}",
+            //     self.dir,
+            //     self.pos,
+            //     self.cap,
+            //     self.amt,
+            //     self.read_done,
+            // );
 
             // If our buffer has some data, let's write it out!
             while self.pos < self.cap {
@@ -84,28 +109,33 @@ impl CopyBuffer {
                     self.pos += i;
                     self.amt += i as u64;
                 }
-                trace!(
-                    "{} write pos={}, cap={}, amt={}, read_done={}",
-                    self.dir,
-                    self.pos,
-                    self.cap,
-                    self.amt,
-                    self.read_done,
-                );
-            }
-            ready!(writer.as_mut().poll_flush(cx))?;
-            trace!(
-                "{} flush pos={}, cap={}, amt={}, read_done={}",
-                self.dir,
-                self.pos,
-                self.cap,
-                self.amt,
-                self.read_done,
-            );
+                // let timer = &mut self.timer;
+                // let deadline = Instant::now() + Duration::from_millis(10);
+                // timer.as_mut().reset(deadline);
 
-            if self.pos == self.cap && self.read_done {
+                // trace!(
+                //     "{} write pos={}, cap={}, amt={}, read_done={}",
+                //     self.dir,
+                //     self.pos,
+                //     self.cap,
+                //     self.amt,
+                //     self.read_done,
+                // );
+            }
+
+            if self.pos == self.cap {
                 ready!(writer.as_mut().poll_flush(cx))?;
-                return Poll::Ready(Ok(self.amt));
+                // trace!(
+                //     "{} flush pos={}, cap={}, amt={}, read_done={}",
+                //     self.dir,
+                //     self.pos,
+                //     self.cap,
+                //     self.amt,
+                //     self.read_done,
+                // );
+                if self.read_done {
+                    return Poll::Ready(Ok(self.amt));
+                }
             }
         }
     }
@@ -143,8 +173,10 @@ where
                 *state = TransferState::ShuttingDown(count);
             }
             TransferState::ShuttingDown(count) => {
-                ready!(w.as_mut().poll_shutdown(cx))?;
-
+                // Ignore "Transport endpoint is not connected"
+                if let Poll::Pending = w.as_mut().poll_shutdown(cx) {
+                    return Poll::Pending;
+                }
                 *state = TransferState::Done(*count);
             }
             TransferState::Done(count) => return Poll::Ready(Ok(*count)),

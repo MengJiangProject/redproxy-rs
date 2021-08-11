@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use easy_error::ResultExt;
 use log::{trace, warn};
+use tokio::io::BufStream;
 
 use super::copy::copy_bidirectional;
 use crate::context::Context;
@@ -18,9 +19,10 @@ impl super::Connector for DirectConnector {
             let target = ctx.target;
             if let Err(err) = async {
                 trace!("connecting to {:?}", target);
-                let mut server = target.connect_tcp().await.context("connect")?;
+                let server = target.connect_tcp().await.context("connect")?;
+                let mut server = BufStream::new(server);
                 trace!("connected to {:?}", target);
-
+                // let mut client = client.into_inner();
                 copy_bidirectional(&mut client, &mut server)
                     .await
                     .context("copy_bidirectional")
