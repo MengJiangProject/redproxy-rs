@@ -1,10 +1,6 @@
 use async_trait::async_trait;
-use easy_error::{Error, ResultExt};
+use easy_error::ResultExt;
 use log::{trace, warn};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::TcpSocket,
-};
 
 use super::copy::copy_bidirectional;
 use crate::context::Context;
