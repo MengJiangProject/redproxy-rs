@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::ResultExt;
+use easy_error::{Error, ResultExt};
 use log::{trace, warn};
 use tokio::io::BufStream;
 
@@ -9,11 +9,11 @@ pub struct DirectConnector {}
 
 #[async_trait]
 impl super::Connector for DirectConnector {
-    async fn create(_block: &str) -> Result<Box<Self>, Box<dyn std::error::Error>> {
+    async fn create(_block: &str) -> Result<Box<Self>, Error> {
         Ok(Box::new(DirectConnector {}))
     }
 
-    async fn connect(&self, ctx: Context) -> Result<(), Box<dyn std::error::Error>> {
+    async fn connect(&self, ctx: Context) -> Result<(), Error> {
         tokio::spawn(async move {
             let mut client = ctx.socket;
             let target = ctx.target;
