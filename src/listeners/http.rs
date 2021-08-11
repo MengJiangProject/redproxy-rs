@@ -41,9 +41,9 @@ async fn accept(listener: &TcpListener, queue: &Sender<Context>) -> Result<(), E
     let target = parse_request(&buf)?;
     trace!("dst={:?}", target);
     while buf != "\r\n" && buf != "\n" {
+        trace!("buf={:?}", buf);
         buf.clear();
         read_line(&mut socket, &mut buf).await?;
-        trace!("buf={:?}", buf);
     }
     socket
         .write_all("HTTP/1.1 200 Connection established\r\n\r\n".as_bytes())
