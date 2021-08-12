@@ -1,4 +1,0 @@
-{
-    "rust-client.engine": "rust-analyzer",
-    "editor.formatOnSave": true
-}

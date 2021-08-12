@@ -17,13 +17,13 @@ pub struct TlsOptions {
 }
 
 fn load_certs(path: &Path) -> Result<Vec<Certificate>, Error> {
-    let file = File::open(path).context("open")?;
+    let file = File::open(path).context("failed to read certificates")?;
     let mut reader = BufReader::new(file);
     certs(&mut reader).map_err(|_| err_msg("load certificate"))
 }
 
 fn load_keys(path: &Path) -> Result<Vec<PrivateKey>, Error> {
-    let file = File::open(path).context("open")?;
+    let file = File::open(path).context("failed to read private key")?;
     let mut reader = BufReader::new(file);
     rsa_private_keys(&mut reader).map_err(|_| err_msg("load private key"))
 }
