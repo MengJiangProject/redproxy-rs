@@ -294,7 +294,10 @@ macro_rules! op_rule {
     };
 }
 
-op_rule!(op_3, op_value, (tag("=="), tag("!=")));
+op_rule!(op_6, op_value, (tag("*"), tag("/"), tag("%")));
+op_rule!(op_5, op_6, (tag("+"), tag("-")));
+op_rule!(op_4, op_5, (tag(">"), tag(">="), tag("<"), tag("<=")));
+op_rule!(op_3, op_4, (tag("=="), tag("!="), tag("=~"), tag("!~")));
 op_rule!(op_2, op_3, (tag("&&"), tag_no_case("and")));
 op_rule!(op_1, op_2, (tag("||"), tag_no_case("or")));
 
@@ -335,12 +338,12 @@ mod tests {
     #[test]
     fn simple_op() {
         let t = {
-            Value::Expression(Box::new(Expr::Equal(
+            Value::Expression(Box::new(Expr::Plus(
                 Value::Identifier("x".to_string()),
                 Value::Integer(1),
             )))
         };
-        let input = "x==1";
+        let input = "x+1";
         let output = input.parse::<Filter>();
         println!("input={}\noutput={:?}", input, output);
         assert_eq!(output.unwrap().root(), &t);
