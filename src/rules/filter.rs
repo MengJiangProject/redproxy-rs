@@ -9,13 +9,6 @@ pub struct Filter {
     root: Value,
 }
 
-impl Filter {
-    #[cfg(test)]
-    pub fn root(&self) -> &Value {
-        &self.root
-    }
-}
-
 impl FromStr for Filter {
     type Err = SyntaxError;
 
