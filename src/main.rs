@@ -1,4 +1,6 @@
-use easy_error::{ResultExt, Terminator};
+extern crate nom;
+
+use easy_error::Terminator;
 use log::trace;
 use tokio::sync::mpsc::channel;
 
@@ -13,7 +15,7 @@ async fn main() -> Result<(), Terminator> {
     env_logger::init();
 
     let cfg = config::Config::load("config.yaml").await?;
-    // trace!("cfg={:?}", cfg);
+    trace!("cfg={:?}", cfg);
 
     let (tx, mut rx) = channel(100);
 

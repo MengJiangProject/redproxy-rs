@@ -15,6 +15,6 @@ connectors:
   - name: direct
 
 rules:
-  - filter: geoip(dst.ip) == 'CN'
+  - filter: domain.end_with("google.com") && family == ipv4
     target: direct
   - target: direct
