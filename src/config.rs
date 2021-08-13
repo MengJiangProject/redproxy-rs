@@ -3,7 +3,10 @@ use easy_error::{Error, ResultExt};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct Config {
+    pub api_version: String,
+    pub kind: String,
     pub listeners: serde_yaml::Sequence,
     pub connectors: serde_yaml::Sequence,
     pub rules: Vec<Rule>,

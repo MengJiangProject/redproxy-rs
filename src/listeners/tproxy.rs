@@ -14,25 +14,28 @@ use tokio::sync::mpsc::Sender;
 use crate::context::{Context, TargetAddress};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+use super::Listener;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TProxyListener {
     name: String,
     bind: String,
 }
 
-pub fn from_value(value: &Value) -> Result<Box<dyn super::Listener>, Error> {
+pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
     let ret: TProxyListener = serde_yaml::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
 }
 
 #[async_trait]
-impl super::Listener for TProxyListener {
+impl Listener for TProxyListener {
     async fn init(&mut self) -> Result<(), Error> {
         Ok(())
     }
     async fn listen(&self, queue: Sender<Context>) -> Result<(), Error> {
         info!("listening on {}", self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
+        let self = self.clone();
         tokio::spawn(async move {
             loop {
                 if let Err(e) = async {
@@ -49,6 +52,7 @@ impl super::Listener for TProxyListener {
                             socket,
                             target,
                             source,
+                            listener: self.name().into(),
                         })
                         .await
                         .context("enqueue")?;

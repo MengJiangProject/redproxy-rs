@@ -54,6 +54,7 @@ impl FromStr for TargetAddress {
 
 #[derive(Debug)]
 pub struct Context {
+    pub listener: String,
     pub socket: BufStream<TcpStream>,
     pub target: TargetAddress,
     pub source: SocketAddr,

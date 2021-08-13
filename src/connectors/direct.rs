@@ -19,6 +19,10 @@ pub fn from_value(value: &serde_yaml::Value) -> Result<Box<dyn super::Connector>
 
 #[async_trait]
 impl super::Connector for DirectConnector {
+    fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
     async fn init(&mut self) -> Result<(), Error> {
         Ok(())
     }

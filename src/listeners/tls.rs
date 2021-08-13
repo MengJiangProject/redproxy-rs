@@ -10,7 +10,7 @@ use tokio_rustls::TlsAcceptor;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TlsOptions {
     cert: PathBuf,
     key: PathBuf,

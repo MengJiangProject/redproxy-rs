@@ -6,9 +6,10 @@ use serde_yaml::{Sequence, Value};
 mod copy;
 pub mod direct;
 #[async_trait]
-pub trait Connector {
+pub trait Connector: std::fmt::Debug {
     async fn init(&mut self) -> Result<(), Error>;
     async fn connect(&self, ctx: Context) -> Result<(), Error>;
+    fn name(&self) -> &str;
 }
 
 pub fn config(connectors: &Sequence) -> Result<Vec<Box<dyn Connector>>, Error> {

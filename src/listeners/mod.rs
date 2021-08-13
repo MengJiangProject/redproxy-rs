@@ -10,10 +10,10 @@ pub mod tproxy;
 
 mod tls;
 #[async_trait]
-pub trait Listener {
-    fn name(&self) -> &str;
+pub trait Listener: std::fmt::Debug {
     async fn init(&mut self) -> Result<(), Error>;
     async fn listen(&self, queue: Sender<Context>) -> Result<(), Error>;
+    fn name(&self) -> &str;
 }
 
 pub fn config(listeners: &Sequence) -> Result<Vec<Box<dyn Listener>>, Error> {

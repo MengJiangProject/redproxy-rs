@@ -1,4 +1,4 @@
-use std::{fmt, str::FromStr};
+use std::{error::Error, fmt, str::FromStr};
 
 use nom::error::{convert_error, VerboseError};
 
@@ -42,6 +42,7 @@ impl SyntaxError {
     }
 }
 
+impl Error for SyntaxError {}
 impl fmt::Display for SyntaxError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "SyntaxError: {}", self.msg)

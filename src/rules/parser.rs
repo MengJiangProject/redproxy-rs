@@ -316,7 +316,7 @@ rule!(op_8(i) -> Value, {
             )))
         )) ,
     |(p1, expr)| {
-        println!("p1={:?} expr={:?}", p1, expr);
+        // println!("p1={:?} expr={:?}", p1, expr);
         expr.into_iter().fold(p1, |p1, val| {
             let (op, mut args) : (&str,Vec<Value>) = val;
             args.insert(0,p1);
