@@ -27,7 +27,7 @@ pub enum Expr {
     Access(Value, Value),
     //prioity 7
     Not(Value),
-    Inverse(Value),
+    BitNot(Value),
     //prioity 6
     Multiply(Value, Value),
     Divide(Value, Value),
@@ -84,7 +84,7 @@ impl Expr {
         match op.as_str() {
             //prioity 7
             "!" => Self::Not(p1),
-            "~" => Self::Inverse(p1),
+            "~" => Self::BitNot(p1),
             _ => panic!("not implemented"),
         }
     }
@@ -391,7 +391,7 @@ mod tests {
     }
 
     expr!(not, Not);
-    expr!(inverse, Inverse);
+    expr!(bit_not, BitNot);
     expr!(and, And);
     expr!(or, Or);
     expr!(plus, Plus);
@@ -497,13 +497,13 @@ mod tests {
     #[test]
     fn unary() {
         let input = " ! ! ( ~ true ) ";
-        let value = not!(not!(inverse!(Value::Boolean(true))));
+        let value = not!(not!(bit_not!(bool!(true))));
         assert_ast(input, value);
     }
 
     #[test]
     fn tuple() {
-        let input = "[(),((1),),(1,2),(1,2,)]";
+        let input = "[ ( ) , ( ( 1 ) , ) , ( 1 , 2 ) , ( 1 , 2 , ) ]";
         let value = array!(vec![
             tuple!(),
             tuple!(int!(1)),

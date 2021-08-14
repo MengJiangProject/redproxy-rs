@@ -1,6 +1,6 @@
-mod eval;
 mod filter;
 mod parser;
+mod script;
 mod value;
 
 use easy_error::{Error, ResultExt};
