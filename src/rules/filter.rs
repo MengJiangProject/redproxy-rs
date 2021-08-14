@@ -2,7 +2,8 @@ use std::{error::Error, fmt, str::FromStr};
 
 use nom::error::{convert_error, VerboseError};
 
-use super::parser::*;
+use super::parser::root;
+use super::value::Value;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct Filter {

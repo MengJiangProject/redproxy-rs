@@ -1,11 +1,12 @@
+mod eval;
 mod filter;
 mod parser;
-
-use std::sync::Arc;
+mod value;
 
 use easy_error::{Error, ResultExt};
 use log::trace;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::connectors::Connector;
 

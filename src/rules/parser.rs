@@ -7,38 +7,18 @@ use nom::{
         complete::multispace0,
         complete::{alpha1, alphanumeric1, char, digit1, hex_digit1, oct_digit1, one_of},
     },
-    combinator::{all_consuming, cut, map, map_res, opt, recognize},
+    combinator::{all_consuming, cut, map, map_opt, map_res, opt, recognize},
     error::{context, ContextError, FromExternalError, ParseError},
     multi::{many0, many1, separated_list0},
-    sequence::{delimited, pair, preceded, terminated, tuple},
+    sequence::{delimited, pair, preceded, terminated, tuple as nom_tuple},
     AsChar, IResult, InputTakeAtPosition, Parser,
 };
 
 mod string;
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum Value {
-    Identifier(String),
-    Array(Box<Vec<Value>>),
-    String(String),
-    Integer(i64),
-    Boolean(bool),
-    Expression(Box<Expr>),
-}
+use super::value::Value;
 
-impl From<Vec<Value>> for Value {
-    fn from(x: Vec<Value>) -> Self {
-        Self::Array(x.into())
-    }
-}
-
-impl From<Expr> for Value {
-    fn from(x: Expr) -> Self {
-        Self::Expression(x.into())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 #[allow(dead_code)]
 pub enum Expr {
     //prioity 8
@@ -198,13 +178,19 @@ where
     preceded(multispace0, f)
 }
 
-rule!(boolean -> bool, {
-    let parse_true = nom::combinator::value(true, tag("true"));
-    let parse_false = nom::combinator::value(false, tag("false"));
-    alt((parse_true, parse_false))
+rule!(string -> Value, {
+    map(string::parse_string,Into::into)
 });
 
-use string::parse_string as string;
+rule!(boolean -> Value, {
+    let parse_true = nom::combinator::value(true, tag("true"));
+    let parse_false = nom::combinator::value(false, tag("false"));
+    map(alt((parse_true, parse_false)),Into::into)
+});
+
+rule!(null -> Value, {
+    nom::combinator::value(Value::Null, tag("null"))
+});
 
 rule!(hexadecimal, {
     preceded(
@@ -231,9 +217,9 @@ rule!(decimal, {
     recognize(many1(terminated(digit1, many0(char('_')))))
 });
 
-rule!(integer -> i64, {
-    fn atoi(n: u32) -> impl Fn(&str) -> Result<i64, ParseIntError> {
-        move |x| i64::from_str_radix(x, n)
+rule!(integer -> Value, {
+    fn atoi(n: u32) -> impl Fn(&str) -> Result<Value, ParseIntError> {
+        move |x| i64::from_str_radix(x, n).map(Into::into)
     }
     alt((
         map_res(binary, atoi(2)),
@@ -261,14 +247,34 @@ rule!(array -> Value, {
     map(delimited(char('['), cut(body),ws(char(']'))), Into::into)
 });
 
+rule!(tuple -> Value, {
+    let body = map_opt(
+        pair(many0(terminated(
+            op_1,
+            ws(char(','))
+        )),opt(op_1)),
+        |(mut ary,last)|{
+            if ary.is_empty() && last.is_some() {
+                return None
+            }
+            if let Some(v) = last {
+                ary.push(v);
+            }
+            Some(ary)
+        }
+    );
+    map(map(delimited(char('('), body,ws(char(')'))), Box::new), Value::Tuple)
+});
+
 rule!(value -> Value, {
     // println!("value: i={}", i);
     alt((
-        map(string, Value::String),
-        map(integer, Value::Integer),
-        map(boolean, Value::Boolean),
+        string,
+        boolean,
+        integer,
         identifier,
         array,
+        tuple,
     ))
 });
 
@@ -289,7 +295,7 @@ rule!(op_index -> (&str,Vec<Value>), {
 
 rule!(op_access -> (&str,Vec<Value>), {
     map(
-        preceded(tag("."), identifier),
+        preceded(tag("."), alt((identifier,integer))),
         |id| ("access", vec![id])
     )
 });
@@ -307,7 +313,7 @@ rule!(op_call -> (&str,Vec<Value>), {
 
 rule!(op_8(i) -> Value, {
     map(
-        tuple((
+        nom_tuple((
             op_value,
             many0(alt((
                 op_index,
@@ -328,7 +334,7 @@ rule!(op_8(i) -> Value, {
 //unary opreator
 rule!(op_7(i) -> Value, {
     alt((
-        map(tuple((alt((tag("!"), tag("~"))), op_7)),
+        map(nom_tuple((alt((tag("!"), tag("~"))), op_7)),
             |(op,p1)|Expr::parse1(op, p1).into()
         ),
         op_8
@@ -338,9 +344,9 @@ rule!(op_7(i) -> Value, {
 macro_rules! op_rule {
     ($name:ident, $next:ident, $tags:tt) => {
         rule!($name(i) -> Value, {
-            map(tuple((
+            map(nom_tuple((
                 $next,
-                many0(tuple((
+                many0(nom_tuple((
                     ws(alt($tags)),
                     $next
                 )))
@@ -424,6 +430,14 @@ mod tests {
         };
     }
 
+    macro_rules! tuple {
+        ($($st:expr),*) => {
+            Value::Tuple(Box::new(vec![
+                $($st),*
+            ]))
+        };
+    }
+
     #[inline]
     fn assert_ast(input: &str, value: Value) {
         let output = root::<nom::error::VerboseError<&str>>(input);
@@ -484,6 +498,18 @@ mod tests {
     fn unary() {
         let input = " ! ! ( ~ true ) ";
         let value = not!(not!(inverse!(Value::Boolean(true))));
+        assert_ast(input, value);
+    }
+
+    #[test]
+    fn tuple() {
+        let input = "[(),((1),),(1,2),(1,2,)]";
+        let value = array!(vec![
+            tuple!(),
+            tuple!(int!(1)),
+            tuple!(int!(1), int!(2)),
+            tuple!(int!(1), int!(2)),
+        ]);
         assert_ast(input, value);
     }
 
