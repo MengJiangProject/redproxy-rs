@@ -15,105 +15,65 @@ use nom::{
 };
 
 mod string;
+use super::script::stdlib::*;
+use super::script::Value;
 
-use super::value::Value;
-
-#[derive(Debug, Eq, PartialEq, Clone)]
-#[allow(dead_code)]
-pub enum Expr {
-    //prioity 8
-    Call(Value, Vec<Value>),
-    Index(Value, Value),
-    Access(Value, Value),
-    //prioity 7
-    Not(Value),
-    BitNot(Value),
-    //prioity 6
-    Multiply(Value, Value),
-    Divide(Value, Value),
-    Mod(Value, Value),
-    //prioity 5
-    Plus(Value, Value),
-    Minus(Value, Value),
-    //prioity 4
-    Greater(Value, Value),
-    GreaterOrEqual(Value, Value),
-    Lesser(Value, Value),
-    LesserOrEqual(Value, Value),
-    //prioity 3
-    Equal(Value, Value),
-    NotEqual(Value, Value),
-    Like(Value, Value),
-    NotLike(Value, Value),
-    //prioity 2.3
-    BitAnd(Value, Value),
-    //prioity 2.2
-    BitXor(Value, Value),
-    //prioity 2.1
-    BitOr(Value, Value),
-    //prioity 2
-    And(Value, Value),
-    //prioity 1
-    Or(Value, Value),
+fn parse_many(op: &str, mut args: Vec<Value>) -> Value {
+    let op = op.to_ascii_lowercase();
+    match op.as_str() {
+        //prioity 7
+        "call" => {
+            // let f = args.remove(0);
+            Call::new(args).into()
+        }
+        "index" => {
+            let p1 = args.remove(0);
+            let p2 = args.remove(0);
+            Index::new(p1, p2).into()
+        }
+        "access" => {
+            let p1 = args.remove(0);
+            let p2 = args.remove(0);
+            Access::new(p1, p2).into()
+        }
+        _ => panic!("not implemented"),
+    }
 }
+fn parse1(op: &str, p1: Value) -> Value {
+    let op = op.to_ascii_lowercase();
+    match op.as_str() {
+        //prioity 7
+        "!" => Not::new(p1).into(),
+        "~" => BitNot::new(p1).into(),
+        _ => panic!("not implemented"),
+    }
+}
+fn parse2(op: &str, p1: Value, p2: Value) -> Value {
+    let op = op.to_ascii_lowercase();
 
-impl Expr {
-    fn parse_many(op: &str, mut args: Vec<Value>) -> Self {
-        let op = op.to_ascii_lowercase();
-        match op.as_str() {
-            //prioity 7
-            "call" => {
-                let f = args.remove(0);
-                Self::Call(f, args)
-            }
-            "index" => {
-                let p1 = args.remove(0);
-                let p2 = args.remove(0);
-                Self::Index(p1, p2)
-            }
-            "access" => {
-                let p1 = args.remove(0);
-                let p2 = args.remove(0);
-                Self::Access(p1, p2)
-            }
-            _ => panic!("not implemented"),
-        }
-    }
-    fn parse1(op: &str, p1: Value) -> Self {
-        let op = op.to_ascii_lowercase();
-        match op.as_str() {
-            //prioity 7
-            "!" => Self::Not(p1),
-            "~" => Self::BitNot(p1),
-            _ => panic!("not implemented"),
-        }
-    }
-    fn parse2(op: &str, p1: Value, p2: Value) -> Self {
-        let op = op.to_ascii_lowercase();
-        match op.as_str() {
-            //prioity 6
-            "*" => Self::Multiply(p1, p2),
-            "/" => Self::Divide(p1, p2),
-            "%" => Self::Mod(p1, p2),
-            //prioity 5
-            "+" => Self::Plus(p1, p2),
-            "-" => Self::Minus(p1, p2),
-            //prioity 4
-            ">" => Self::Greater(p1, p2),
-            ">=" => Self::GreaterOrEqual(p1, p2),
-            "<" => Self::Lesser(p1, p2),
-            "<=" => Self::LesserOrEqual(p1, p2),
-            //prioity 3
-            "==" => Self::Equal(p1, p2),
-            "!=" => Self::NotEqual(p1, p2),
-            "=~" => Self::Like(p1, p2),
-            "!~" => Self::NotLike(p1, p2),
-            //prioity 2
-            "&&" | "and" => Self::And(p1, p2),
-            //prioity 1
-            "||" | "or" => Self::Or(p1, p2),
-            _ => panic!("not implemented"),
-        }
+    match op.as_str() {
+        //prioity 6
+        "*" => Multiply::new(p1, p2).into(),
+        "/" => Divide::new(p1, p2).into(),
+        "%" => Mod::new(p1, p2).into(),
+        //prioity 5
+        "+" => Plus::new(p1, p2).into(),
+        "-" => Minus::new(p1, p2).into(),
+        //prioity 4
+        ">" => Greater::new(p1, p2).into(),
+        ">=" => GreaterOrEqual::new(p1, p2).into(),
+        "<" => Lesser::new(p1, p2).into(),
+        "<=" => LesserOrEqual::new(p1, p2).into(),
+        //prioity 3
+        "==" => Equal::new(p1, p2).into(),
+        "!=" => NotEqual::new(p1, p2).into(),
+        "=~" => Like::new(p1, p2).into(),
+        "!~" => NotLike::new(p1, p2).into(),
+        //prioity 2
+        "&&" | "and" => And::new(p1, p2).into(),
+        //prioity 1
+        "||" | "or" => Or::new(p1, p2).into(),
+        _ => panic!("not implemented"),
     }
 }
 
@@ -326,7 +286,7 @@ rule!(op_8(i) -> Value, {
         expr.into_iter().fold(p1, |p1, val| {
             let (op, mut args) : (&str,Vec<Value>) = val;
             args.insert(0,p1);
-            Expr::parse_many(op, args).into()
+            parse_many(op, args).into()
         })
     })
 });
@@ -335,7 +295,7 @@ rule!(op_8(i) -> Value, {
 rule!(op_7(i) -> Value, {
     alt((
         map(nom_tuple((alt((tag("!"), tag("~"))), op_7)),
-            |(op,p1)|Expr::parse1(op, p1).into()
+            |(op,p1)|parse1(op, p1).into()
         ),
         op_8
     ))
@@ -366,7 +326,7 @@ op_rule!(op_1, op_2, (tag("||"), tag_no_case("or")));
 fn parse_expr(p1: Value, rem: Vec<(&str, Value)>) -> Value {
     rem.into_iter().fold(p1, |p1, val| {
         let (op, p2) = val;
-        Expr::parse2(op, p1, p2).into()
+        parse2(op, p1, p2).into()
     })
 }
 
@@ -375,16 +335,17 @@ rule!(pub root(i)->Value, { all_consuming(terminated(op_1,multispace0)) });
 #[cfg(test)]
 mod tests {
     // use super::super::filter::Filter;
+    // use super::super::script::stdlib::*;
     use super::*;
     macro_rules! expr {
         ($id:ident,$name:ident) => {
             #[allow(unused_macros)]
             macro_rules! $id {
                 ($st:expr) => {
-                    Value::Expression(Box::new(Expr::$name($st)))
+                    $name::new($st).into()
                 };
                 ($p1:expr,$p2:expr) => {
-                    Value::Expression(Box::new(Expr::$name($p1, $p2)))
+                    $name::new($p1, $p2).into()
                 };
             }
         };
@@ -448,7 +409,7 @@ mod tests {
     #[test]
     fn op_8() {
         let input = "a(b).c[d]";
-        let value = index!(access!(call!(id!("a"), vec![id!("b")]), id!("c")), id!("d"));
+        let value = index!(access!(call!(vec![id!("a"), id!("b")]), id!("c")), id!("d"));
         assert_ast(input, value);
     }
 

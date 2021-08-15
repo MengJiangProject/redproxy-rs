@@ -3,9 +3,9 @@ use std::{error::Error, fmt, str::FromStr};
 use nom::error::{convert_error, VerboseError};
 
 use super::parser::root;
-use super::value::Value;
+use super::script::Value;
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct Filter {
     root: Value,
 }

@@ -1,7 +1,6 @@
 mod filter;
 mod parser;
 mod script;
-mod value;
 
 use easy_error::{Error, ResultExt};
 use log::trace;
