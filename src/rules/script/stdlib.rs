@@ -1,6 +1,6 @@
 use std::convert::TryInto;
 
-use easy_error::{bail, err_msg};
+use easy_error::bail;
 
 use super::*;
 #[derive(Debug, Clone)]
@@ -147,6 +147,7 @@ macro_rules! function {
         pub struct $name {
             $($aname : Value),+
         }
+        #[allow(dead_code)]
         impl $name {
             pub fn new($($aname : Value),+) -> Self {
                 $name { $($aname),+ }
