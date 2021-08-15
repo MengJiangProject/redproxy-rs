@@ -41,7 +41,7 @@ pub trait Accessible {
     fn get(&self, name: &str) -> Result<Value, Error>;
 }
 
-pub trait Callable: std::fmt::Debug + CallableClone {
+pub trait Callable: std::fmt::Debug + dyn_clone::DynClone {
     // fn new(args: Vec<Value>) -> Box<dyn Callable>;
     // should not return Any
     fn signature(&self) -> Result<Type, Error>;
@@ -51,30 +51,11 @@ pub trait Callable: std::fmt::Debug + CallableClone {
     fn paramters(&self) -> Box<[&Value]>;
 }
 
-trait CallableClone {
-    fn clone_box(&self) -> Box<dyn Callable>;
-}
-
-impl<T> CallableClone for T
-where
-    T: 'static + Callable + Clone,
-{
-    fn clone_box(&self) -> Box<dyn Callable> {
-        Box::new(self.clone())
-    }
-}
-
+dyn_clone::clone_trait_object!(Callable);
+impl Eq for dyn Callable {}
 impl PartialEq for dyn Callable {
     fn eq(&self, other: &dyn Callable) -> bool {
         self.name() == other.name() && self.paramters() == other.paramters()
-    }
-}
-
-impl Eq for dyn Callable {}
-
-impl Clone for Box<dyn Callable> {
-    fn clone(&self) -> Self {
-        self.clone_box()
     }
 }
 
