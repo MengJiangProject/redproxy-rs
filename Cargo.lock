@@ -368,6 +368,7 @@ dependencies = [
  "log",
  "nix",
  "nom",
+ "regex",
  "serde",
  "serde_yaml",
  "tokio",
