@@ -494,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn tuple() {
+    fn tuple_array() {
         let input = "[ ( ) , ( ( 1 ) , ) , ( 1 , 2 ) , ( 1 , 2 , ) ]";
         let value = array!(vec![
             tuple!(),
@@ -517,7 +517,7 @@ mod tests {
 
     #[test]
     fn complex() {
-        let input = " 1 == [ \"test\" , 0x1 , 0b10 , 0o3 , false , xyz == 1 ] ";
+        let input = " 1 == [ \"test\" , 0x1 , 0b10 , 0o3 , false , if xyz == 1 then 2 else 3] ";
         let value = {
             equal!(
                 int!(1),
@@ -527,7 +527,7 @@ mod tests {
                     int!(2),
                     int!(3),
                     bool!(false),
-                    equal!(id!("xyz"), int!(1)),
+                    branch!(equal!(id!("xyz"), int!(1)), int!(2), int!(3))
                 ])
             )
         };
