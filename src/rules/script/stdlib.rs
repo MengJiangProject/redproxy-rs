@@ -47,9 +47,6 @@ impl Callable for Index {
     fn paramters(&self) -> Box<[&Value]> {
         Box::new([&self.obj, &self.index])
     }
-    // fn clone(&self) -> Box<dyn Callable> {
-    //     Box::new(Clone::clone(self))
-    // }
 }
 
 #[derive(Debug, Clone)]
@@ -96,9 +93,6 @@ impl Callable for Access {
     fn paramters(&self) -> Box<[&Value]> {
         Box::new([&self.obj, &self.index])
     }
-    // fn clone(&self) -> Box<dyn Callable> {
-    //     Box::new(Clone::clone(self))
-    // }
 }
 
 #[derive(Debug, Clone)]
@@ -128,16 +122,51 @@ impl Callable for Call {
         todo!()
     }
     fn name(&self) -> &str {
-        "Access"
+        "Call"
     }
     fn paramters(&self) -> Box<[&Value]> {
         let v: Vec<_> = self.args.iter().collect();
         v.into_boxed_slice()
     }
-    // fn clone(&self) -> Box<dyn Callable> {
-    //     Box::new(Clone::clone(self))
-    // }
 }
+
+#[derive(Debug, Clone)]
+pub struct If {
+    // obj: Value,
+    cond: Value,
+    yes: Value,
+    no: Value,
+}
+impl If {
+    pub fn new(cond: Value, yes: Value, no: Value) -> Self {
+        Self { cond, yes, no }
+    }
+}
+impl Callable for If {
+    fn signature(&self) -> Result<Type, Error> {
+        // use Type::*;
+        let cond = self.cond.type_of()?;
+        let yes = self.yes.type_of()?;
+        let no = self.no.type_of()?;
+        if Type::Boolean != cond {
+            bail!("Condition type {:?} is not a Boolean", cond);
+        }
+        if yes != no {
+            bail!("Condition return type must be same: {:?} {:?}", yes, no);
+        }
+        Ok(yes)
+    }
+    fn call(self) -> Result<Value, Error> {
+        todo!()
+    }
+    fn name(&self) -> &str {
+        "If"
+    }
+    fn paramters(&self) -> Box<[&Value]> {
+        Box::new([&self.cond, &self.yes, &self.no])
+    }
+}
+
 macro_rules! function {
     // ($name:ident ($($aname:ident : $atype:expr),+) => $rtype:expr, $body:tt) => {
     //     function!($name ($($aname : $atype),+) => $rtype, self, $body);

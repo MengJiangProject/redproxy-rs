@@ -201,7 +201,7 @@ rule!(identifier -> Value, {
 
 rule!(array -> Value, {
     let body = terminated(
-        separated_list0(ws(char(',')), op_1),
+        separated_list0(ws(char(',')), op_0),
         opt(ws(char(',')))
     );
     map(delimited(char('['), cut(body),ws(char(']'))), Into::into)
@@ -210,9 +210,9 @@ rule!(array -> Value, {
 rule!(tuple -> Value, {
     let body = map_opt(
         pair(many0(terminated(
-            op_1,
+            op_0,
             ws(char(','))
-        )),opt(op_1)),
+        )),opt(op_0)),
         |(mut ary,last)|{
             if ary.is_empty() && last.is_some() {
                 return None
@@ -240,7 +240,7 @@ rule!(value -> Value, {
 
 rule!(op_value -> Value, {
     alt((
-        delimited(char('('), ws(op_1), ws(char(')'))),
+        delimited(char('('), ws(op_0), ws(char(')'))),
         delimited(char('('), ws(value), ws(char(')'))),
         value,
     ))
@@ -248,7 +248,7 @@ rule!(op_value -> Value, {
 
 rule!(op_index -> (&str,Vec<Value>), {
     map(
-        delimited(tag("["), op_1, ws(char(']'))),
+        delimited(tag("["), op_0, ws(char(']'))),
         |idx| ("index", vec![idx])
     )
 });
@@ -264,7 +264,7 @@ rule!(op_call -> (&str,Vec<Value>), {
     map(
         delimited(
             char('('),
-            separated_list0(ws(char(',')), op_1),
+            separated_list0(ws(char(',')), op_0),
             ws(char(')'))
         ),
         |args|("call",args)
@@ -323,6 +323,33 @@ op_rule!(op_3, op_4, (tag("=="), tag("!="), tag("=~"), tag("!~")));
 op_rule!(op_2, op_3, (tag("&&"), tag_no_case("and")));
 op_rule!(op_1, op_2, (tag("||"), tag_no_case("or")));
 
+rule!(op_if(i) -> Value, {
+    map(
+        alt((
+            nom_tuple((
+                preceded(tag("if"),op_0),
+                preceded(ws(tag("then")),op_0),
+                preceded(ws(tag("else")),op_0),
+            )) ,
+            nom_tuple((
+                terminated(op_1,ws(tag("?"))),
+                terminated(op_0,ws(tag(":"))),
+                op_0
+            )) ,
+        )),
+        |(cond, yes, no)| {
+            If::new(cond, yes, no).into()
+        }
+    )
+});
+
+rule!(op_0 -> Value, {
+    alt((
+        op_if,
+        op_1
+    ))
+});
+
 fn parse_expr(p1: Value, rem: Vec<(&str, Value)>) -> Value {
     rem.into_iter().fold(p1, |p1, val| {
         let (op, p2) = val;
@@ -330,7 +357,7 @@ fn parse_expr(p1: Value, rem: Vec<(&str, Value)>) -> Value {
     })
 }
 
-rule!(pub root(i)->Value, { all_consuming(terminated(op_1,multispace0)) });
+rule!(pub root(i)->Value, { all_consuming(terminated(op_0,multispace0)) });
 
 #[cfg(test)]
 mod tests {
@@ -341,11 +368,14 @@ mod tests {
         ($id:ident,$name:ident) => {
             #[allow(unused_macros)]
             macro_rules! $id {
-                ($st:expr) => {
-                    $name::new($st).into()
+                ($p1:expr) => {
+                    $name::new($p1).into()
                 };
                 ($p1:expr,$p2:expr) => {
                     $name::new($p1, $p2).into()
+                };
+                ($p1:expr,$p2:expr,$p3:expr) => {
+                    $name::new($p1, $p2, $p3).into()
                 };
             }
         };
@@ -360,6 +390,7 @@ mod tests {
     expr!(call, Call);
     expr!(index, Index);
     expr!(access, Access);
+    expr!(branch, If);
 
     macro_rules! id {
         ($st:expr) => {
@@ -471,6 +502,16 @@ mod tests {
             tuple!(int!(1), int!(2)),
             tuple!(int!(1), int!(2)),
         ]);
+        assert_ast(input, value);
+    }
+
+    #[test]
+    fn branch() {
+        let input = "if a then b else if c then d else e";
+        let value = branch!(id!("a"), id!("b"), branch!(id!("c"), id!("d"), id!("e")));
+        assert_ast(input, value);
+        let input = "(a ? b : c) ? d : e";
+        let value = branch!(branch!(id!("a"), id!("b"), id!("c")), id!("d"), id!("e"));
         assert_ast(input, value);
     }
 

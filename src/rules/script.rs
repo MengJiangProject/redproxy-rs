@@ -68,7 +68,7 @@ pub enum Value {
     Integer(i64),
     Boolean(bool),
     Identifier(String),
-    Lambda(Box<dyn Callable>),
+    FnCall(Box<dyn Callable>),
 }
 
 impl PartialEq for Value {
@@ -81,7 +81,7 @@ impl PartialEq for Value {
             (Identifier(a), Identifier(b)) => a == b,
             (Array(a), Array(b)) => a == b,
             (Tuple(a), Tuple(b)) => a == b,
-            (Lambda(a), Lambda(b)) => a == b,
+            (FnCall(a), FnCall(b)) => a == b,
             (Null, Null) => true,
             _ => false,
         }
@@ -97,7 +97,7 @@ impl Value {
             Boolean(_) => Ok(Type::Boolean),
             Integer(_) => Ok(Type::Integer),
             Identifier(_) => Ok(Type::NativeObject),
-            Lambda(x) => x.signature(),
+            FnCall(x) => x.signature(),
             Array(a) => {
                 if a.is_empty() {
                     Ok(Type::Array(Box::new(Type::Null)))
@@ -161,7 +161,7 @@ where
     T: Callable + 'static,
 {
     fn from(x: T) -> Self {
-        Value::Lambda(Box::new(x))
+        Value::FnCall(Box::new(x))
     }
 }
 
@@ -173,7 +173,7 @@ impl std::fmt::Display for Value {
             Self::Integer(i) => write!(f, "{}", i),
             Self::Boolean(b) => write!(f, "{}", b),
             Self::Identifier(id) => write!(f, "<{}>", id),
-            Self::Lambda(x) => write!(f, "{:?}", x),
+            Self::FnCall(x) => write!(f, "{:?}", x),
             Self::Array(x) => write!(f, "{:?}", x),
             Self::Tuple(x) => write!(f, "{:?}", x),
             // _ => panic!("not implemented"),
