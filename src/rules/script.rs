@@ -100,6 +100,14 @@ pub struct ScriptContext {
     globals: HashMap<String, Value>,
 }
 
+impl ScriptContext {
+    fn lookup(&self, id: &str) -> Result<Value, Error> {
+        self.globals
+            .get(id)
+            .ok_or(err_msg(format!("\"{}\" is undefined", id)))
+            .map(Clone::clone)
+    }
+}
 impl Default for ScriptContext {
     fn default() -> Self {
         let mut globals = HashMap::default();
@@ -204,11 +212,7 @@ impl Value {
     pub fn value_of(&self, ctx: &ScriptContext) -> Result<Self, Error> {
         use Value::*;
         match self {
-            Identifier(id) => ctx
-                .globals
-                .get(id)
-                .ok_or(err_msg(format!("\"{}\" is undefined", id)))
-                .map(Clone::clone),
+            Identifier(id) => ctx.lookup(id),
             OpCall(f) => f.call(ctx),
             NativeObject(f) => f.value_of(ctx),
             _ => Ok(self.clone()),
@@ -291,17 +295,8 @@ pub struct Call {
 impl Call {
     pub fn new(mut args: Vec<Value>) -> Self {
         let func = args.remove(0);
-        // let f = if let Value::NativeObject(f) = f {
-        //     f
-        // } else {
-        //     bail!("not a function")
-        // };
-        // let func = f.as_callable().ok_or(err_msg("not callable"))?;
         Self { func, args }
     }
-    // pub fn new_stub(func: Box<dyn Callable>, args: Vec<Value>) -> Self {
-    //     Self { func, args }
-    // }
     fn signature(&self, ctx: &ScriptContext) -> Result<Type, Error> {
         let func = self.func(ctx)?;
         let mut args = Vec::with_capacity(self.args.len());
@@ -315,10 +310,14 @@ impl Call {
         func.call(ctx, &self.args)
     }
     fn func(&self, ctx: &ScriptContext) -> Result<Box<dyn Callable>, Error> {
-        let func = self.func.value_of(ctx)?;
+        let func = if let Value::Identifier(_) = &self.func {
+            self.func.value_of(ctx)?
+        } else {
+            self.func.clone()
+        };
         if let Value::NativeObject(x) = func {
             x.as_callable()
-                .ok_or(err_msg("NativeObject does not implement Accessible"))
+                .ok_or(err_msg("NativeObject does not implement Callable"))
         } else {
             bail!("func does not implement Callable: {:?}", func)
         }
@@ -337,8 +336,8 @@ mod tests {
 
     #[test]
     fn to_string() {
-        type_test("to_string1(100*2)", Type::String);
-        eval_test("to_string1(100*2)", "200".into())
+        type_test("to_string(100*2)", Type::String);
+        eval_test("to_string(100*2)", "200".into())
     }
 
     #[test]
