@@ -18,6 +18,15 @@ pub enum Type {
     Any, //native only
 }
 
+impl Type {
+    pub fn array_of(t: Self) -> Self {
+        Self::Array(Box::new(t))
+    }
+    pub fn tuple_of(t: Vec<Self>) -> Self {
+        Self::Tuple(Box::new(t))
+    }
+}
+
 impl PartialEq for Type {
     fn eq(&self, other: &Type) -> bool {
         use Type::*;
@@ -108,7 +117,7 @@ impl Accessible for HashMap<String, Value> {
 
     fn get(&self, name: &str) -> Result<&Value, Error> {
         self.get(name)
-            .ok_or(err_msg(format!("missing key: {}", name)))
+            .ok_or(err_msg(format!("undefined: {}", name)))
     }
 }
 
@@ -190,16 +199,15 @@ impl Value {
             NativeObject(o) => o.type_of(ctx),
         }
     }
+
+    //evaluate to the final value
     pub fn value_of(&self, ctx: &ScriptContext) -> Result<Self, Error> {
         use Value::*;
         match self {
             Identifier(id) => ctx
                 .globals
                 .get(id)
-                .ok_or(err_msg(format!(
-                    "\"{}\" is not defined in global scope",
-                    id
-                )))
+                .ok_or(err_msg(format!("\"{}\" is undefined", id)))
                 .map(Clone::clone),
             OpCall(f) => f.call(ctx),
             NativeObject(f) => f.value_of(ctx),
@@ -295,27 +303,25 @@ impl Call {
     //     Self { func, args }
     // }
     fn signature(&self, ctx: &ScriptContext) -> Result<Type, Error> {
-        // use Type::*;
-        let t = self.args[0].type_of(ctx)?;
-        if let Type::NativeObject = t {
-            Ok(t)
-        } else {
-            bail!(
-                "trying to access type {:?} which does not implement Accessible",
-                t
-            )
+        let func = self.func(ctx)?;
+        let mut args = Vec::with_capacity(self.args.len());
+        for x in &self.args {
+            args.push(x.type_of(ctx)?);
         }
+        func.signature(ctx, args, &self.args)
     }
     fn call(&self, ctx: &ScriptContext) -> Result<Value, Error> {
+        let func = self.func(ctx)?;
+        func.call(ctx, &self.args)
+    }
+    fn func(&self, ctx: &ScriptContext) -> Result<Box<dyn Callable>, Error> {
         let func = self.func.value_of(ctx)?;
-        let func = if let Value::NativeObject(x) = func {
-            x
+        if let Value::NativeObject(x) = func {
+            x.as_callable()
+                .ok_or(err_msg("NativeObject does not implement Accessible"))
         } else {
             bail!("func does not implement Callable: {:?}", func)
         }
-        .as_callable()
-        .ok_or(err_msg("NativeObject does not implement Accessible"))?;
-        Ok(func.call(ctx, &self.args)?)
     }
 }
 
@@ -325,12 +331,20 @@ mod tests {
     use super::*;
     #[test]
     fn one_plus_one() {
-        eval_test("1+1", 2.into())
+        type_test("1+1", Type::Integer);
+        eval_test("1+1", 2.into());
     }
 
     #[test]
     fn to_string() {
-        eval_test("to_string(100*2)", "200".into())
+        type_test("to_string1(100*2)", Type::String);
+        eval_test("to_string1(100*2)", "200".into())
+    }
+
+    #[test]
+    fn arrays() {
+        type_test("[1,2,3]", Type::array_of(Type::Integer));
+        eval_test("[1,2,3][0]", 1.into())
     }
 
     fn eval_test(input: &str, output: Value) {
@@ -339,6 +353,15 @@ mod tests {
             .unwrap()
             .1
             .value_of(ctx)
+            .unwrap();
+        assert_eq!(value, output);
+    }
+    fn type_test(input: &str, output: Type) {
+        let ctx = &Default::default();
+        let value = root::<nom::error::VerboseError<&str>>(input)
+            .unwrap()
+            .1
+            .type_of(ctx)
             .unwrap();
         assert_eq!(value, output);
     }
