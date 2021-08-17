@@ -6,6 +6,8 @@ use tokio::sync::mpsc::Sender;
 use crate::context::Context;
 
 pub mod http;
+
+#[cfg(any(target_os = "android", target_os = "linux"))]
 pub mod tproxy;
 
 mod tls;
@@ -29,8 +31,9 @@ pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
     let name = value.get("name").ok_or(err_msg("missing name"))?;
     let tname = value.get("type").or(Some(name)).unwrap();
     match tname.as_str() {
-        Some("tproxy") => tproxy::from_value(value),
         Some("http") => http::from_value(value),
+        #[cfg(any(target_os = "android", target_os = "linux"))]
+        Some("tproxy") => tproxy::from_value(value),
         _ => Err(err_msg("not implemented")),
     }
 }
