@@ -1,5 +1,9 @@
-use easy_error::{Error, ResultExt};
-use std::convert::TryFrom;
+use easy_error::{bail, err_msg, Error, ResultExt};
+use std::{
+    any::Any,
+    collections::HashMap,
+    convert::{TryFrom, TryInto},
+};
 pub mod stdlib;
 
 #[derive(Debug, Eq, Clone)]
@@ -33,29 +37,97 @@ impl PartialEq for Type {
 }
 pub trait Indexable {
     fn length(&self) -> usize;
-    fn get(&self, index: usize) -> Result<Value, Error>;
+    fn get(&self, index: i64) -> Result<&Value, Error>;
 }
 
 pub trait Accessible {
     fn names(&self) -> Vec<&str>;
-    fn get(&self, name: &str) -> Result<Value, Error>;
+    fn get(&self, name: &str) -> Result<&Value, Error>;
 }
 
 pub trait Callable: std::fmt::Debug + dyn_clone::DynClone {
     // fn new(args: Vec<Value>) -> Box<dyn Callable>;
     // should not return Any
-    fn signature(&self) -> Result<Type, Error>;
-    fn call(self) -> Result<Value, Error>;
+    fn signature(
+        &self,
+        ctx: &ScriptContext,
+        args: Vec<Type>,
+        vals: &Vec<Value>,
+    ) -> Result<Type, Error>;
+    fn call(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Value, Error>;
+
     // fn clone(&self) -> Box<dyn Callable>;
     fn name(&self) -> &str;
-    fn paramters(&self) -> Box<[&Value]>;
+    // fn paramters(&self) -> Box<[&Value]>;
 }
 
 dyn_clone::clone_trait_object!(Callable);
 impl Eq for dyn Callable {}
 impl PartialEq for dyn Callable {
     fn eq(&self, other: &dyn Callable) -> bool {
-        self.name() == other.name() && self.paramters() == other.paramters()
+        self.name() == other.name() //&& self.paramters() == other.paramters()
+    }
+}
+
+pub trait NativeObject: std::fmt::Debug + dyn_clone::DynClone {
+    fn type_of(&self, ctx: &ScriptContext) -> Result<Type, Error>;
+    fn value_of(&self, ctx: &ScriptContext) -> Result<Value, Error>;
+    fn as_accessible(&self) -> Option<Box<dyn Accessible>>;
+    fn as_indexable(&self) -> Option<Box<dyn Indexable>>;
+    fn as_callable(&self) -> Option<Box<dyn Callable>>;
+    fn as_any(&self) -> &dyn Any;
+    fn equals(&self, other: &dyn NativeObject) -> bool;
+}
+dyn_clone::clone_trait_object!(NativeObject);
+
+impl Eq for dyn NativeObject {}
+impl PartialEq for dyn NativeObject {
+    fn eq(&self, other: &dyn NativeObject) -> bool {
+        self.equals(other)
+    }
+}
+
+pub struct ScriptContext {
+    globals: HashMap<String, Value>,
+}
+
+impl Default for ScriptContext {
+    fn default() -> Self {
+        let mut globals = HashMap::default();
+        globals.insert("to_string".to_string(), stdlib::ToString::stub());
+        globals.insert("to_integer".to_string(), stdlib::ToInteger::stub());
+        globals.insert("split".to_string(), stdlib::Split::stub());
+        Self { globals }
+    }
+}
+
+impl Accessible for HashMap<String, Value> {
+    fn names(&self) -> Vec<&str> {
+        self.keys().map(String::as_str).collect()
+    }
+
+    fn get(&self, name: &str) -> Result<&Value, Error> {
+        self.get(name)
+            .ok_or(err_msg(format!("missing key: {}", name)))
+    }
+}
+
+impl Indexable for Vec<Value> {
+    fn length(&self) -> usize {
+        self.len()
+    }
+
+    fn get(&self, index: i64) -> Result<&Value, Error> {
+        let index: Result<usize, std::num::TryFromIntError> = if index >= 0 {
+            index.try_into()
+        } else {
+            (-index).try_into().map(|i: usize| self.len() - i)
+        };
+        let i: usize = index.context("failed to cast index from i64")?;
+        if i >= self.len() {
+            bail!("index out of bounds")
+        }
+        Ok(&self[i])
     }
 }
 
@@ -68,7 +140,8 @@ pub enum Value {
     Integer(i64),
     Boolean(bool),
     Identifier(String),
-    FnCall(Box<dyn Callable>),
+    NativeObject(Box<dyn NativeObject>),
+    OpCall(Box<Call>),
 }
 
 impl PartialEq for Value {
@@ -81,7 +154,8 @@ impl PartialEq for Value {
             (Identifier(a), Identifier(b)) => a == b,
             (Array(a), Array(b)) => a == b,
             (Tuple(a), Tuple(b)) => a == b,
-            (FnCall(a), FnCall(b)) => a == b,
+            (OpCall(a), OpCall(b)) => a == b,
+            (NativeObject(a), NativeObject(b)) => a == b,
             (Null, Null) => true,
             _ => false,
         }
@@ -89,7 +163,7 @@ impl PartialEq for Value {
 }
 
 impl Value {
-    fn type_of(&self) -> Result<Type, Error> {
+    fn type_of(&self, ctx: &ScriptContext) -> Result<Type, Error> {
         use Value::*;
         match self {
             Null => Ok(Type::Null),
@@ -97,22 +171,39 @@ impl Value {
             Boolean(_) => Ok(Type::Boolean),
             Integer(_) => Ok(Type::Integer),
             Identifier(_) => Ok(Type::NativeObject),
-            FnCall(x) => x.signature(),
+            OpCall(x) => x.signature(ctx),
             Array(a) => {
                 if a.is_empty() {
-                    Ok(Type::Array(Box::new(Type::Null)))
+                    Ok(Type::Array(Box::new(Type::Any)))
                 } else {
-                    let t = a[0].type_of()?;
+                    let t = a[0].type_of(ctx)?;
                     Ok(Type::Array(Box::new(t)))
                 }
             }
             Tuple(t) => {
                 let mut ret = Vec::with_capacity(t.len());
                 for x in t.iter() {
-                    ret.push(x.type_of()?)
+                    ret.push(x.type_of(ctx)?)
                 }
                 Ok(Type::Tuple(Box::new(ret)))
             }
+            NativeObject(o) => o.type_of(ctx),
+        }
+    }
+    pub fn value_of(&self, ctx: &ScriptContext) -> Result<Self, Error> {
+        use Value::*;
+        match self {
+            Identifier(id) => ctx
+                .globals
+                .get(id)
+                .ok_or(err_msg(format!(
+                    "\"{}\" is not defined in global scope",
+                    id
+                )))
+                .map(Clone::clone),
+            OpCall(f) => f.call(ctx),
+            NativeObject(f) => f.value_of(ctx),
+            _ => Ok(self.clone()),
         }
     }
 }
@@ -148,7 +239,7 @@ cast_value!(String, String);
 cast_value!(i64, Integer);
 cast_value!(bool, Boolean);
 cast_value!(Vec<Value>, Array, boxed);
-// cast_value!(Lambda, dyn Callable, boxed);
+cast_value!(Call, OpCall, boxed);
 
 impl From<&str> for Value {
     fn from(x: &str) -> Self {
@@ -156,27 +247,99 @@ impl From<&str> for Value {
     }
 }
 
-impl<T> From<T> for Value
-where
-    T: Callable + 'static,
-{
-    fn from(x: T) -> Self {
-        Value::FnCall(Box::new(x))
-    }
-}
+// impl<T> From<T> for Value
+// where
+//     T: Callable + 'static,
+// {
+//     fn from(x: T) -> Self {
+//         Value::OpCall(Box::new(x))
+//     }
+// }
 
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Value::*;
         match self {
-            Self::Null => write!(f, "null"),
-            Self::String(s) => write!(f, "{}", s),
-            Self::Integer(i) => write!(f, "{}", i),
-            Self::Boolean(b) => write!(f, "{}", b),
-            Self::Identifier(id) => write!(f, "<{}>", id),
-            Self::FnCall(x) => write!(f, "{:?}", x),
-            Self::Array(x) => write!(f, "{:?}", x),
-            Self::Tuple(x) => write!(f, "{:?}", x),
+            Null => write!(f, "null"),
+            String(s) => write!(f, "{}", s),
+            Integer(i) => write!(f, "{}", i),
+            Boolean(b) => write!(f, "{}", b),
+            Identifier(id) => write!(f, "<{}>", id),
+            OpCall(x) => write!(f, "{:?}", x),
+            Array(x) => write!(f, "{:?}", x),
+            Tuple(x) => write!(f, "{:?}", x),
+            NativeObject(x) => write!(f, "{:?}", x),
             // _ => panic!("not implemented"),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Call {
+    func: Value,
+    args: Vec<Value>,
+}
+
+impl Call {
+    pub fn new(mut args: Vec<Value>) -> Self {
+        let func = args.remove(0);
+        // let f = if let Value::NativeObject(f) = f {
+        //     f
+        // } else {
+        //     bail!("not a function")
+        // };
+        // let func = f.as_callable().ok_or(err_msg("not callable"))?;
+        Self { func, args }
+    }
+    // pub fn new_stub(func: Box<dyn Callable>, args: Vec<Value>) -> Self {
+    //     Self { func, args }
+    // }
+    fn signature(&self, ctx: &ScriptContext) -> Result<Type, Error> {
+        // use Type::*;
+        let t = self.args[0].type_of(ctx)?;
+        if let Type::NativeObject = t {
+            Ok(t)
+        } else {
+            bail!(
+                "trying to access type {:?} which does not implement Accessible",
+                t
+            )
+        }
+    }
+    fn call(&self, ctx: &ScriptContext) -> Result<Value, Error> {
+        let func = self.func.value_of(ctx)?;
+        let func = if let Value::NativeObject(x) = func {
+            x
+        } else {
+            bail!("func does not implement Callable: {:?}", func)
+        }
+        .as_callable()
+        .ok_or(err_msg("NativeObject does not implement Accessible"))?;
+        Ok(func.call(ctx, &self.args)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::parser::root;
+    use super::*;
+    #[test]
+    fn one_plus_one() {
+        eval_test("1+1", 2.into())
+    }
+
+    #[test]
+    fn to_string() {
+        eval_test("to_string(100*2)", "200".into())
+    }
+
+    fn eval_test(input: &str, output: Value) {
+        let ctx = &Default::default();
+        let value = root::<nom::error::VerboseError<&str>>(input)
+            .unwrap()
+            .1
+            .value_of(ctx)
+            .unwrap();
+        assert_eq!(value, output);
     }
 }

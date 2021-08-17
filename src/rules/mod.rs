@@ -30,8 +30,18 @@ impl Rule {
         Ok(())
     }
 
-    pub fn evaluate(&self, _context: &super::context::Context) -> bool {
-        true
+    pub fn evaluate(&self, context: &super::context::Context) -> bool {
+        if self.filter.is_none() {
+            true
+        } else {
+            match self.filter.as_ref().unwrap().evaluate(context) {
+                Ok(b) => b,
+                Err(e) => {
+                    trace!("error evaluating filter: {:?}", e);
+                    false
+                }
+            }
+        }
     }
 
     pub fn target(&self) -> Arc<Box<dyn Connector>> {

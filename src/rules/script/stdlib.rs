@@ -3,214 +3,75 @@ use std::convert::TryInto;
 use easy_error::bail;
 
 use super::*;
-#[derive(Debug, Clone)]
-pub struct Index {
-    obj: Value,
-    index: Value,
-}
-impl Index {
-    pub fn new(obj: Value, index: Value) -> Self {
-        Self { obj, index }
-    }
-}
-impl Callable for Index {
-    fn signature(&self) -> Result<Type, Error> {
-        // use Type::*;
-        let t = self.obj.type_of()?;
-        if let Type::Array(t) = t {
-            Ok(*t)
-        } else {
-            bail!(
-                "trying to index type {:?} which does not implement Indexable",
-                t
-            )
+
+macro_rules! function_head {
+    ($name:ident ($($aname:ident : $atype:ident),+) => $rtype:expr) => {
+        #[derive(Debug, Clone)]
+        pub struct $name {
+            // $($aname : Value),+
         }
-    }
-    fn call(self) -> Result<Value, Error> {
-        match self.obj {
-            Value::Array(a) => {
-                let index: i64 = self.index.try_into()?;
-                let index: Result<usize, std::num::TryFromIntError> = if index >= 0 {
-                    index.try_into()
-                } else {
-                    (-index).try_into().map(|i: usize| a.len() - i)
-                };
-                let i: usize = index.context("failed to cast index from i64")?;
-                Ok(a[i].clone())
+        #[allow(dead_code)]
+        impl $name {
+            pub fn new($($aname : Value),+) -> Call {
+                Call::new(vec![$name::stub(), $($aname),+ ])
             }
-            _ => bail!("type mismatch"),
-        }
-    }
-    fn name(&self) -> &str {
-        "Index"
-    }
-    fn paramters(&self) -> Box<[&Value]> {
-        Box::new([&self.obj, &self.index])
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Access {
-    obj: Value,
-    index: Value,
-}
-impl Access {
-    pub fn new(obj: Value, index: Value) -> Self {
-        Self { obj, index }
-    }
-}
-impl Callable for Access {
-    fn signature(&self) -> Result<Type, Error> {
-        // use Type::*;
-        let t = self.obj.type_of()?;
-        if let Type::NativeObject = t {
-            Ok(t)
-        } else {
-            bail!(
-                "trying to access type {:?} which does not implement Accessible",
-                t
-            )
-        }
-    }
-    fn call(self) -> Result<Value, Error> {
-        match self.obj {
-            Value::Array(a) => {
-                let index: i64 = self.index.try_into()?;
-                let index: Result<usize, std::num::TryFromIntError> = if index >= 0 {
-                    index.try_into()
-                } else {
-                    (-index).try_into().map(|i: usize| a.len() - i)
-                };
-                let i: usize = index.context("failed to cast index from i64")?;
-                Ok(a[i].clone())
+            pub fn stub() -> Value {
+                #[derive(Debug,Eq,PartialEq,Clone)]
+                pub struct Stub ;
+                impl NativeObject for Stub {
+                    fn type_of(&self, _ctx: &ScriptContext) -> Result<Type, Error>{Ok(Type::NativeObject)}
+                    fn value_of(&self, _ctx: &ScriptContext) -> Result<Value, Error>{
+                        Ok($name::stub())
+                    }
+                    fn as_accessible(&self) -> Option<Box<dyn Accessible>>{None}
+                    fn as_indexable(&self) -> Option<Box<dyn Indexable>>{None}
+                    fn as_callable(&self) -> Option<Box<dyn Callable>>{Some(Box::new($name{}))}
+                    fn as_any(&self) -> &dyn std::any::Any {self}
+                    fn equals(&self, other: &dyn NativeObject) -> bool {
+                        other.as_any().downcast_ref::<Self>().map_or(false, |a| self == a)
+                    }
+                }
+                Value::NativeObject(Box::new(Stub))
             }
-            _ => bail!("type mismatch"),
         }
-    }
-    fn name(&self) -> &str {
-        "Access"
-    }
-    fn paramters(&self) -> Box<[&Value]> {
-        Box::new([&self.obj, &self.index])
-    }
+    };
 }
 
-#[derive(Debug, Clone)]
-pub struct Call {
-    // obj: Value,
-    args: Vec<Value>,
-}
-impl Call {
-    pub fn new(args: Vec<Value>) -> Self {
-        Self { args }
-    }
-}
-impl Callable for Call {
-    fn signature(&self) -> Result<Type, Error> {
-        // use Type::*;
-        let t = self.args[0].type_of()?;
-        if let Type::NativeObject = t {
-            Ok(t)
-        } else {
-            bail!(
-                "trying to access type {:?} which does not implement Accessible",
-                t
-            )
-        }
-    }
-    fn call(self) -> Result<Value, Error> {
-        todo!()
-    }
-    fn name(&self) -> &str {
-        "Call"
-    }
-    fn paramters(&self) -> Box<[&Value]> {
-        let v: Vec<_> = self.args.iter().collect();
-        v.into_boxed_slice()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct If {
-    // obj: Value,
-    cond: Value,
-    yes: Value,
-    no: Value,
-}
-impl If {
-    pub fn new(cond: Value, yes: Value, no: Value) -> Self {
-        Self { cond, yes, no }
-    }
-}
-impl Callable for If {
-    fn signature(&self) -> Result<Type, Error> {
-        // use Type::*;
-        let cond = self.cond.type_of()?;
-        let yes = self.yes.type_of()?;
-        let no = self.no.type_of()?;
-        if Type::Boolean != cond {
-            bail!("Condition type {:?} is not a Boolean", cond);
-        }
-        if yes != no {
-            bail!("Condition return type must be same: {:?} {:?}", yes, no);
-        }
-        Ok(yes)
-    }
-    fn call(self) -> Result<Value, Error> {
-        todo!()
-    }
-    fn name(&self) -> &str {
-        "If"
-    }
-    fn paramters(&self) -> Box<[&Value]> {
-        Box::new([&self.cond, &self.yes, &self.no])
+macro_rules! args {
+    ($args:ident, $($aname:ident),+) => {
+        let mut iter = $args.into_iter();
+        $(let $aname: Type = iter.next().unwrap();)+
+    };
+    ($args:ident, ctx=$ctx:ident, $($aname:ident),+) => {
+        let mut iter = $args.into_iter();
+        $(let $aname: Value = iter.next().unwrap().value_of($ctx)?;)+
     }
 }
 
 macro_rules! function {
-    // ($name:ident ($($aname:ident : $atype:expr),+) => $rtype:expr, $body:tt) => {
-    //     function!($name ($($aname : $atype),+) => $rtype, self, $body);
-    // };
-    ($name:ident ($($aname:ident : $atype:expr),+) => $rtype:expr, $self:ident, $body:tt) => {
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            $($aname : Value),+
-        }
-        #[allow(dead_code)]
-        impl $name {
-            pub fn new($($aname : Value),+) -> Self {
-                $name { $($aname),+ }
-            }
-        }
+    ($name:ident ($($aname:ident : $atype:ident),+) => $rtype:expr, $self:ident, $body:tt) => {
+        function_head!($name ($($aname : $atype),+) => $rtype);
         impl Callable for $name {
-            fn signature(&self) -> Result<Type,Error> {
-                use Type::*;
-                let vtype = [$(self.$aname.type_of()?),+];
-                let rtype = [$($atype),+];
-                if vtype == rtype {
-                    Ok($rtype)
-                }else{
-                    easy_error::bail!("argument type mismatch, required: {:?} provided: {:?}",rtype,vtype)
-                }
-            }
-            fn call($self) -> Result<Value, Error> {
-                $body
-            }
             fn name(&self) -> &str {
                 stringify!($name)
             }
-            fn paramters(&self) -> Box<[&Value]>{
-                Box::new([$(&self.$aname),+])
+            fn signature(&self, _ctx: &ScriptContext, args: Vec<Type>, _vals: &Vec<Value>) -> Result<Type,Error> {
+                args!(args, $($aname),+);
+                use Type::*;
+                $(if $aname != $atype {
+                    bail!("argument {} type mismatch, required: {} provided: {:?}",
+                        stringify!($aname),
+                        stringify!($atype),
+                        $aname
+                    )
+                })+
+                Ok($rtype)
             }
-            // fn clone(&self) -> Box<dyn Callable> {
-            //     Box::new(Clone::clone(self))
-            // }
+            fn call(&$self,  ctx: &ScriptContext, args:&Vec<Value>) -> Result<Value, Error> {
+                args!(args, ctx=ctx, $($aname),+);
+                $body
+            }
         }
-        // impl From<$name> for Value {
-        //     fn from(x: $name) -> Self {
-        //         Value::Lambda(Box::new(x))
-        //     }
-        // }
     };
 }
 
@@ -220,21 +81,135 @@ macro_rules! array_of {
     };
 }
 
+function_head!(Index(obj: Any, index: Any) => Any);
+impl Callable for Index {
+    fn signature(
+        &self,
+        _ctx: &ScriptContext,
+        args: Vec<Type>,
+        _vals: &Vec<Value>,
+    ) -> Result<Type, Error> {
+        args!(args, obj, _index);
+        if let Type::Array(t) = obj {
+            Ok(*t)
+        } else {
+            bail!(
+                "trying to index type {:?} which does not implement Indexable",
+                obj
+            )
+        }
+    }
+    fn call(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Value, Error> {
+        args!(args, ctx = ctx, obj, index);
+        let index: i64 = index.try_into()?;
+        let obj: Box<dyn Indexable> = match obj {
+            Value::Array(a) => a,
+            Value::NativeObject(a) => a
+                .as_indexable()
+                .ok_or(err_msg("NativeObject does not implement Indexible"))?,
+            _ => bail!("type mismatch"),
+        };
+        obj.get(index)?.value_of(ctx)
+    }
+    fn name(&self) -> &str {
+        "Index"
+    }
+}
+
+function_head!(Access(obj: Any, index: Any) => Any);
+impl Callable for Access {
+    fn signature(
+        &self,
+        ctx: &ScriptContext,
+        _args: Vec<Type>,
+        vals: &Vec<Value>,
+    ) -> Result<Type, Error> {
+        // args!(args, obj, index);
+        let obj = &vals[0];
+        let index = &vals[1];
+        let index = if let Value::Identifier(index) = index {
+            index
+        } else {
+            bail!("Index must be an identifier")
+        };
+        if let Value::NativeObject(obj) = obj {
+            let obj = obj
+                .as_accessible()
+                .ok_or(err_msg("Object not accessible"))?;
+            let t = obj.get(index)?;
+            Ok(t.type_of(ctx)?)
+        } else {
+            bail!("Type {:?} does not implement Accessible", obj)
+        }
+    }
+    fn call(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Value, Error> {
+        let obj = &args[0];
+        let index = &args[1];
+        let index = if let Value::Identifier(index) = index {
+            index
+        } else {
+            bail!("Index must be an identifier")
+        };
+        if let Value::NativeObject(obj) = obj {
+            let obj = obj
+                .as_accessible()
+                .ok_or(err_msg("Object not accessible"))?;
+            obj.get(index)?.value_of(ctx)
+        } else {
+            bail!("Type {:?} does not implement Accessible", obj)
+        }
+    }
+    fn name(&self) -> &str {
+        "Access"
+    }
+}
+
+function_head!(If(cond: Boolean, yes: Any, no: Any) => Any);
+impl Callable for If {
+    fn signature(
+        &self,
+        _ctx: &ScriptContext,
+        args: Vec<Type>,
+        _vals: &Vec<Value>,
+    ) -> Result<Type, Error> {
+        // use Type::*;
+        args!(args, cond, yes, no);
+        if Type::Boolean != cond {
+            bail!("Condition type {:?} is not a Boolean", cond);
+        }
+        if yes != no {
+            bail!("Condition return type must be same: {:?} {:?}", yes, no);
+        }
+        Ok(yes)
+    }
+    fn call(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Value, Error> {
+        let cond: bool = args[0].value_of(ctx)?.try_into()?;
+        if cond {
+            args[1].value_of(ctx)
+        } else {
+            args[2].value_of(ctx)
+        }
+    }
+    fn name(&self) -> &str {
+        "If"
+    }
+}
+
 function!(Not(b:Boolean)=>Boolean, self, {
-    let b:bool = self.b.try_into()?;
+    let b:bool = b.try_into()?;
     Ok((!b).into())
 });
 
 function!(BitNot(b:Integer)=>Integer, self, {
-    let b:i64 = self.b.try_into()?;
+    let b:i64 = b.try_into()?;
     Ok((!b).into())
 });
 
 macro_rules! int_op{
     ($name:ident, $op:tt) =>{
         function!($name(a: Integer, b: Integer)=>Integer, self, {
-            let a:i64 = self.a.try_into()?;
-            let b:i64 = self.b.try_into()?;
+            let a:i64 = a.try_into()?;
+            let b:i64 = b.try_into()?;
             Ok((a $op b).into())
         });
     }
@@ -252,8 +227,8 @@ int_op!(BitXor,^);
 macro_rules! bool_op{
     ($name:ident, $op:tt) =>{
         function!($name(a: Boolean, b: Boolean)=>Boolean, self, {
-            let a:bool = self.a.try_into()?;
-            let b:bool = self.b.try_into()?;
+            let a:bool = a.try_into()?;
+            let b:bool = b.try_into()?;
             Ok((a $op b).into())
         });
     }
@@ -265,7 +240,7 @@ bool_op!(Or,||);
 macro_rules! compare_op{
     ($name:ident, $op:tt) =>{
         function!($name(a: Any, b: Any)=>Boolean, self, {
-            match (self.a,self.b) {
+            match (a,b) {
                 (Value::Integer(a),Value::Integer(b)) => Ok((a $op b).into()),
                 (Value::String(a),Value::String(b)) => Ok((a $op b).into()),
                 (Value::Boolean(a),Value::Boolean(b)) => Ok((a $op b).into()),
@@ -283,48 +258,49 @@ compare_op!(Equal, == );
 compare_op!(NotEqual, !=);
 
 function!(Like(a: String, b: String)=>Boolean, self, {
-    let a:String = self.a.try_into()?;
-    let b:String = self.b.try_into()?;
+    let a:String = a.try_into()?;
+    let b:String = b.try_into()?;
     let re = regex::Regex::new(&b).context("failed to compile regex")?;
     Ok(re.is_match(&a).into())
 });
 
 function!(NotLike(a: String, b: String)=>Boolean, self, {
-    let a:String = self.a.try_into()?;
-    let b:String = self.b.try_into()?;
+    let a:String = a.try_into()?;
+    let b:String = b.try_into()?;
     let re = regex::Regex::new(&b).context("failed to compile regex")?;
     Ok((!re.is_match(&a)).into())
 });
 
 function!(ToString(s: Any)=>String, self, {
-    Ok(self.s.to_string().into())
+    Ok(s.to_string().into())
 });
 
 function!(ToInteger(s: String)=>Integer, self, {
-    let s:String = self.s.try_into()?;
+    let s:String = s.try_into()?;
     s.parse::<i64>().map(Into::into)
         .context(format!("failed to parse integer: {}", s))
 });
 
 function!(Split(a: String, b: String)=>array_of!(String), self, {
-    let s:String = self.a.try_into()?;
-    let d:String = self.b.try_into()?;
+    let s:String = a.try_into()?;
+    let d:String = b.try_into()?;
     Ok(s.split(&d).map(Into::into).collect::<Vec<Value>>().into())
 });
 
 #[cfg(test)]
 mod tests {
-    use super::super::*;
+    // use super::super::*;
     use super::*;
 
     macro_rules! op_test {
         ($name:ident, $fn:ident, [ $($in:expr),+ ] , $out:expr) => {
             #[test]
             fn $name() {
-                let func = $fn::new( $($in),+ );
+                let ctx = Default::default();
+                let func = Box::new($fn::new( $($in),+ ));
                 let output = $out;
                 // let input = $in;
-                let ret = func.call().unwrap();
+                let ret = func.call(&ctx).unwrap();
                 assert_eq!(ret, output);
             }
         };

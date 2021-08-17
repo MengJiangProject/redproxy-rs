@@ -16,7 +16,7 @@ use nom::{
 
 mod string;
 use super::script::stdlib::*;
-use super::script::Value;
+use super::script::{Call, Value};
 
 fn parse_many(op: &str, mut args: Vec<Value>) -> Value {
     let op = op.to_ascii_lowercase();
@@ -391,6 +391,12 @@ mod tests {
     expr!(index, Index);
     expr!(access, Access);
     expr!(branch, If);
+
+    // macro_rules! call {
+    //     ($p1:expr) => {
+    //         Call::new($p1).into()
+    //     };
+    // }
 
     macro_rules! id {
         ($st:expr) => {

@@ -1,6 +1,9 @@
+use std::convert::TryInto;
 use std::{error::Error, fmt, str::FromStr};
 
 use nom::error::{convert_error, VerboseError};
+
+use crate::context::Context;
 
 use super::parser::root;
 use super::script::Value;
@@ -10,6 +13,12 @@ pub struct Filter {
     root: Value,
 }
 
+impl Filter {
+    pub fn evaluate(&self, _context: &Context) -> Result<bool, easy_error::Error> {
+        let ret = self.root.value_of(&Default::default())?.try_into()?;
+        Ok(ret)
+    }
+}
 impl FromStr for Filter {
     type Err = SyntaxError;
 
