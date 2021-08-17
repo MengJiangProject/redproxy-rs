@@ -142,7 +142,7 @@ impl Indexable for Vec<Value> {
         };
         let i: usize = index.context("failed to cast index from i64")?;
         if i >= self.len() {
-            bail!("index out of bounds")
+            bail!("index out of bounds: {}", i)
         }
         Ok(&self[i])
     }
@@ -194,6 +194,14 @@ impl Value {
                     Ok(Type::Array(Box::new(Type::Any)))
                 } else {
                     let t = a[0].type_of(ctx)?;
+                    a.iter().try_for_each(|x| {
+                        let xt = x.type_of(ctx)?;
+                        if xt != t {
+                            bail!("array member must have same type: required type={:?}, mismatch item={:?}", t, x)
+                        } else {
+                            Ok(())
+                        }
+                    })?;
                     Ok(Type::Array(Box::new(t)))
                 }
             }
@@ -346,6 +354,17 @@ mod tests {
         eval_test("[1,2,3][0]", 1.into())
     }
 
+    #[test]
+    fn array_type() {
+        let input = "[1,\"true\",false]";
+        let ctx = &Default::default();
+        let value = root::<nom::error::VerboseError<&str>>(input)
+            .unwrap()
+            .1
+            .type_of(ctx);
+        println!("t={:?}", value);
+        assert!(value.is_err());
+    }
     fn eval_test(input: &str, output: Value) {
         let ctx = &Default::default();
         let value = root::<nom::error::VerboseError<&str>>(input)
