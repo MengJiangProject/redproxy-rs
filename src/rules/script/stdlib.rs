@@ -75,12 +75,6 @@ macro_rules! function {
     };
 }
 
-macro_rules! array_of {
-    ($t:ident) => {
-        Array(Box::new($t))
-    };
-}
-
 function_head!(Index(obj: Any, index: Any) => Any);
 impl Callable for Index {
     fn signature(
@@ -195,6 +189,40 @@ impl Callable for If {
     }
 }
 
+function_head!(MemberOf(a: Any, ary: Array) => Boolean);
+impl Callable for MemberOf {
+    fn signature(
+        &self,
+        _ctx: &ScriptContext,
+        args: Vec<Type>,
+        _vals: &Vec<Value>,
+    ) -> Result<Type, Error> {
+        // use Type::*;
+        args!(args, a, ary);
+        let ary = if let Type::Array(ary) = ary {
+            *ary
+        } else {
+            bail!("argument type {:?} is not an Array", ary);
+        };
+        if a != ary {
+            bail!(
+                "subject must have on same type with array: subj={:?} array={:?}",
+                a,
+                ary
+            );
+        }
+        Ok(Type::Boolean)
+    }
+    fn call(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Value, Error> {
+        args!(args, ctx = ctx, a, ary);
+        let vec: Vec<Value> = ary.try_into()?;
+        Ok(vec.into_iter().any(|v| v == a).into())
+    }
+    fn name(&self) -> &str {
+        "MemberOf"
+    }
+}
+
 function!(Not(b:Boolean)=>Boolean, self, {
     let b:bool = b.try_into()?;
     Ok((!b).into())
@@ -281,7 +309,7 @@ function!(ToInteger(s: String)=>Integer, self, {
         .context(format!("failed to parse integer: {}", s))
 });
 
-function!(Split(a: String, b: String)=>array_of!(String), self, {
+function!(Split(a: String, b: String)=>Type::array_of(String), self, {
     let s:String = a.try_into()?;
     let d:String = b.try_into()?;
     Ok(s.split(&d).map(Into::into).collect::<Vec<Value>>().into())
@@ -348,6 +376,13 @@ mod tests {
 
     op_test!(like, Like, ["abc".into(), "a".into()], true.into());
     op_test!(not_like, NotLike, ["abc".into(), "a".into()], false.into());
+
+    op_test!(
+        member_of,
+        MemberOf,
+        [1.into(), vec![1.into()].into()],
+        true.into()
+    );
 
     op_test!(to_string, ToString, [false.into()], "false".into());
     op_test!(to_integer, ToInteger, ["1234".into()], 1234.into());

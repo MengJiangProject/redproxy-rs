@@ -69,6 +69,7 @@ fn parse2(op: &str, p1: Value, p2: Value) -> Value {
         "!=" => NotEqual::new(p1, p2).into(),
         "=~" => Like::new(p1, p2).into(),
         "!~" => NotLike::new(p1, p2).into(),
+        "in" => MemberOf::new(p1, p2).into(),
         //prioity 2
         "&&" | "and" => And::new(p1, p2).into(),
         //prioity 1
@@ -319,7 +320,17 @@ macro_rules! op_rule {
 op_rule!(op_6, op_7, (tag("*"), tag("/"), tag("%")));
 op_rule!(op_5, op_6, (tag("+"), tag("-")));
 op_rule!(op_4, op_5, (tag(">"), tag(">="), tag("<"), tag("<=")));
-op_rule!(op_3, op_4, (tag("=="), tag("!="), tag("=~"), tag("!~")));
+op_rule!(
+    op_3,
+    op_4,
+    (
+        tag("=="),
+        tag("!="),
+        tag("=~"),
+        tag("!~"),
+        tag_no_case("in")
+    )
+);
 op_rule!(op_2, op_3, (tag("&&"), tag_no_case("and")));
 op_rule!(op_1, op_2, (tag("||"), tag_no_case("or")));
 
@@ -387,6 +398,7 @@ mod tests {
     expr!(or, Or);
     expr!(plus, Plus);
     expr!(equal, Equal);
+    expr!(member_of, MemberOf);
     expr!(call, Call);
     expr!(index, Index);
     expr!(access, Access);
@@ -523,9 +535,9 @@ mod tests {
 
     #[test]
     fn complex() {
-        let input = " 1 == [ \"test\" , 0x1 , 0b10 , 0o3 , false , if xyz == 1 then 2 else 3] ";
+        let input = " 1 in [ \"test\" , 0x1 , 0b10 , 0o3 , false , if xyz == 1 then 2 else 3] ";
         let value = {
-            equal!(
+            member_of!(
                 int!(1),
                 array!(vec![
                     str!("test"),
