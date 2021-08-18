@@ -337,14 +337,20 @@ rule!(op_7(i) -> Value, {
 macro_rules! op_rule {
     ($name:ident, $next:ident, $tags:tt) => {
         rule!($name(i) -> Value, {
-            map(nom_tuple((
-                $next,
-                many0(nom_tuple((
-                    ws(alt($tags)),
-                    $next
-                )))
-            )),
-            |(p1, expr)| parse_expr(p1, expr))
+            map(
+                nom_tuple((
+                    $next,
+                    many0(nom_tuple((
+                        ws(alt($tags)),
+                        $next
+                    )))
+                )),
+                |(p1, expr)|
+                    expr.into_iter().fold(p1, |p1, val| {
+                        let (op, p2) = val;
+                        parse2(op, p1, p2).into()
+                    })
+            )
         });
     };
 }
@@ -392,13 +398,6 @@ rule!(op_0 -> Value, {
         op_1
     ))
 });
-
-fn parse_expr(p1: Value, rem: Vec<(&str, Value)>) -> Value {
-    rem.into_iter().fold(p1, |p1, val| {
-        let (op, p2) = val;
-        parse2(op, p1, p2).into()
-    })
-}
 
 rule!(pub root(i)->Value, { all_consuming(terminated(op_0,multispace0)) });
 
