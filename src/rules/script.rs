@@ -96,25 +96,44 @@ impl PartialEq for dyn NativeObject {
     }
 }
 
-pub struct ScriptContext {
-    globals: HashMap<String, Value>,
+pub struct ScriptContext<'a> {
+    parent: Option<&'a ScriptContext<'a>>,
+    varibles: HashMap<String, Value>,
 }
 
-impl ScriptContext {
-    fn lookup(&self, id: &str) -> Result<Value, Error> {
-        self.globals
-            .get(id)
-            .ok_or(err_msg(format!("\"{}\" is undefined", id)))
-            .map(Clone::clone)
+impl<'a> ScriptContext<'a> {
+    pub fn new(parent: Option<&'a ScriptContext>) -> Self {
+        Self {
+            parent,
+            varibles: Default::default(),
+        }
+    }
+    pub fn lookup(&self, id: &str) -> Result<Value, Error> {
+        if let Some(r) = self.varibles.get(id) {
+            Ok(r.clone())
+        } else {
+            if let Some(p) = &self.parent {
+                p.lookup(id)
+            } else {
+                bail!("\"{}\" is undefined", id)
+            }
+        }
+    }
+    pub fn set(&mut self, id: &str, value: Value) {
+        self.varibles.insert(id.to_string(), value);
     }
 }
-impl Default for ScriptContext {
+
+impl Default for ScriptContext<'_> {
     fn default() -> Self {
-        let mut globals = HashMap::default();
-        globals.insert("to_string".to_string(), stdlib::ToString::stub());
-        globals.insert("to_integer".to_string(), stdlib::ToInteger::stub());
-        globals.insert("split".to_string(), stdlib::Split::stub());
-        Self { globals }
+        let mut varibles = HashMap::default();
+        varibles.insert("to_string".to_string(), stdlib::ToString::stub());
+        varibles.insert("to_integer".to_string(), stdlib::ToInteger::stub());
+        varibles.insert("split".to_string(), stdlib::Split::stub());
+        Self {
+            parent: None,
+            varibles,
+        }
     }
 }
 
@@ -365,6 +384,20 @@ mod tests {
         println!("t={:?}", value);
         assert!(value.is_err());
     }
+
+    #[test]
+    fn ctx_scope() {
+        let ctx = &Default::default();
+        let mut ctx2 = ScriptContext::new(Some(ctx));
+        ctx2.set("a", 1.into());
+        let value = root::<nom::error::VerboseError<&str>>("a+1")
+            .unwrap()
+            .1
+            .value_of(&ctx2)
+            .unwrap();
+        assert_eq!(value, 2.into());
+    }
+
     fn eval_test(input: &str, output: Value) {
         let ctx = &Default::default();
         let value = root::<nom::error::VerboseError<&str>>(input)
