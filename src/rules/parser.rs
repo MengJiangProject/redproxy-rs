@@ -78,10 +78,10 @@ fn parse2(op: &str, p1: Value, p2: Value) -> Value {
     }
 }
 
-struct ParserContext<'a> {
-    input: &'a str,
-    ids: Vec<&'a str>,
-}
+// struct ParserContext<'a> {
+//     input: &'a str,
+//     ids: Vec<&'a str>,
+// }
 // all combinator made by this macro will remove any leading whitespaces
 macro_rules! rule {
     (#$($args:tt)*) => (
@@ -154,6 +154,7 @@ macro_rules! ctx {
 }
 
 //for debug use
+#[allow(unused_macros)]
 macro_rules! tap {
     ($e:expr) => {
         |i| {
@@ -431,7 +432,7 @@ rule!(op_0 -> Value, {
     ))
 });
 
-rule!(pub root(i)->Value, { /*all_consuming(*/terminated(op_0,multispace0)/*)*/ });
+rule!(pub root(i)->Value, { all_consuming(terminated(op_0,multispace0)) });
 
 #[cfg(test)]
 mod tests {
