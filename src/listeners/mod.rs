@@ -10,7 +10,6 @@ pub mod http;
 #[cfg(any(target_os = "android", target_os = "linux"))]
 pub mod tproxy;
 
-mod tls;
 #[async_trait]
 pub trait Listener: std::fmt::Debug {
     async fn init(&mut self) -> Result<(), Error>;

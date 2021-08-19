@@ -6,7 +6,7 @@ use tokio::{
     net::TcpStream,
 };
 
-use super::copy::copy_bidirectional;
+use crate::common::copy::copy_bidi;
 use crate::common::http::HttpResponse;
 use crate::context::Context;
 use serde::{Deserialize, Serialize};
@@ -54,7 +54,7 @@ impl super::Connector for HttpConnector {
                     bail!("server failure {:?}", resp);
                 }
                 // let mut client = client.into_inner();
-                copy_bidirectional(&mut client, &mut server)
+                copy_bidi(&mut client, &mut server)
                     .await
                     .context("copy_bidirectional")
             }

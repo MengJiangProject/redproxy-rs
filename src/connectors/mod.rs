@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use easy_error::{err_msg, Error};
 use serde_yaml::{Sequence, Value};
 
-mod copy;
 pub mod direct;
 pub mod http;
 #[async_trait]

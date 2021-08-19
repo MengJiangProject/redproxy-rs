@@ -3,8 +3,7 @@ use easy_error::{Error, ResultExt};
 use log::{trace, warn};
 use tokio::io::BufStream;
 
-use super::copy::copy_bidirectional;
-use crate::context::Context;
+use crate::{common::copy::copy_bidi, context::Context};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -37,7 +36,7 @@ impl super::Connector for DirectConnector {
                 let mut server = BufStream::new(server);
                 trace!("connected to {:?}", target);
                 // let mut client = client.into_inner();
-                copy_bidirectional(&mut client, &mut server)
+                copy_bidi(&mut client, &mut server)
                     .await
                     .context("copy_bidirectional")
             }

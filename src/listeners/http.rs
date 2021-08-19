@@ -6,10 +6,9 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 
 use crate::common::http::HttpRequest;
+use crate::common::tls::{acceptor, TlsOptions};
 use crate::context::Context;
 use crate::listeners::Listener;
-
-use super::tls::{acceptor, TlsOptions};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
