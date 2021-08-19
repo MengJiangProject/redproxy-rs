@@ -10,7 +10,7 @@ use nom::{
     combinator::{all_consuming, cut, map, map_opt, map_res, opt, recognize},
     error::{context, ContextError, FromExternalError, ParseError},
     multi::{many0, many1, separated_list0},
-    sequence::{delimited, pair, preceded, terminated, tuple as nom_tuple},
+    sequence::{delimited, pair, preceded, separated_pair, terminated, tuple as nom_tuple},
     IResult, Parser,
 };
 
@@ -69,7 +69,7 @@ fn parse2(op: &str, p1: Value, p2: Value) -> Value {
         "!=" => NotEqual::new(p1, p2).into(),
         "=~" => Like::new(p1, p2).into(),
         "!~" => NotLike::new(p1, p2).into(),
-        "in" => MemberOf::new(p1, p2).into(),
+        "_:" => MemberOf::new(p1, p2).into(),
         //prioity 2
         "&&" | "and" => And::new(p1, p2).into(),
         //prioity 1
@@ -78,6 +78,10 @@ fn parse2(op: &str, p1: Value, p2: Value) -> Value {
     }
 }
 
+struct ParserContext<'a> {
+    input: &'a str,
+    ids: Vec<&'a str>,
+}
 // all combinator made by this macro will remove any leading whitespaces
 macro_rules! rule {
     (#$($args:tt)*) => (
@@ -146,6 +150,17 @@ macro_rules! no_ctx {
 macro_rules! ctx {
     ($name:ident, $body:block, $input:ident) => {
         context(stringify!($name), ws($body))($input)
+    };
+}
+
+//for debug use
+macro_rules! tap {
+    ($e:expr) => {
+        |i| {
+            let x = $e(i);
+            println!("tap: {}\nin: {}\nout: {:?}", stringify!($e), i, x);
+            x
+        }
     };
 }
 
@@ -279,21 +294,21 @@ rule!(op_value -> Value, {
     ))
 });
 
-rule!(op_index -> (&str,Vec<Value>), {
+rule!(op_index -> (&'a str,Vec<Value>), {
     map(
         delimited(tag("["), op_0, ws(char(']'))),
         |idx| ("index", vec![idx])
     )
 });
 
-rule!(op_access -> (&str,Vec<Value>), {
+rule!(op_access -> (&'a str,Vec<Value>), {
     map(
         preceded(tag("."), alt((identifier,integer))),
         |id| ("access", vec![id])
     )
 });
 
-rule!(op_call -> (&str,Vec<Value>), {
+rule!(op_call -> (&'a str,Vec<Value>), {
     map(
         delimited(
             char('('),
@@ -361,13 +376,7 @@ op_rule!(op_4, op_5, (tag(">"), tag(">="), tag("<"), tag("<=")));
 op_rule!(
     op_3,
     op_4,
-    (
-        tag("=="),
-        tag("!="),
-        tag("=~"),
-        tag("!~"),
-        tag_no_case("in")
-    )
+    (tag("=="), tag("!="), tag("=~"), tag("!~"), tag("_:"))
 );
 op_rule!(op_2, op_3, (tag("&&"), tag_no_case("and")));
 op_rule!(op_1, op_2, (tag("||"), tag_no_case("or")));
@@ -392,14 +401,37 @@ rule!(op_if(i) -> Value, {
     )
 });
 
+rule!(op_assign -> Value, {
+    map(
+        separated_pair(identifier,ws(tag("=")),op_0),
+        |(name,value)| Value::Tuple(Box::new(vec![name,value]))
+    )
+});
+
+rule!(op_let -> Value, {
+    map(
+        nom_tuple((
+            preceded(tag("let"),
+                terminated(
+                    separated_list0(ws(char(';')), op_assign),
+                    opt(ws(char(';')))
+                )
+            ),
+            preceded(ws(tag("in")),op_0),
+        )),
+        |(vars,expr)| Scope::new(vars.into(),expr).into()
+    )
+});
+
 rule!(op_0 -> Value, {
     alt((
         op_if,
+        op_let,
         op_1
     ))
 });
 
-rule!(pub root(i)->Value, { all_consuming(terminated(op_0,multispace0)) });
+rule!(pub root(i)->Value, { /*all_consuming(*/terminated(op_0,multispace0)/*)*/ });
 
 #[cfg(test)]
 mod tests {
@@ -431,6 +463,7 @@ mod tests {
     expr!(equal, Equal);
     expr!(member_of, MemberOf);
     expr!(call, Call);
+    expr!(scope, Scope);
     expr!(index, Index);
     expr!(access, Access);
     expr!(branch, If);
@@ -558,6 +591,18 @@ mod tests {
     }
 
     #[test]
+    fn scope() {
+        let value: Value = scope!(
+            array!(tuple!(id!("a"), int!(1)), tuple!(id!("b"), int!(2))),
+            plus!(id!("a"), id!("b"))
+        );
+        let input = "let a=1;b=2 in a+b";
+        assert_ast(input, value.clone());
+        let input = "let a=1;b=2; in a+b";
+        assert_ast(input, value);
+    }
+
+    #[test]
     fn comments() {
         let input = "if #comments\r\n a /* \r\n /* */then/**/b else c";
         let value = branch!(id!("a"), id!("b"), id!("c"));
@@ -576,7 +621,7 @@ mod tests {
 
     #[test]
     fn complex() {
-        let input = " 1 in [ \"test\" , 0x1 , 0b10 , 0o3 , false , if xyz == 1 then 2 else 3] ";
+        let input = " 1 _: [ \"test\" , 0x1 , 0b10 , 0o3 , false , if xyz == 1 then 2 else 3] ";
         let value = {
             member_of!(
                 int!(1),

@@ -60,7 +60,7 @@ pub trait Callable: std::fmt::Debug + dyn_clone::DynClone {
     fn signature(
         &self,
         ctx: &ScriptContext,
-        args: Vec<Type>,
+        //args: Vec<Type>,
         vals: &Vec<Value>,
     ) -> Result<Type, Error>;
     fn call(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Value, Error>;
@@ -119,8 +119,8 @@ impl<'a> ScriptContext<'a> {
             }
         }
     }
-    pub fn set(&mut self, id: &str, value: Value) {
-        self.varibles.insert(id.to_string(), value);
+    pub fn set(&mut self, id: String, value: Value) {
+        self.varibles.insert(id, value);
     }
 }
 
@@ -198,7 +198,29 @@ impl PartialEq for Value {
     }
 }
 
+#[allow(dead_code)]
 impl Value {
+    fn as_vec(&self) -> &Vec<Value> {
+        match self {
+            Self::Array(a) => &a,
+            Self::Tuple(a) => &a,
+            _ => panic!("as_vec: type mismatch"),
+        }
+    }
+    fn as_str(&self) -> &str {
+        match self {
+            Self::String(a) => &a,
+            Self::Identifier(a) => &a,
+            _ => panic!("as_str: type mismatch"),
+        }
+    }
+    fn as_i64(&self) -> i64 {
+        match self {
+            Self::Integer(a) => *a,
+            _ => panic!("as_i64: type mismatch"),
+        }
+    }
+
     fn type_of(&self, ctx: &ScriptContext) -> Result<Type, Error> {
         use Value::*;
         match self {
@@ -206,7 +228,7 @@ impl Value {
             String(_) => Ok(Type::String),
             Boolean(_) => Ok(Type::Boolean),
             Integer(_) => Ok(Type::Integer),
-            Identifier(_) => Ok(Type::NativeObject),
+            Identifier(id) => ctx.lookup(id).and_then(|x| x.type_of(ctx)),
             OpCall(x) => x.signature(ctx),
             Array(a) => {
                 if a.is_empty() {
@@ -326,11 +348,11 @@ impl Call {
     }
     fn signature(&self, ctx: &ScriptContext) -> Result<Type, Error> {
         let func = self.func(ctx)?;
-        let mut args = Vec::with_capacity(self.args.len());
-        for x in &self.args {
-            args.push(x.type_of(ctx)?);
-        }
-        func.signature(ctx, args, &self.args)
+        // let mut args = Vec::with_capacity(self.args.len());
+        // for x in &self.args {
+        //     args.push(x.type_of(ctx)?);
+        // }
+        func.signature(ctx, &self.args)
     }
     fn call(&self, ctx: &ScriptContext) -> Result<Value, Error> {
         let func = self.func(ctx)?;
@@ -386,16 +408,22 @@ mod tests {
     }
 
     #[test]
-    fn ctx_scope() {
+    fn ctx_chain() {
         let ctx = &Default::default();
         let mut ctx2 = ScriptContext::new(Some(ctx));
-        ctx2.set("a", 1.into());
+        ctx2.set("a".into(), 1.into());
         let value = root::<nom::error::VerboseError<&str>>("a+1")
             .unwrap()
             .1
             .value_of(&ctx2)
             .unwrap();
         assert_eq!(value, 2.into());
+    }
+
+    #[test]
+    fn scope() {
+        type_test("let a=1;b=2 in a+b", Type::Integer);
+        eval_test("let a=1;b=2 in a+b", 3.into());
     }
 
     fn eval_test(input: &str, output: Value) {
@@ -409,11 +437,8 @@ mod tests {
     }
     fn type_test(input: &str, output: Type) {
         let ctx = &Default::default();
-        let value = root::<nom::error::VerboseError<&str>>(input)
-            .unwrap()
-            .1
-            .type_of(ctx)
-            .unwrap();
+        let value = root::<nom::error::VerboseError<&str>>(input).unwrap().1;
+        let value = value.type_of(ctx).unwrap();
         assert_eq!(value, output);
     }
 }

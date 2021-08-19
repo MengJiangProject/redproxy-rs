@@ -16,7 +16,7 @@ macro_rules! function_head {
                 Call::new(vec![$name::stub(), $($aname),+ ])
             }
             pub fn stub() -> Value {
-                #[derive(Debug,Eq,PartialEq,Clone)]
+                #[derive(Eq,PartialEq,Clone)]
                 pub struct Stub ;
                 impl NativeObject for Stub {
                     fn type_of(&self, _ctx: &ScriptContext) -> Result<Type, Error>{Ok(Type::NativeObject)}
@@ -29,6 +29,16 @@ macro_rules! function_head {
                     fn as_any(&self) -> &dyn std::any::Any {self}
                     fn equals(&self, other: &dyn NativeObject) -> bool {
                         other.as_any().downcast_ref::<Self>().map_or(false, |a| self == a)
+                    }
+                }
+                impl std::fmt::Display for Stub {
+                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(f,"{}", stringify!($name))
+                    }
+                }
+                impl std::fmt::Debug for Stub {
+                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(f,"{}", stringify!($name))
                     }
                 }
                 Value::NativeObject(Box::new(Stub))
@@ -55,8 +65,12 @@ macro_rules! function {
             fn name(&self) -> &str {
                 stringify!($name)
             }
-            fn signature(&self, _ctx: &ScriptContext, args: Vec<Type>, _vals: &Vec<Value>) -> Result<Type,Error> {
-                args!(args, $($aname),+);
+            fn signature(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Type,Error> {
+                let mut targs : Vec<Type> = Vec::with_capacity(args.len());
+                for x in args {
+                    targs.push(x.type_of(ctx)?);
+                }
+                args!(targs, $($aname),+);
                 use Type::*;
                 $(if $aname != $atype {
                     bail!("argument {} type mismatch, required: {} provided: {:?}",
@@ -77,13 +91,12 @@ macro_rules! function {
 
 function_head!(Index(obj: Any, index: Any) => Any);
 impl Callable for Index {
-    fn signature(
-        &self,
-        _ctx: &ScriptContext,
-        args: Vec<Type>,
-        _vals: &Vec<Value>,
-    ) -> Result<Type, Error> {
-        args!(args, obj, _index);
+    fn signature(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Type, Error> {
+        let mut targs: Vec<Type> = Vec::with_capacity(args.len());
+        for x in args {
+            targs.push(x.type_of(ctx)?);
+        }
+        args!(targs, obj, _index);
         if let Type::Array(t) = obj {
             Ok(*t)
         } else {
@@ -112,15 +125,10 @@ impl Callable for Index {
 
 function_head!(Access(obj: Any, index: Any) => Any);
 impl Callable for Access {
-    fn signature(
-        &self,
-        ctx: &ScriptContext,
-        _args: Vec<Type>,
-        vals: &Vec<Value>,
-    ) -> Result<Type, Error> {
+    fn signature(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Type, Error> {
         // args!(args, obj, index);
-        let obj = &vals[0];
-        let index = &vals[1];
+        let obj = &args[0];
+        let index = &args[1];
         let index = if let Value::Identifier(index) = index {
             index
         } else {
@@ -160,14 +168,12 @@ impl Callable for Access {
 
 function_head!(If(cond: Boolean, yes: Any, no: Any) => Any);
 impl Callable for If {
-    fn signature(
-        &self,
-        _ctx: &ScriptContext,
-        args: Vec<Type>,
-        _vals: &Vec<Value>,
-    ) -> Result<Type, Error> {
-        // use Type::*;
-        args!(args, cond, yes, no);
+    fn signature(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Type, Error> {
+        let mut targs: Vec<Type> = Vec::with_capacity(args.len());
+        for x in args {
+            targs.push(x.type_of(ctx)?);
+        }
+        args!(targs, cond, yes, no);
         if Type::Boolean != cond {
             bail!("Condition type {:?} is not a Boolean", cond);
         }
@@ -189,16 +195,53 @@ impl Callable for If {
     }
 }
 
+function_head!(Scope(vars: Array, expr: Any) => Any);
+impl Scope {
+    fn make_context<'a>(
+        &self,
+        ctx: &'a ScriptContext,
+        vars: &Vec<Value>,
+    ) -> Result<ScriptContext<'a>, Error> {
+        let mut nctx = ScriptContext::new(Some(ctx));
+        for v in vars.iter() {
+            if let Value::Tuple(x) = v {
+                let id = if let Value::Identifier(s) = &x[0] {
+                    s.clone()
+                } else {
+                    bail!("assigning id should be an identifier, possible bug in parser")
+                };
+                let value = x[1].clone();
+                nctx.set(id, value);
+            } else {
+                bail!("var binding not a tuple, possible bug in parser")
+            }
+        }
+        Ok(nctx)
+    }
+}
+impl Callable for Scope {
+    fn signature(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Type, Error> {
+        let ctx = self.make_context(ctx, &args[0].as_vec())?;
+        let expr = args[1].type_of(&ctx)?;
+        Ok(expr)
+    }
+    fn call(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Value, Error> {
+        let ctx = self.make_context(ctx, &args[0].as_vec())?;
+        args[1].value_of(&ctx)
+    }
+    fn name(&self) -> &str {
+        "Scope"
+    }
+}
+
 function_head!(MemberOf(a: Any, ary: Array) => Boolean);
 impl Callable for MemberOf {
-    fn signature(
-        &self,
-        _ctx: &ScriptContext,
-        args: Vec<Type>,
-        _vals: &Vec<Value>,
-    ) -> Result<Type, Error> {
-        // use Type::*;
-        args!(args, a, ary);
+    fn signature(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Type, Error> {
+        let mut targs: Vec<Type> = Vec::with_capacity(args.len());
+        for x in args {
+            targs.push(x.type_of(ctx)?);
+        }
+        args!(targs, a, ary);
         let ary = if let Type::Array(ary) = ary {
             *ary
         } else {
