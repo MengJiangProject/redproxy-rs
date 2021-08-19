@@ -3,7 +3,7 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use easy_error::{bail, err_msg, Error, ResultExt};
+use easy_error::{err_msg, Error, ResultExt};
 use tokio_rustls::rustls::internal::pemfile::{certs, rsa_private_keys};
 use tokio_rustls::rustls::{Certificate, NoClientAuth, PrivateKey, ServerConfig};
 use tokio_rustls::TlsAcceptor;
