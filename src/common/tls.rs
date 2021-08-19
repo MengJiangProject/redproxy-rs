@@ -3,7 +3,7 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use easy_error::{err_msg, Error, ResultExt};
+use easy_error::{bail, err_msg, Error, ResultExt};
 use tokio_rustls::rustls::internal::pemfile::{certs, rsa_private_keys};
 use tokio_rustls::rustls::{Certificate, NoClientAuth, PrivateKey, ServerConfig};
 use tokio_rustls::TlsAcceptor;
@@ -11,9 +11,36 @@ use tokio_rustls::TlsAcceptor;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TlsOptions {
+pub struct TlsServerConfig {
     cert: PathBuf,
     key: PathBuf,
+    client: Option<TlsClientAuthConfig>,
+    #[serde(skip)]
+    populated: Option<TlsServerConfigPopulated>,
+}
+
+#[derive(Clone)]
+struct TlsServerConfigPopulated {
+    config: Arc<ServerConfig>,
+}
+impl std::fmt::Debug for TlsServerConfigPopulated {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Populated")
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TlsClientAuthConfig {
+    ca: Option<PathBuf>,
+    required: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TlsClientConfig {
+    enabled: bool,
+    ca: Option<PathBuf>,
+    cert: Option<PathBuf>,
+    key: Option<PathBuf>,
 }
 
 fn load_certs(path: &Path) -> Result<Vec<Certificate>, Error> {
@@ -28,54 +55,24 @@ fn load_keys(path: &Path) -> Result<Vec<PrivateKey>, Error> {
     rsa_private_keys(&mut reader).map_err(|_| err_msg("load private key"))
 }
 
-pub fn acceptor(options: &TlsOptions) -> Result<TlsAcceptor, Error> {
-    let certs = load_certs(&options.cert)?;
-    let mut keys = load_keys(&options.key)?;
-    // let flag_echo = options.echo_mode;
-
-    let mut config = ServerConfig::new(NoClientAuth::new());
-    config
-        .set_single_cert(certs, keys.remove(0))
-        .context("set_single_cert")?;
-    Ok(TlsAcceptor::from(Arc::new(config)))
-
-    // let listener = TcpListener::bind(&addr).await?;
-
-    // loop {
-    //     let (stream, peer_addr) = listener.accept().await?;
-    //     let acceptor = acceptor.clone();
-
-    //     let fut = async move {
-    //         let mut stream = acceptor.accept(stream).await?;
-
-    //         if flag_echo {
-    //             let (mut reader, mut writer) = split(stream);
-    //             let n = copy(&mut reader, &mut writer).await?;
-    //             writer.flush().await?;
-    //             println!("Echo: {} - {}", peer_addr, n);
-    //         } else {
-    //             let mut output = sink();
-    //             stream
-    //                 .write_all(
-    //                     &b"HTTP/1.0 200 ok\r\n\
-    //                 Connection: close\r\n\
-    //                 Content-length: 12\r\n\
-    //                 \r\n\
-    //                 Hello world!"[..],
-    //                 )
-    //                 .await?;
-    //             stream.shutdown().await?;
-    //             copy(&mut stream, &mut output).await?;
-    //             println!("Hello: {}", peer_addr);
-    //         }
-
-    //         Ok(()) as io::Result<()>
-    //     };
-
-    //     tokio::spawn(async move {
-    //         if let Err(err) = fut.await {
-    //             eprintln!("{:?}", err);
-    //         }
-    //     });
-    // }
+impl TlsServerConfig {
+    pub fn init(&mut self) -> Result<(), Error> {
+        let certs = load_certs(&self.cert)?;
+        let mut keys = load_keys(&self.key)?;
+        let key = keys.remove(0);
+        let mut config = ServerConfig::new(NoClientAuth::new());
+        config
+            .set_single_cert(certs, key)
+            .context("failed to load certificate")?;
+        let config = Arc::new(config);
+        self.populated = Some(TlsServerConfigPopulated { config });
+        Ok(())
+    }
+    pub fn acceptor(&self) -> TlsAcceptor {
+        if let Some(populated) = &self.populated {
+            TlsAcceptor::from(populated.config.clone())
+        } else {
+            panic!("TlsServerConfig not initilazed")
+        }
+    }
 }
