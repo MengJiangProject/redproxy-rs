@@ -5,6 +5,7 @@ use serde_yaml::{Sequence, Value};
 
 mod copy;
 pub mod direct;
+pub mod http;
 #[async_trait]
 pub trait Connector: std::fmt::Debug {
     async fn init(&mut self) -> Result<(), Error>;
@@ -26,6 +27,7 @@ pub fn from_value(value: &Value) -> Result<Box<dyn Connector>, Error> {
     let tname = value.get("type").or(Some(name)).unwrap();
     match tname.as_str() {
         Some("direct") => direct::from_value(value),
+        Some("http") => http::from_value(value),
         _ => Err(err_msg("not implemented")),
     }
 }

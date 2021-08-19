@@ -1,4 +1,5 @@
 use std::{
+    fmt::Display,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     str::FromStr,
 };
@@ -48,6 +49,15 @@ impl FromStr for TargetAddress {
             let host = parts.next().ok_or(InvalidAddress)?;
             let port = port.parse().map_err(|_| InvalidAddress)?;
             Ok(TargetAddress::DomainPort(host.to_string(), port))
+        }
+    }
+}
+
+impl Display for TargetAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DomainPort(domain, port) => write!(f, "{}:{}", domain, port),
+            Self::SocketAddr(addr) => write!(f, "{}", addr),
         }
     }
 }

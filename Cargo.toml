@@ -20,3 +20,6 @@ nom = "6.2.1"
 # nom_locate = "3.0.2"
 regex = "1"
 dyn-clone = "1"
+[dev-dependencies]
+tokio-test = "0.4.2"
+test-env-log = "0.2.7"

@@ -13,8 +13,11 @@ listeners:
 
 connectors:
   - name: direct
+  - name: http
+    server: 192.168.100.107
+    port: 3128
 
 rules:
-  - filter: domain.end_with("google.com") && family == ipv4
-    target: direct
-  - target: direct
+  # - filter: domain.end_with("google.com") && family == ipv4
+  #   target: http
+  - target: http

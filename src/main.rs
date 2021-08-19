@@ -6,6 +6,7 @@ use easy_error::{err_msg, Terminator};
 use log::trace;
 use tokio::sync::mpsc::channel;
 
+mod common;
 mod config;
 mod connectors;
 mod context;
