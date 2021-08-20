@@ -18,6 +18,6 @@ connectors:
     port: 3128
 
 rules:
-  # - filter: domain.end_with("google.com") && family == ipv4
-  #   target: http
+  - filter: request.source == "127.0.0.1"
+    target: http
   - target: http

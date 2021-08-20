@@ -3,6 +3,7 @@ name = "redproxy-rs"
 version = "0.1.0"
 authors = ["Bearice Ren <bearice@icybear.net>"]
 edition = "2018"
+default-run = "redproxy-rs"
 
 [[bin]]
 name = "redproxy-rs"
