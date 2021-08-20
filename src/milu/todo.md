@@ -110,4 +110,60 @@ do
 ```
 ---
 - [ ] todo: pattern match
-let [a|b] = [1,2,3] in (1,[2,3]) == (a,b)
+let [a|b] = [1,2,3] in (1,[2,3]) == (a,b) 
+
+---
+- [ ] todo: curry functions
+
+```
+let plus(a,b) : integer -> integer -> integer = a+b
+in let x = plus(1) in x(2)
+```
+
+AST:
+let
+    [tuple]
+        plus
+        func
+            (a,b)
+            (integer,integer,integer)
+            plus
+                a
+                b
+    let
+        [tuple]
+            x
+            call
+                plus
+                [1]
+        call
+            x
+            2
+
+type_of(call(x,2))
+    type_of(x,[2])
+        type_of(call(plus,1))
+            type_of(plus,[1]) as int -> int
+        as int -> int
+    as int
+as int
+
+value_of(call(x,2))
+    value_of(x,[2])
+        value_of(call(plus,1))
+            value_of(plus,[1])
+                value_of(+,[a,b])
+                    value_of(a) = 1
+                    value_of(b) = 2
+                = 3
+            = 3
+        = 3
+    = 3
+= 3
+
+combinator:
+let
+    plus(a,b) : int->int->int = a+b
+    carry(fn,x) : (int->int->int)->int->int = fn(x)
+in
+    carry(plus,1)(2)

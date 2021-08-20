@@ -16,20 +16,17 @@ macro_rules! function_head {
                 Call::new(vec![$name::stub(), $($aname),+ ])
             }
             pub fn stub() -> Value {
-                #[derive(Eq,PartialEq,Clone)]
-                pub struct Stub ;
+                #[derive(Clone)]
+                pub struct Stub($name) ;
                 impl NativeObject for Stub {
+                    fn name(&self) -> &str {stringify!($name)}
                     fn type_of(&self, _ctx: &ScriptContext) -> Result<Type, Error>{Ok(Type::NativeObject)}
                     fn value_of(&self, _ctx: &ScriptContext) -> Result<Value, Error>{
                         Ok($name::stub())
                     }
-                    fn as_accessible(&self) -> Option<Box<dyn Accessible>>{None}
-                    fn as_indexable(&self) -> Option<Box<dyn Indexable>>{None}
-                    fn as_callable(&self) -> Option<Box<dyn Callable>>{Some(Box::new($name{}))}
-                    fn as_any(&self) -> &dyn std::any::Any {self}
-                    fn equals(&self, other: &dyn NativeObject) -> bool {
-                        other.as_any().downcast_ref::<Self>().map_or(false, |a| self == a)
-                    }
+                    fn as_accessible(&self) -> Option<&dyn Accessible>{None}
+                    fn as_indexable(&self) -> Option<&dyn Indexable>{None}
+                    fn as_callable(&self) -> Option<&dyn Callable>{Some(&self.0)}
                 }
                 impl std::fmt::Display for Stub {
                     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -41,7 +38,7 @@ macro_rules! function_head {
                         write!(f,"{}", stringify!($name))
                     }
                 }
-                Value::NativeObject(Box::new(Stub))
+                Value::NativeObject(Box::new(Stub($name{})))
             }
         }
     };
@@ -109,8 +106,8 @@ impl Callable for Index {
     fn call(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Value, Error> {
         args!(args, ctx = ctx, obj, index);
         let index: i64 = index.try_into()?;
-        let obj: Box<dyn Indexable> = match obj {
-            Value::Array(a) => a,
+        let obj: &dyn Indexable = match &obj {
+            Value::Array(a) => a.as_ref(),
             Value::NativeObject(a) => a
                 .as_indexable()
                 .ok_or(err_msg("NativeObject does not implement Indexible"))?,
@@ -145,7 +142,7 @@ impl Callable for Access {
         }
     }
     fn call(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Value, Error> {
-        let obj = &args[0];
+        let obj = args[0].value_of(ctx)?;
         let index = &args[1];
         let index = if let Value::Identifier(index) = index {
             index

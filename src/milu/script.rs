@@ -1,6 +1,5 @@
 use easy_error::{bail, err_msg, Error, ResultExt};
 use std::{
-    any::Any,
     collections::HashMap,
     convert::{TryFrom, TryInto},
     fmt::Display,
@@ -70,12 +69,14 @@ impl Display for Type {
 
 pub trait Indexable {
     fn length(&self) -> usize;
-    fn get(&self, index: i64) -> Result<&Value, Error>;
+    fn type_of(&self, index: i64, ctx: &ScriptContext) -> Result<Type, Error>;
+    fn get(&self, index: i64) -> Result<Value, Error>;
 }
 
 pub trait Accessible {
     fn names(&self) -> Vec<&str>;
-    fn get(&self, name: &str) -> Result<&Value, Error>;
+    fn type_of(&self, name: &str, ctx: &ScriptContext) -> Result<Type, Error>;
+    fn get(&self, name: &str) -> Result<Value, Error>;
 }
 
 pub trait Callable: std::fmt::Debug + dyn_clone::DynClone {
@@ -103,20 +104,19 @@ impl PartialEq for dyn Callable {
 }
 
 pub trait NativeObject: std::fmt::Debug + dyn_clone::DynClone {
+    fn name(&self) -> &str;
     fn type_of(&self, ctx: &ScriptContext) -> Result<Type, Error>;
     fn value_of(&self, ctx: &ScriptContext) -> Result<Value, Error>;
-    fn as_accessible(&self) -> Option<Box<dyn Accessible>>;
-    fn as_indexable(&self) -> Option<Box<dyn Indexable>>;
-    fn as_callable(&self) -> Option<Box<dyn Callable>>;
-    fn as_any(&self) -> &dyn Any;
-    fn equals(&self, other: &dyn NativeObject) -> bool;
+    fn as_accessible(&self) -> Option<&dyn Accessible>;
+    fn as_indexable(&self) -> Option<&dyn Indexable>;
+    fn as_callable(&self) -> Option<&dyn Callable>;
 }
 dyn_clone::clone_trait_object!(NativeObject);
 
 impl Eq for dyn NativeObject {}
 impl PartialEq for dyn NativeObject {
     fn eq(&self, other: &dyn NativeObject) -> bool {
-        self.equals(other)
+        self.name() == other.name()
     }
 }
 
@@ -166,8 +166,13 @@ impl Accessible for HashMap<String, Value> {
         self.keys().map(String::as_str).collect()
     }
 
-    fn get(&self, name: &str) -> Result<&Value, Error> {
+    fn type_of(&self, name: &str, ctx: &ScriptContext) -> Result<Type, Error> {
+        Accessible::get(self, name).and_then(|x| x.type_of(ctx))
+    }
+
+    fn get(&self, name: &str) -> Result<Value, Error> {
         self.get(name)
+            .map(Clone::clone)
             .ok_or(err_msg(format!("undefined: {}", name)))
     }
 }
@@ -177,7 +182,11 @@ impl Indexable for Vec<Value> {
         self.len()
     }
 
-    fn get(&self, index: i64) -> Result<&Value, Error> {
+    fn type_of(&self, index: i64, ctx: &ScriptContext) -> Result<Type, Error> {
+        Indexable::get(self, index).and_then(|x| x.type_of(ctx))
+    }
+
+    fn get(&self, index: i64) -> Result<Value, Error> {
         let index: Result<usize, std::num::TryFromIntError> = if index >= 0 {
             index.try_into()
         } else {
@@ -187,7 +196,7 @@ impl Indexable for Vec<Value> {
         if i >= self.len() {
             bail!("index out of bounds: {}", i)
         }
-        Ok(&self[i])
+        Ok(self[i].clone())
     }
 }
 
@@ -386,25 +395,26 @@ impl Call {
     }
     fn signature(&self, ctx: &ScriptContext) -> Result<Type, Error> {
         let func = self.func(ctx)?;
-        // let mut args = Vec::with_capacity(self.args.len());
-        // for x in &self.args {
-        //     args.push(x.type_of(ctx)?);
-        // }
+        let func = func.as_callable().unwrap();
         func.signature(ctx, &self.args)
     }
     fn call(&self, ctx: &ScriptContext) -> Result<Value, Error> {
         let func = self.func(ctx)?;
+        let func = func.as_callable().unwrap();
         func.call(ctx, &self.args)
     }
-    fn func(&self, ctx: &ScriptContext) -> Result<Box<dyn Callable>, Error> {
+    fn func(&self, ctx: &ScriptContext) -> Result<Box<dyn NativeObject>, Error> {
         let func = if let Value::Identifier(_) = &self.func {
             self.func.value_of(ctx)?
         } else {
             self.func.clone()
         };
         if let Value::NativeObject(x) = func {
-            x.as_callable()
-                .ok_or(err_msg("NativeObject does not implement Callable"))
+            if x.as_callable().is_some() {
+                Ok(x)
+            } else {
+                Err(err_msg("NativeObject does not implement Callable"))
+            }
         } else {
             bail!("func does not implement Callable: {:?}", func)
         }
