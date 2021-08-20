@@ -3,6 +3,7 @@ use std::{
     any::Any,
     collections::HashMap,
     convert::{TryFrom, TryInto},
+    fmt::Display,
 };
 pub mod stdlib;
 
@@ -44,6 +45,29 @@ impl PartialEq for Type {
         }
     }
 }
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            &Self::String => write!(f, "string"),
+            &Self::Integer => write!(f, "integer"),
+            &Self::Boolean => write!(f, "boolean"),
+            Self::Array(a) => write!(f, "[{}]", a),
+            Self::Tuple(t) => write!(
+                f,
+                "({})",
+                t.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            &Self::NativeObject => write!(f, "native"),
+            &Self::Null => write!(f, "null"),
+            &Self::Any => write!(f, "any"),
+        }
+    }
+}
+
 pub trait Indexable {
     fn length(&self) -> usize;
     fn get(&self, index: i64) -> Result<&Value, Error>;
@@ -327,8 +351,22 @@ impl std::fmt::Display for Value {
             Boolean(b) => write!(f, "{}", b),
             Identifier(id) => write!(f, "<{}>", id),
             OpCall(x) => write!(f, "{:?}", x),
-            Array(x) => write!(f, "{:?}", x),
-            Tuple(x) => write!(f, "{:?}", x),
+            Array(x) => write!(
+                f,
+                "[{}]",
+                x.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            Tuple(x) => write!(
+                f,
+                "({})",
+                x.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
             NativeObject(x) => write!(f, "{:?}", x),
             // _ => panic!("not implemented"),
         }

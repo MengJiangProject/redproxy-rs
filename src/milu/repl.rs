@@ -1,6 +1,7 @@
 mod parser;
 mod script;
 
+use easy_error::{ResultExt, Terminator};
 use nom::error::VerboseError;
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::config::OutputStreamType;
@@ -81,7 +82,30 @@ impl Validator for MyHelper {
     }
 }
 
-fn main() -> rustyline::Result<()> {
+const VERSION: &str = "v0.1.0";
+fn main() -> Result<(), Terminator> {
+    let args = clap::App::new("milu-repl")
+        .version(VERSION)
+        .arg(clap::Arg::with_name("INPUT").help("filename").index(1))
+        .get_matches();
+    let input = args.value_of("INPUT");
+    if let Some(i) = input {
+        let buf = std::fs::read(i)?;
+        let buf = String::from_utf8(buf)?;
+        eval(&Default::default(), &buf);
+    } else {
+        repl().context("repl")?;
+    }
+    Ok(())
+}
+
+fn repl() -> rustyline::Result<()> {
+    let is_tty = nix::unistd::isatty(nix::libc::STDIN_FILENO)?;
+    macro_rules! println {
+        () => (if(is_tty) {println!("\n")});
+        ($($arg:tt)*) => ({if(is_tty) {std::println!($($arg)*);}})
+    }
+
     let config = Config::builder()
         .history_ignore_space(true)
         .completion_type(CompletionType::List)
@@ -99,14 +123,15 @@ fn main() -> rustyline::Result<()> {
     rl.set_helper(Some(h));
     rl.bind_sequence(KeyEvent::alt('N'), Cmd::HistorySearchForward);
     rl.bind_sequence(KeyEvent::alt('P'), Cmd::HistorySearchBackward);
+
     if rl.load_history("history.txt").is_err() {
         println!("No previous history.");
     }
 
     println!();
-    println!("This is the milu language repl v0.1.0");
-    println!("use `;;' to end an expression");
-    println!("Press Ctrl-D or enter \"quit\" to exit.");
+    println!("This is the milu-repl {}", VERSION);
+    println!("Use `;;' to end an expression");
+    println!("Press Ctrl-D to exit.");
     println!();
     let mut count = 1;
     let ctx: script::ScriptContext = Default::default();
@@ -122,8 +147,8 @@ fn main() -> rustyline::Result<()> {
                 buf.push(line.to_owned());
                 if line.ends_with(";;") {
                     let sbuf = buf.join(" ");
-                    eval(&ctx, sbuf.trim_end_matches(";;"));
-                    rl.add_history_entry(sbuf.as_str());
+                    eval(&ctx, &sbuf);
+                    rl.add_history_entry(&sbuf);
                     count += 1;
                     buf.clear();
                 }
@@ -137,7 +162,7 @@ fn main() -> rustyline::Result<()> {
                 break;
             }
             Err(err) => {
-                println!("Error: {:?}", err);
+                eprintln!("Error: {:?}", err);
                 break;
             }
         }
@@ -149,22 +174,26 @@ fn main() -> rustyline::Result<()> {
 fn eval(ctx: &script::ScriptContext, str: &str) -> bool {
     let val = parser::root::<VerboseError<&str>>(str);
     if let Err(e) = val {
-        println!("{}", e);
+        let msg = match e {
+            nom::Err::Error(e) | nom::Err::Failure(e) => nom::error::convert_error(str, e),
+            _ => e.to_string(),
+        };
+        eprintln!("parser error: {}", msg);
         return false;
     }
     let val = val.unwrap().1;
     let typ = val.type_of(&ctx);
     if let Err(e) = typ {
-        println!("{}", e);
+        eprintln!("type inference error: {}", e);
         return false;
     }
     let val = val.value_of(&ctx);
     if let Err(e) = val {
-        println!("{}", e);
+        eprintln!("eval error: {}", e);
         return false;
     }
     let val = val.unwrap();
     let typ = typ.unwrap();
-    println!("{} : {:?}", val, typ);
+    println!("{} : {}", val, typ);
     return true;
 }

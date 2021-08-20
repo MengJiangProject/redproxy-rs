@@ -432,7 +432,9 @@ rule!(op_0 -> Value, {
     ))
 });
 
-rule!(pub root(i)->Value, { all_consuming(terminated(op_0,multispace0)) });
+rule!(pub root(i)->Value, {
+    all_consuming(terminated(op_0,delimited(multispace0,opt(tag(";;")),multispace0)))
+});
 
 #[cfg(test)]
 mod tests {
