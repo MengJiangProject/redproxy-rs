@@ -221,7 +221,7 @@ impl Value {
         }
     }
 
-    fn type_of(&self, ctx: &ScriptContext) -> Result<Type, Error> {
+    pub fn type_of(&self, ctx: &ScriptContext) -> Result<Type, Error> {
         use Value::*;
         match self {
             Null => Ok(Type::Null),
