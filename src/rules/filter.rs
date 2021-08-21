@@ -7,9 +7,9 @@ use nom::error::{convert_error, VerboseError};
 
 use crate::context::Context;
 
-use crate::milu::parser::root;
-use crate::milu::script::{
-    Accessible, Callable, Indexable, NativeObject, ScriptContext, Type, Value,
+use milu::parser::root;
+use milu::script::{
+    Accessible, Callable, Evaluatable, Indexable, NativeObject, ScriptContext, Type, Value,
 };
 
 #[derive(Debug)]
@@ -74,12 +74,13 @@ impl fmt::Debug for SyntaxError {
         write!(f, "SyntaxError: {}", self.msg)
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 struct ContextAdaptor {
     listener: Value,
     source: Value,
     target: Value,
 }
+
 impl ContextAdaptor {
     fn new(c: &Context) -> Self {
         let listener = c.listener.clone().into();
@@ -92,6 +93,7 @@ impl ContextAdaptor {
         }
     }
 }
+
 impl Accessible for ContextAdaptor {
     fn names(&self) -> Vec<&str> {
         vec!["listener", "source", "target"]
@@ -114,40 +116,29 @@ impl Accessible for ContextAdaptor {
     }
 }
 
-impl From<ContextAdaptor> for Value {
-    fn from(c: ContextAdaptor) -> Self {
-        #[derive(Clone)]
-        pub struct Stub(ContextAdaptor);
-        impl NativeObject for Stub {
-            fn name(&self) -> &str {
-                "request"
-            }
-            fn type_of(&self, _ctx: &ScriptContext) -> Result<Type, Error> {
-                Ok(Type::NativeObject)
-            }
-            fn value_of(&self, _ctx: &ScriptContext) -> Result<Value, Error> {
-                bail!("not a value")
-            }
-            fn as_accessible(&self) -> Option<&dyn Accessible> {
-                Some(&self.0)
-            }
-            fn as_indexable(&self) -> Option<&dyn Indexable> {
-                None
-            }
-            fn as_callable(&self) -> Option<&dyn Callable> {
-                None
-            }
-        }
-        impl std::fmt::Display for Stub {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{}", stringify!($name))
-            }
-        }
-        impl std::fmt::Debug for Stub {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{}", stringify!($name))
-            }
-        }
-        Value::NativeObject(Box::new(Stub(c)))
+impl NativeObject for ContextAdaptor {
+    fn as_evaluatable(&self) -> Option<&dyn Evaluatable> {
+        None
+    }
+    fn as_accessible(&self) -> Option<&dyn Accessible> {
+        Some(self)
+    }
+    fn as_indexable(&self) -> Option<&dyn Indexable> {
+        None
+    }
+    fn as_callable(&self) -> Option<&dyn Callable> {
+        None
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn equals(&self, other: &dyn NativeObject) -> bool {
+        other.as_any().downcast_ref::<Self>().is_some()
+    }
+}
+
+impl std::fmt::Display for ContextAdaptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 }

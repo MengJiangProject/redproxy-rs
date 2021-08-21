@@ -67,6 +67,11 @@ impl Display for Type {
     }
 }
 
+pub trait Evaluatable {
+    fn type_of(&self, ctx: &ScriptContext) -> Result<Type, Error>;
+    fn value_of(&self, ctx: &ScriptContext) -> Result<Value, Error>;
+}
+
 pub trait Indexable {
     fn length(&self) -> usize;
     fn type_of(&self, index: i64, ctx: &ScriptContext) -> Result<Type, Error>;
@@ -79,86 +84,10 @@ pub trait Accessible {
     fn get(&self, name: &str) -> Result<&Value, Error>;
 }
 
-pub trait Callable: std::fmt::Debug + dyn_clone::DynClone {
-    // fn new(args: Vec<Value>) -> Box<dyn Callable>;
+pub trait Callable {
     // should not return Any
-    fn signature(
-        &self,
-        ctx: &ScriptContext,
-        //args: Vec<Type>,
-        vals: &Vec<Value>,
-    ) -> Result<Type, Error>;
+    fn signature(&self, ctx: &ScriptContext, vals: &Vec<Value>) -> Result<Type, Error>;
     fn call(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Value, Error>;
-
-    // fn clone(&self) -> Box<dyn Callable>;
-    fn name(&self) -> &str;
-    // fn paramters(&self) -> Box<[&Value]>;
-}
-
-dyn_clone::clone_trait_object!(Callable);
-impl Eq for dyn Callable {}
-impl PartialEq for dyn Callable {
-    fn eq(&self, other: &dyn Callable) -> bool {
-        self.name() == other.name() //&& self.paramters() == other.paramters()
-    }
-}
-
-pub trait NativeObject: std::fmt::Debug + dyn_clone::DynClone {
-    fn name(&self) -> &str;
-    fn type_of(&self, ctx: &ScriptContext) -> Result<Type, Error>;
-    fn value_of(&self, ctx: &ScriptContext) -> Result<Value, Error>;
-    fn as_accessible(&self) -> Option<&dyn Accessible>;
-    fn as_indexable(&self) -> Option<&dyn Indexable>;
-    fn as_callable(&self) -> Option<&dyn Callable>;
-}
-dyn_clone::clone_trait_object!(NativeObject);
-
-impl Eq for dyn NativeObject {}
-impl PartialEq for dyn NativeObject {
-    fn eq(&self, other: &dyn NativeObject) -> bool {
-        self.name() == other.name()
-    }
-}
-
-pub struct ScriptContext<'a> {
-    parent: Option<&'a ScriptContext<'a>>,
-    varibles: HashMap<String, Value>,
-}
-
-impl<'a> ScriptContext<'a> {
-    pub fn new(parent: Option<&'a ScriptContext>) -> Self {
-        Self {
-            parent,
-            varibles: Default::default(),
-        }
-    }
-    pub fn lookup(&self, id: &str) -> Result<Value, Error> {
-        if let Some(r) = self.varibles.get(id) {
-            Ok(r.clone())
-        } else {
-            if let Some(p) = &self.parent {
-                p.lookup(id)
-            } else {
-                bail!("\"{}\" is undefined", id)
-            }
-        }
-    }
-    pub fn set(&mut self, id: String, value: Value) {
-        self.varibles.insert(id, value);
-    }
-}
-
-impl Default for ScriptContext<'_> {
-    fn default() -> Self {
-        let mut varibles = HashMap::default();
-        varibles.insert("to_string".to_string(), stdlib::ToString::stub());
-        varibles.insert("to_integer".to_string(), stdlib::ToInteger::stub());
-        varibles.insert("split".to_string(), stdlib::Split::stub());
-        Self {
-            parent: None,
-            varibles,
-        }
-    }
 }
 
 impl Accessible for HashMap<String, Value> {
@@ -196,6 +125,63 @@ impl Indexable for Vec<Value> {
             bail!("index out of bounds: {}", i)
         }
         Ok(&self[i])
+    }
+}
+
+pub trait NativeObject: dyn_clone::DynClone + std::fmt::Debug + std::any::Any {
+    fn as_evaluatable(&self) -> Option<&dyn Evaluatable>;
+    fn as_accessible(&self) -> Option<&dyn Accessible>;
+    fn as_indexable(&self) -> Option<&dyn Indexable>;
+    fn as_callable(&self) -> Option<&dyn Callable>;
+    fn as_any(&self) -> &dyn std::any::Any;
+    fn equals(&self, other: &dyn NativeObject) -> bool;
+}
+dyn_clone::clone_trait_object!(NativeObject);
+impl Eq for dyn NativeObject {}
+impl PartialEq for dyn NativeObject {
+    fn eq(&self, other: &dyn NativeObject) -> bool {
+        self.equals(other)
+    }
+}
+
+pub struct ScriptContext<'a> {
+    parent: Option<&'a ScriptContext<'a>>,
+    varibles: HashMap<String, Value>,
+}
+
+impl<'a> ScriptContext<'a> {
+    pub fn new(parent: Option<&'a ScriptContext>) -> Self {
+        Self {
+            parent,
+            varibles: Default::default(),
+        }
+    }
+    pub fn lookup(&self, id: &str) -> Result<Value, Error> {
+        if let Some(r) = self.varibles.get(id) {
+            Ok(r.clone())
+        } else {
+            if let Some(p) = &self.parent {
+                p.lookup(id)
+            } else {
+                bail!("\"{}\" is undefined", id)
+            }
+        }
+    }
+    pub fn set(&mut self, id: String, value: Value) {
+        self.varibles.insert(id, value);
+    }
+}
+
+impl Default for ScriptContext<'_> {
+    fn default() -> Self {
+        let mut varibles = HashMap::default();
+        varibles.insert("to_string".to_string(), stdlib::ToString.into());
+        varibles.insert("to_integer".to_string(), stdlib::ToInteger.into());
+        varibles.insert("split".to_string(), stdlib::Split.into());
+        Self {
+            parent: None,
+            varibles,
+        }
     }
 }
 
@@ -285,7 +271,9 @@ impl Value {
                 }
                 Ok(Type::Tuple(Box::new(ret)))
             }
-            NativeObject(o) => o.type_of(ctx),
+            NativeObject(o) => o
+                .as_evaluatable()
+                .map_or_else(|| Ok(Type::NativeObject), |x| x.type_of(ctx)),
         }
     }
 
@@ -295,7 +283,9 @@ impl Value {
         match self {
             Identifier(id) => ctx.lookup(id),
             OpCall(f) => f.call(ctx),
-            NativeObject(f) => f.value_of(ctx),
+            NativeObject(f) => f
+                .as_evaluatable()
+                .map_or_else(|| Ok(self.clone()), |x| x.value_of(ctx)),
             _ => Ok(self.clone()),
         }
     }
@@ -340,14 +330,14 @@ impl From<&str> for Value {
     }
 }
 
-// impl<T> From<T> for Value
-// where
-//     T: Callable + 'static,
-// {
-//     fn from(x: T) -> Self {
-//         Value::OpCall(Box::new(x))
-//     }
-// }
+impl<T> From<T> for Value
+where
+    T: NativeObject + 'static,
+{
+    fn from(x: T) -> Self {
+        Value::NativeObject(Box::new(x))
+    }
+}
 
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

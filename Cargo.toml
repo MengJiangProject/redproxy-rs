@@ -9,15 +9,8 @@ default-run = "redproxy-rs"
 name = "redproxy-rs"
 path = "src/main.rs"
 
-[[bin]]
-name = "milu-repl"
-path = "src/milu/repl.rs"
-required-features = ["milu-repl"]
-
-[features]
-milu-repl = ["rustyline","rustyline-derive"]
-
 [dependencies]
+milu = { path = "milu" }
 tokio = { version = "1.9.0", features = ["full"] }
 nix = { version = "0.22.0"}
 async-trait = "0.1.51"
@@ -29,7 +22,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 # rustls = "0.19"
 tokio-rustls = "0.22.0"
-nom = "6.2.1"
+nom = "7"
 # nom_locate = "3.0.2"
 regex = "1"
 dyn-clone = "1"

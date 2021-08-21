@@ -6,39 +6,35 @@ use super::*;
 
 macro_rules! function_head {
     ($name:ident ($($aname:ident : $atype:ident),+) => $rtype:expr) => {
-        #[derive(Debug, Clone)]
-        pub struct $name {
-            // $($aname : Value),+
-        }
+        #[derive(Clone)]
+        pub struct $name;
+
         #[allow(dead_code)]
         impl $name {
             pub fn new($($aname : Value),+) -> Call {
-                Call::new(vec![$name::stub(), $($aname),+ ])
+                Call::new(vec![$name.into(), $($aname),+ ])
             }
-            pub fn stub() -> Value {
-                #[derive(Clone)]
-                pub struct Stub($name) ;
-                impl NativeObject for Stub {
-                    fn name(&self) -> &str {stringify!($name)}
-                    fn type_of(&self, _ctx: &ScriptContext) -> Result<Type, Error>{Ok(Type::NativeObject)}
-                    fn value_of(&self, _ctx: &ScriptContext) -> Result<Value, Error>{
-                        Ok($name::stub())
-                    }
-                    fn as_accessible(&self) -> Option<&dyn Accessible>{None}
-                    fn as_indexable(&self) -> Option<&dyn Indexable>{None}
-                    fn as_callable(&self) -> Option<&dyn Callable>{Some(&self.0)}
-                }
-                impl std::fmt::Display for Stub {
-                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                        write!(f,"{}", stringify!($name))
-                    }
-                }
-                impl std::fmt::Debug for Stub {
-                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                        write!(f,"{}", stringify!($name))
-                    }
-                }
-                Value::NativeObject(Box::new(Stub($name{})))
+        }
+        impl NativeObject for $name {
+            // fn type_of(&self, _ctx: &ScriptContext) -> Result<Type, Error>{ Ok(Type::NativeObject) }
+            // fn value_of(&self, _ctx: &ScriptContext) -> Result<Value, Error>{ bail!("not a value") }
+            fn as_evaluatable(&self) -> Option<&dyn Evaluatable>{None}
+            fn as_accessible(&self) -> Option<&dyn Accessible>{None}
+            fn as_indexable(&self) -> Option<&dyn Indexable>{None}
+            fn as_callable(&self) -> Option<&dyn Callable>{Some(self)}
+            fn as_any(&self) -> &dyn std::any::Any {self}
+            fn equals(&self, other: &dyn NativeObject) -> bool {
+                other.as_any().downcast_ref::<Self>().is_some()
+            }
+        }
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f,"{}", stringify!($name))
+            }
+        }
+        impl std::fmt::Debug for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f,"{}", stringify!($name))
             }
         }
     };
@@ -59,9 +55,6 @@ macro_rules! function {
     ($name:ident ($($aname:ident : $atype:ident),+) => $rtype:expr, $self:ident, $body:tt) => {
         function_head!($name ($($aname : $atype),+) => $rtype);
         impl Callable for $name {
-            fn name(&self) -> &str {
-                stringify!($name)
-            }
             fn signature(&self, ctx: &ScriptContext, args: &Vec<Value>) -> Result<Type,Error> {
                 let mut targs : Vec<Type> = Vec::with_capacity(args.len());
                 for x in args {
@@ -115,9 +108,6 @@ impl Callable for Index {
         };
         obj.get(index)?.value_of(ctx)
     }
-    fn name(&self) -> &str {
-        "Index"
-    }
 }
 
 function_head!(Access(obj: Any, index: Any) => Any);
@@ -158,9 +148,6 @@ impl Callable for Access {
             bail!("Type {:?} does not implement Accessible", obj)
         }
     }
-    fn name(&self) -> &str {
-        "Access"
-    }
 }
 
 function_head!(If(cond: Boolean, yes: Any, no: Any) => Any);
@@ -186,9 +173,6 @@ impl Callable for If {
         } else {
             args[2].value_of(ctx)
         }
-    }
-    fn name(&self) -> &str {
-        "If"
     }
 }
 
@@ -226,9 +210,6 @@ impl Callable for Scope {
         let ctx = self.make_context(ctx, &args[0].as_vec())?;
         args[1].value_of(&ctx)
     }
-    fn name(&self) -> &str {
-        "Scope"
-    }
 }
 
 function_head!(MemberOf(a: Any, ary: Array) => Boolean);
@@ -257,9 +238,6 @@ impl Callable for MemberOf {
         args!(args, ctx = ctx, a, ary);
         let vec: Vec<Value> = ary.try_into()?;
         Ok(vec.into_iter().any(|v| v == a).into())
-    }
-    fn name(&self) -> &str {
-        "MemberOf"
     }
 }
 
