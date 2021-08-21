@@ -22,7 +22,12 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
+            milu/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build milu
+        run: cd milu && cargo build --verbose
+      - name: Run tests of milu
+        run: cd milu && cargo test --verbose
       - name: Build
         run: cargo build --verbose
       - name: Run tests

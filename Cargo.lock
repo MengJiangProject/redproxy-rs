@@ -494,17 +494,12 @@ name = "redproxy-rs"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "clap",
- "dyn-clone",
  "easy-error",
  "env_logger",
  "log",
  "milu",
  "nix",
  "nom",
- "regex",
- "rustyline",
- "rustyline-derive",
  "serde",
  "serde_yaml",
  "test-env-log",

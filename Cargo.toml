@@ -24,12 +24,6 @@ serde_yaml = "0.8"
 tokio-rustls = "0.22.0"
 nom = "7"
 # nom_locate = "3.0.2"
-regex = "1"
-dyn-clone = "1"
-clap = "~2.33"
-
-rustyline = { version = "9.0.0", optional = true }
-rustyline-derive = { version ="0.5.0",optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4.2"
