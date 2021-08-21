@@ -28,3 +28,6 @@ nom = "7"
 [dev-dependencies]
 tokio-test = "0.4.2"
 test-env-log = "0.2.7"
+
+[workspace]
+members = ["milu"]
