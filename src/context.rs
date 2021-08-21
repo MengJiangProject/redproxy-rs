@@ -16,7 +16,7 @@ impl std::fmt::Display for InvalidAddress {
 
 impl std::error::Error for InvalidAddress {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TargetAddress {
     DomainPort(String, u16),
     SocketAddr(SocketAddr),

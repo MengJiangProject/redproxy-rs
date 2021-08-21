@@ -70,13 +70,13 @@ impl Display for Type {
 pub trait Indexable {
     fn length(&self) -> usize;
     fn type_of(&self, index: i64, ctx: &ScriptContext) -> Result<Type, Error>;
-    fn get(&self, index: i64) -> Result<Value, Error>;
+    fn get(&self, index: i64) -> Result<&Value, Error>;
 }
 
 pub trait Accessible {
     fn names(&self) -> Vec<&str>;
     fn type_of(&self, name: &str, ctx: &ScriptContext) -> Result<Type, Error>;
-    fn get(&self, name: &str) -> Result<Value, Error>;
+    fn get(&self, name: &str) -> Result<&Value, Error>;
 }
 
 pub trait Callable: std::fmt::Debug + dyn_clone::DynClone {
@@ -170,9 +170,8 @@ impl Accessible for HashMap<String, Value> {
         Accessible::get(self, name).and_then(|x| x.type_of(ctx))
     }
 
-    fn get(&self, name: &str) -> Result<Value, Error> {
+    fn get(&self, name: &str) -> Result<&Value, Error> {
         self.get(name)
-            .map(Clone::clone)
             .ok_or(err_msg(format!("undefined: {}", name)))
     }
 }
@@ -186,7 +185,7 @@ impl Indexable for Vec<Value> {
         Indexable::get(self, index).and_then(|x| x.type_of(ctx))
     }
 
-    fn get(&self, index: i64) -> Result<Value, Error> {
+    fn get(&self, index: i64) -> Result<&Value, Error> {
         let index: Result<usize, std::num::TryFromIntError> = if index >= 0 {
             index.try_into()
         } else {
@@ -196,7 +195,7 @@ impl Indexable for Vec<Value> {
         if i >= self.len() {
             bail!("index out of bounds: {}", i)
         }
-        Ok(self[i].clone())
+        Ok(&self[i])
     }
 }
 

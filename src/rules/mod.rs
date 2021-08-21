@@ -6,7 +6,7 @@ use log::trace;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::connectors::Connector;
+use crate::{connectors::Connector, context::Context};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Rule {
@@ -29,7 +29,7 @@ impl Rule {
         Ok(())
     }
 
-    pub fn evaluate(&self, context: &super::context::Context) -> bool {
+    pub fn evaluate(&self, context: &Context) -> bool {
         if self.filter.is_none() {
             true
         } else {
