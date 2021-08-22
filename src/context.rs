@@ -16,7 +16,7 @@ impl std::fmt::Display for InvalidAddress {
 
 impl std::error::Error for InvalidAddress {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Hash, Clone)]
 pub enum TargetAddress {
     DomainPort(String, u16),
     SocketAddr(SocketAddr),
@@ -68,4 +68,12 @@ pub struct Context {
     pub socket: BufStream<TcpStream>,
     pub target: TargetAddress,
     pub source: SocketAddr,
+}
+
+impl std::hash::Hash for Context {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.listener.hash(state);
+        self.target.hash(state);
+        self.source.hash(state);
+    }
 }

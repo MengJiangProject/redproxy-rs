@@ -1,4 +1,5 @@
 use std::convert::TryInto;
+use std::rc::Rc;
 use std::{fmt, str::FromStr};
 
 use easy_error::{bail, Error};
@@ -8,22 +9,21 @@ use nom::error::{convert_error, VerboseError};
 use crate::context::Context;
 
 use milu::parser::root;
-use milu::script::{
-    Accessible, Callable, Evaluatable, Indexable, NativeObject, ScriptContext, Type, Value,
-};
+use milu::script::{Accessible, Evaluatable, NativeObject, ScriptContext, Type, Value};
 
 #[derive(Debug)]
 pub struct Filter {
-    root: Value,
+    root: Value<'static>,
 }
 
 impl Filter {
     pub fn evaluate(&self, request: &Context) -> Result<bool, Error> {
         let ctx = Default::default();
-        let mut ctx = ScriptContext::new(Some(&ctx));
+        let mut ctx = ScriptContext::new(Some(ctx));
         let adapter = ContextAdaptor::new(request);
-        ctx.set("request".to_string(), adapter.into());
-        let ret = self.root.value_of(&ctx)?.try_into()?;
+        let value = adapter.into();
+        ctx.set("request".to_string(), value);
+        let ret = self.root.value_of(ctx.into())?.try_into()?;
         trace!("filter eval: {:?} => {}", request, ret);
         Ok(ret)
     }
@@ -74,41 +74,35 @@ impl fmt::Debug for SyntaxError {
         write!(f, "SyntaxError: {}", self.msg)
     }
 }
-#[derive(Clone, Debug)]
-struct ContextAdaptor {
-    listener: Value,
-    source: Value,
-    target: Value,
+#[derive(Clone, Hash, Debug)]
+struct ContextAdaptor<'a> {
+    req: &'a Context,
 }
 
-impl ContextAdaptor {
-    fn new(c: &Context) -> Self {
-        let listener = c.listener.clone().into();
-        let source = c.source.to_string().into();
-        let target = c.target.to_string().into();
-        Self {
-            listener,
-            source,
-            target,
-        }
+impl<'a> ContextAdaptor<'a> {
+    fn new(req: &'a Context) -> Self {
+        Self { req }
     }
 }
 
-impl Accessible for ContextAdaptor {
+impl<'a> Accessible<'a> for ContextAdaptor<'a> {
     fn names(&self) -> Vec<&str> {
         vec!["listener", "source", "target"]
     }
 
-    fn get(&self, name: &str) -> Result<&Value, Error> {
+    fn get(&self, name: &str) -> Result<Value<'a>, Error> {
         match name {
-            "listener" => Ok(&self.listener),
-            "target" => Ok(&self.target),
-            "source" => Ok(&self.source),
+            "listener" => Ok(self.req.listener.clone().into()),
+            "target" => Ok(self.req.target.to_string().into()),
+            "source" => Ok(self.req.source.to_string().into()),
             _ => bail!("property undefined: {}", name),
         }
     }
 
-    fn type_of(&self, name: &str, _ctx: &ScriptContext) -> Result<Type, Error> {
+    fn type_of<'b>(&self, name: &str, _ctx: Rc<ScriptContext<'b>>) -> Result<Type, Error>
+    where
+        'a: 'b,
+    {
         match name {
             "listener" | "source" | "target" => Ok(Type::String),
             _ => bail!("undefined"),
@@ -116,28 +110,13 @@ impl Accessible for ContextAdaptor {
     }
 }
 
-impl NativeObject for ContextAdaptor {
-    fn as_evaluatable(&self) -> Option<&dyn Evaluatable> {
-        None
-    }
-    fn as_accessible(&self) -> Option<&dyn Accessible> {
+impl<'a> NativeObject<'a> for ContextAdaptor<'a> {
+    fn as_accessible(&self) -> Option<&dyn Accessible<'a>> {
         Some(self)
-    }
-    fn as_indexable(&self) -> Option<&dyn Indexable> {
-        None
-    }
-    fn as_callable(&self) -> Option<&dyn Callable> {
-        None
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-    fn equals(&self, other: &dyn NativeObject) -> bool {
-        other.as_any().downcast_ref::<Self>().is_some()
     }
 }
 
-impl std::fmt::Display for ContextAdaptor {
+impl std::fmt::Display for ContextAdaptor<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
