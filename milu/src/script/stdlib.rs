@@ -335,6 +335,7 @@ macro_rules! bool_op{
 // TODO: implement shortcut evaluation here?
 bool_op!(And,&&);
 bool_op!(Or,||);
+bool_op!(Xor,^);
 
 macro_rules! compare_op{
     ($name:ident, $op:tt) =>{
@@ -440,6 +441,7 @@ mod tests {
 
     bool_op_test!(and,And,&&);
     bool_op_test!(or,Or,||);
+    bool_op_test!(xor,Xor,^);
 
     macro_rules! cmp_op_test {
         ($name:ident, $fn:ident, $op:tt) => {

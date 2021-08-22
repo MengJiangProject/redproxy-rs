@@ -75,8 +75,14 @@ fn parse2<'v>(op: &str, p1: Value<'v>, p2: Value<'v>) -> Value<'v> {
         "=~" => Like::new(p1, p2).into(),
         "!~" => NotLike::new(p1, p2).into(),
         "_:" => MemberOf::new(p1, p2).into(),
+        //prioity 2.x
+        "&" => BitAnd::new(p1, p2).into(),
+        "^" => BitXor::new(p1, p2).into(),
+        "|" => BitOr::new(p1, p2).into(),
         //prioity 2
         "&&" | "and" => And::new(p1, p2).into(),
+        //prioity 1
+        "^^" | "xor" => Xor::new(p1, p2).into(),
         //prioity 1
         "||" | "or" => Or::new(p1, p2).into(),
         _ => panic!("not implemented"),
@@ -357,13 +363,13 @@ rule!(op_7(i) -> Value<'static>, {
 });
 
 macro_rules! op_rule {
-    ($name:ident, $next:ident, $tags:tt) => {
+    ($name:ident, $next:ident, $tags:expr ) => {
         rule!($name(i) -> Value<'static>, {
             map(
                 nom_tuple((
                     $next,
                     many0(nom_tuple((
-                        ws(alt($tags)),
+                        ws($tags),
                         $next
                     )))
                 )),
@@ -377,17 +383,24 @@ macro_rules! op_rule {
     };
 }
 
-op_rule!(op_6, op_7, (tag("*"), tag("/"), tag("%")));
-op_rule!(op_5, op_6, (tag("+"), tag("-")));
-op_rule!(op_4_1, op_5, (tag("<<"), tag(">>"), tag(">>>")));
-op_rule!(op_4, op_4_1, (tag(">"), tag(">="), tag("<"), tag("<=")));
+op_rule!(op_6, op_7, alt((tag("*"), tag("/"), tag("%"),)));
+op_rule!(op_5, op_6, alt((tag("+"), tag("-"))));
+op_rule!(op_4_1, op_5, alt((tag("<<"), tag(">>"), tag(">>>"))));
+op_rule!(
+    op_4,
+    op_4_1,
+    alt((tag(">"), tag(">="), tag("<"), tag("<=")))
+);
 op_rule!(
     op_3,
     op_4,
-    (tag("=="), tag("!="), tag("=~"), tag("!~"), tag("_:"))
+    alt((tag("=="), tag("!="), tag("=~"), tag("!~"), tag("_:")))
 );
-op_rule!(op_2, op_3, (tag("&&"), tag_no_case("and")));
-op_rule!(op_1, op_2, (tag("||"), tag_no_case("or")));
+op_rule!(op_2_5, op_3, tag("&"));
+op_rule!(op_2_4, op_2_5, tag("^"));
+op_rule!(op_2_3, op_2_4, tag("|"));
+op_rule!(op_2, op_2_3, alt((tag("&&"), tag_no_case("and"))));
+op_rule!(op_1, op_2, alt((tag("||"), tag_no_case("or"))));
 
 rule!(op_if(i) -> Value<'static>, {
     map(
@@ -470,6 +483,9 @@ mod tests {
     expr!(neg, Negative);
     expr!(and, And);
     expr!(or, Or);
+    expr!(band, BitAnd);
+    expr!(bor, BitOr);
+    expr!(bxor, BitXor);
     expr!(plus, Plus);
     expr!(minus, Minus);
     expr!(mul, Multiply);
@@ -560,8 +576,8 @@ mod tests {
         let input = "1 && ( 2 ) || 3 == 4";
         let value = or!(and!(int!(1), int!(2)), equal!(int!(3), int!(4)));
         assert_ast(input, value);
-        let input = "1 && ( 2 || 3 )";
-        let value = { and!(int!(1), or!(int!(2), int!(3))) };
+        let input = "1 ^ 4 & ( 2 | 3 )";
+        let value = { bxor!(int!(1), band!(int!(4), bor!(int!(2), int!(3)))) };
         assert_ast(input, value);
     }
 
