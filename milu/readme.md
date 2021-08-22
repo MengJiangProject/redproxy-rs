@@ -20,9 +20,9 @@ Each milu program is one and only one expression that evaluates into a value.
 |8|Access|left-to-right|`… . …`|
 |8|Index|left-to-right|`… [ … ]`|
 |8|Call|left-to-right|`… ( … )`|
-|7|Logical NOT (!)|left-to-right|`! …`|
-|7|Bitwise NOT (~)|left-to-right|`~ …`|
-|7|Unary negation (-)|left-to-right|`- …`|
+|7|Logical NOT (!)|right-to-left|`! …`|
+|7|Bitwise NOT (~)|right-to-left|`~ …`|
+|7|Unary negation (-)|right-to-left|`- …`|
 |6|Multiplication (*)|left-to-right|`… * …`|
 |6|Division (/)|left-to-right|`… / …`|
 |6|Remainder (%)|left-to-right|`… % …`|
