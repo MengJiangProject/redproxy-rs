@@ -45,6 +45,7 @@ fn parse1<'v>(op: &str, p1: Value<'v>) -> Value<'v> {
         //prioity 7
         "!" => Not::new(p1).into(),
         "~" => BitNot::new(p1).into(),
+        "-" => Negative::new(p1).into(),
         _ => panic!("not implemented"),
     }
 }
@@ -59,6 +60,10 @@ fn parse2<'v>(op: &str, p1: Value<'v>, p2: Value<'v>) -> Value<'v> {
         //prioity 5
         "+" => Plus::new(p1, p2).into(),
         "-" => Minus::new(p1, p2).into(),
+        //prioity 4.1
+        "<<" => ShiftLeft::new(p1, p2).into(),
+        ">>" => ShiftRight::new(p1, p2).into(),
+        ">>>" => ShiftRightUnsigned::new(p1, p2).into(),
         //prioity 4
         ">" => Greater::new(p1, p2).into(),
         ">=" => GreaterOrEqual::new(p1, p2).into(),
@@ -344,7 +349,7 @@ rule!(op_8(i) -> Value<'static>, {
 //unary opreator
 rule!(op_7(i) -> Value<'static>, {
     alt((
-        map(nom_tuple((alt((tag("!"), tag("~"))), op_7)),
+        map(nom_tuple((alt((tag("!"), tag("~"), tag("-"))), op_7)),
             |(op,p1)|parse1(op, p1).into()
         ),
         op_8
@@ -374,7 +379,8 @@ macro_rules! op_rule {
 
 op_rule!(op_6, op_7, (tag("*"), tag("/"), tag("%")));
 op_rule!(op_5, op_6, (tag("+"), tag("-")));
-op_rule!(op_4, op_5, (tag(">"), tag(">="), tag("<"), tag("<=")));
+op_rule!(op_4_1, op_5, (tag("<<"), tag(">>"), tag(">>>")));
+op_rule!(op_4, op_4_1, (tag(">"), tag(">="), tag("<"), tag("<=")));
 op_rule!(
     op_3,
     op_4,
@@ -461,9 +467,13 @@ mod tests {
 
     expr!(not, Not);
     expr!(bit_not, BitNot);
+    expr!(neg, Negative);
     expr!(and, And);
     expr!(or, Or);
     expr!(plus, Plus);
+    expr!(minus, Minus);
+    expr!(mul, Multiply);
+    expr!(div, Divide);
     expr!(equal, Equal);
     expr!(member_of, MemberOf);
     expr!(call, Call);
@@ -566,6 +576,19 @@ mod tests {
     fn op_7() {
         let input = " ! ! ( ~ true ) ";
         let value = not!(not!(bit_not!(bool!(true))));
+        assert_ast(input, value);
+    }
+
+    #[test]
+    fn op_6() {
+        let input = "1 * 1 / -2";
+        let value = div!(mul!(int!(1), int!(1)), neg!(int!(2)));
+        assert_ast(input, value);
+    }
+    #[test]
+    fn op_5() {
+        let input = "1+1-2";
+        let value = minus!(plus!(int!(1), int!(1)), int!(2));
         assert_ast(input, value);
     }
 

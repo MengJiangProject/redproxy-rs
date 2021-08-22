@@ -290,6 +290,11 @@ function!(BitNot(b:Integer)=>Integer, self, {
     Ok((!b).into())
 });
 
+function!(Negative(b:Integer)=>Integer, self, {
+    let b:i64 = b.try_into()?;
+    Ok((-b).into())
+});
+
 macro_rules! int_op{
     ($name:ident, $op:tt) =>{
         function!($name(a: Integer, b: Integer)=>Integer, self, {
@@ -308,6 +313,15 @@ int_op!(Mod,%);
 int_op!(BitAnd,&);
 int_op!(BitOr,|);
 int_op!(BitXor,^);
+int_op!(ShiftLeft,<<);
+int_op!(ShiftRight,>>);
+function!(ShiftRightUnsigned(a: Integer, b: Integer)=>Integer, self, {
+    let a:i64 = a.try_into()?;
+    let b:i64 = b.try_into()?;
+    let a = a as u64;
+    let a = (a >> b) as i64;
+    Ok(a.into())
+});
 
 macro_rules! bool_op{
     ($name:ident, $op:tt) =>{
@@ -318,7 +332,7 @@ macro_rules! bool_op{
         });
     }
 }
-
+// TODO: implement shortcut evaluation here?
 bool_op!(And,&&);
 bool_op!(Or,||);
 
@@ -393,10 +407,11 @@ mod tests {
 
     op_test!(not, Not, [false.into()], true.into());
     op_test!(bit_not, BitNot, [(!1234).into()], 1234.into());
+    op_test!(negative, Negative, [1234.into()], (-1234).into());
 
     macro_rules! int_op_test {
         ($name:ident, $fn:ident, $op:tt) => {
-            op_test!($name, $fn, [1234.into(),4567.into()], (1234 $op 4567).into());
+            op_test!($name, $fn, [1234.into(),45.into()], (1234 $op 45).into());
         };
     }
 
@@ -408,6 +423,14 @@ mod tests {
     int_op_test!(band,BitAnd,&);
     int_op_test!(bor,BitOr,|);
     int_op_test!(bxor,BitXor,^);
+    int_op_test!(shl,ShiftLeft,<<);
+    int_op_test!(shr,ShiftRight,>>);
+    op_test!(
+        shru,
+        ShiftRightUnsigned,
+        [1234.into(), 45.into()],
+        ((1234u64 >> 45) as i64).into()
+    );
 
     macro_rules! bool_op_test {
         ($name:ident, $fn:ident, $op:tt) => {
