@@ -212,30 +212,31 @@ impl Callable for If {
 }
 
 function_head!(Scope(vars: Array, expr: Any) => Any);
-fn make_context<'value, 'ctx>(
-    vars: &Vec<Value<'value>>,
-    ctx: Rc<ScriptContext<'ctx>>,
-) -> Result<Rc<ScriptContext<'ctx>>, Error>
-where
-    'value: 'ctx,
-{
-    let mut nctx = ScriptContext::new(Some(ctx));
-    for v in vars.iter() {
-        let t = v.as_vec();
-        let id: String = t[0].as_str().to_owned();
-        let value = t[1].unsafe_clone();
-        nctx.set(id, value);
+impl Scope {
+    fn make_context<'value, 'ctx>(
+        vars: &Vec<Value<'value>>,
+        ctx: Rc<ScriptContext<'ctx>>,
+    ) -> Result<Rc<ScriptContext<'ctx>>, Error>
+    where
+        'value: 'ctx,
+    {
+        let mut nctx = ScriptContext::new(Some(ctx));
+        for v in vars.iter() {
+            let t = v.as_vec();
+            let id: String = t[0].as_str().to_owned();
+            let value = t[1].unsafe_clone();
+            nctx.set(id, value);
+        }
+        Ok(Rc::new(nctx))
     }
-    Ok(Rc::new(nctx))
 }
-
 impl Callable for Scope {
     fn signature<'a: 'b, 'b>(
         &self,
         ctx: Rc<ScriptContext<'b>>,
         args: &Vec<Value<'a>>,
     ) -> Result<Type, Error> {
-        let ctx = make_context(&args[0].as_vec(), ctx)?;
+        let ctx = Self::make_context(&args[0].as_vec(), ctx)?;
         let expr = args[1].type_of(ctx)?;
         Ok(expr)
     }
@@ -244,7 +245,7 @@ impl Callable for Scope {
         ctx: Rc<ScriptContext<'b>>,
         args: &Vec<Value<'a>>,
     ) -> Result<Value<'b>, Error> {
-        let ctx = make_context(&args[0].as_vec(), ctx)?;
+        let ctx = Self::make_context(&args[0].as_vec(), ctx)?;
         args[1].value_of(ctx)
     }
 }
