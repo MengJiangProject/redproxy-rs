@@ -3,6 +3,7 @@ use std::{
     collections::HashMap,
     convert::{TryFrom, TryInto},
     fmt::Display,
+    rc::Rc,
 };
 pub mod stdlib;
 
@@ -128,7 +129,7 @@ impl Indexable for Vec<Value> {
     }
 }
 
-pub trait NativeObject: dyn_clone::DynClone + std::fmt::Debug + std::any::Any {
+pub trait NativeObject: std::fmt::Debug + std::any::Any {
     fn as_evaluatable(&self) -> Option<&dyn Evaluatable>;
     fn as_accessible(&self) -> Option<&dyn Accessible>;
     fn as_indexable(&self) -> Option<&dyn Indexable>;
@@ -136,7 +137,7 @@ pub trait NativeObject: dyn_clone::DynClone + std::fmt::Debug + std::any::Any {
     fn as_any(&self) -> &dyn std::any::Any;
     fn equals(&self, other: &dyn NativeObject) -> bool;
 }
-dyn_clone::clone_trait_object!(NativeObject);
+
 impl Eq for dyn NativeObject {}
 impl PartialEq for dyn NativeObject {
     fn eq(&self, other: &dyn NativeObject) -> bool {
@@ -194,7 +195,7 @@ pub enum Value {
     Integer(i64),
     Boolean(bool),
     Identifier(String),
-    NativeObject(Box<dyn NativeObject>),
+    NativeObject(Rc<dyn NativeObject>),
     OpCall(Box<Call>),
 }
 
@@ -335,7 +336,7 @@ where
     T: NativeObject + 'static,
 {
     fn from(x: T) -> Self {
-        Value::NativeObject(Box::new(x))
+        Value::NativeObject(Rc::new(x))
     }
 }
 
@@ -392,7 +393,7 @@ impl Call {
         let func = func.as_callable().unwrap();
         func.call(ctx, &self.args)
     }
-    fn func(&self, ctx: &ScriptContext) -> Result<Box<dyn NativeObject>, Error> {
+    fn func(&self, ctx: &ScriptContext) -> Result<Rc<dyn NativeObject>, Error> {
         let func = if let Value::Identifier(_) = &self.func {
             self.func.value_of(ctx)?
         } else {
