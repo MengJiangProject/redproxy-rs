@@ -239,14 +239,14 @@ impl Default for ScriptContext<'_> {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Value<'a> {
     Null,
-    Array(Box<Vec<Value<'a>>>),
-    Tuple(Box<Vec<Value<'a>>>),
-    String(String),
     Integer(i64),
     Boolean(bool),
+    String(String),
     Identifier(String),
-    NativeObject(Rc<NativeObjectRef<'a>>),
+    Array(Box<Vec<Value<'a>>>),
+    Tuple(Box<Vec<Value<'a>>>),
     OpCall(Box<Call<'a>>),
+    NativeObject(Rc<NativeObjectRef<'a>>),
 }
 
 impl<'a> Value<'a> {
