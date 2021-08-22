@@ -223,7 +223,7 @@ where
     for v in vars.iter() {
         let t = v.as_vec();
         let id: String = t[0].as_str().to_owned();
-        let value = t[1].copy();
+        let value = t[1].unsafe_clone();
         nctx.set(id, value);
     }
     Ok(Rc::new(nctx))

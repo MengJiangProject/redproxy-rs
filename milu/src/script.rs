@@ -144,7 +144,7 @@ impl<'a> Indexable<'a> for Vec<Value<'a>> {
         if i >= self.len() {
             bail!("index out of bounds: {}", i)
         }
-        Ok(self[i].copy())
+        Ok(self[i].unsafe_clone())
     }
 }
 
@@ -257,7 +257,7 @@ impl<'a> PartialEq for Value<'a> {
 
 #[allow(dead_code)]
 impl<'a> Value<'a> {
-    fn copy<'b>(&self) -> Value<'b>
+    fn unsafe_clone<'b>(&self) -> Value<'b>
     where
         'a: 'b,
     {
@@ -337,11 +337,11 @@ impl<'a> Value<'a> {
                 if e.is_some() {
                     e.unwrap().value_of(ctx)
                 } else {
-                    Ok(self.copy())
+                    Ok(self.unsafe_clone())
                     // todo!()
                 }
             }
-            _ => Ok(self.copy()),
+            _ => Ok(self.unsafe_clone()),
         }
     }
 }
@@ -463,7 +463,7 @@ impl<'a> Call<'a> {
         let func = if let Value::Identifier(_) = &self.func {
             self.func.value_of(ctx)?
         } else {
-            self.func.copy()
+            self.func.unsafe_clone()
         };
         if let Value::NativeObject(x) = func {
             if x.as_callable().is_some() {
