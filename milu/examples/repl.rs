@@ -1,6 +1,3 @@
-mod parser;
-mod script;
-
 use easy_error::{ResultExt, Terminator};
 use nom::error::VerboseError;
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
@@ -14,7 +11,9 @@ use rustyline_derive::Helper;
 use std::borrow::Cow::{self, Borrowed, Owned};
 use std::rc::Rc;
 
-use crate::script::Evaluatable;
+use milu::parser;
+use milu::script;
+use milu::script::Evaluatable;
 
 #[derive(Helper)]
 struct MyHelper {
