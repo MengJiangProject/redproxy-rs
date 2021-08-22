@@ -46,5 +46,6 @@ Each milu program is one and only one expression that evaluates into a value.
 |2|Logical AND (&&)|left-to-right|`… && …` or `… and … `|
 |1.5|Logical XOR (^^)|left-to-right|`… ^^ …` or `… xor … `|
 |1|Logical OR (\|\|)|left-to-right|`… \|\| …` or `… or …`|
-|0|Conditional (ternary) operator|right-to-left|`… ? … : …` or `if … then … else …`|
-|0|Scope binding operator (let)|right-to-left|`let … = … in …`|
+|0|Conditional operator (?:)|right-to-left|`… ? … : …`|
+|0|Conditional operator (if)|left-to-right|`if … then … else …`|
+|0|Scope binding operator (let)|left-to-right|`let … = … in …`|
