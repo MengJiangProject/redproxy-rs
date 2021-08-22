@@ -12,6 +12,7 @@ use rustyline::validate::{self, MatchingBracketValidator, Validator};
 use rustyline::{Cmd, CompletionType, Config, Context, EditMode, Editor, KeyEvent};
 use rustyline_derive::Helper;
 use std::borrow::Cow::{self, Borrowed, Owned};
+use std::rc::Rc;
 
 #[derive(Helper)]
 struct MyHelper {
@@ -92,7 +93,7 @@ fn main() -> Result<(), Terminator> {
     if let Some(i) = input {
         let buf = std::fs::read(i)?;
         let buf = String::from_utf8(buf)?;
-        eval(&Default::default(), &buf);
+        eval(Default::default(), &buf);
     } else {
         repl().context("repl")?;
     }
@@ -134,7 +135,7 @@ fn repl() -> rustyline::Result<()> {
     println!("Press Ctrl-D to exit.");
     println!();
     let mut count = 1;
-    let ctx: script::ScriptContext = Default::default();
+    let ctx: Rc<script::ScriptContext> = Default::default();
     // let mut buf = String::with_capacity(100);
     let mut buf = vec![];
     loop {
@@ -147,7 +148,7 @@ fn repl() -> rustyline::Result<()> {
                 buf.push(line.to_owned());
                 if line.ends_with(";;") {
                     let sbuf = buf.join(" ");
-                    eval(&ctx, &sbuf);
+                    eval(ctx.clone(), &sbuf);
                     rl.add_history_entry(&sbuf);
                     count += 1;
                     buf.clear();
@@ -171,7 +172,7 @@ fn repl() -> rustyline::Result<()> {
     rl.append_history("history.txt")
 }
 
-fn eval(ctx: &script::ScriptContext, str: &str) -> bool {
+fn eval(ctx: Rc<script::ScriptContext>, str: &str) -> bool {
     let val = parser::root::<VerboseError<&str>>(str);
     if let Err(e) = val {
         let msg = match e {
@@ -182,12 +183,12 @@ fn eval(ctx: &script::ScriptContext, str: &str) -> bool {
         return false;
     }
     let val = val.unwrap().1;
-    let typ = val.type_of(&ctx);
+    let typ = val.type_of(ctx.clone());
     if let Err(e) = typ {
         eprintln!("type inference error: {}", e);
         return false;
     }
-    let val = val.value_of(&ctx);
+    let val = val.value_of(ctx.clone());
     if let Err(e) = val {
         eprintln!("eval error: {}", e);
         return false;

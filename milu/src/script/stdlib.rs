@@ -6,26 +6,27 @@ use super::*;
 
 macro_rules! function_head {
     ($name:ident ($($aname:ident : $atype:ident),+) => $rtype:expr) => {
-        #[derive(Clone)]
-        pub struct $name;
+        #[derive(Clone,Hash)]
+        pub struct $name(String);
 
         #[allow(dead_code)]
         impl<'a> $name {
+            pub fn stub() -> $name {$name(stringify!($name).into())}
             pub fn new($($aname : Value<'a>),+) -> Call<'a> {
-                Call::new(vec![$name.into(), $($aname),+ ])
+                Call::new(vec![$name(stringify!($name).into()).into(), $($aname),+ ])
             }
         }
         impl<'a> NativeObject<'a> for $name {
             // fn type_of(&self, _ctx: &ScriptContext) -> Result<Type, Error>{ Ok(Type::NativeObject) }
             // fn value_of(&self, _ctx: &ScriptContext) -> Result<Value, Error>{ bail!("not a value") }
-            fn as_evaluatable(&self) -> Option<&dyn Evaluatable<'a>>{None}
+            fn as_evaluatable(&self) -> Option<&dyn Evaluatable>{None}
             fn as_accessible(&self) -> Option<&dyn Accessible<'a>>{None}
             fn as_indexable(&self) -> Option<&dyn Indexable<'a>>{None}
-            fn as_callable(&self) -> Option<&dyn Callable<'a>>{Some(self)}
-            fn as_any(&self) -> &dyn std::any::Any {self}
-            fn equals(&self, other: &dyn NativeObject) -> bool {
-                other.as_any().downcast_ref::<Self>().is_some()
-            }
+            fn as_callable(&self) -> Option<&dyn Callable>{Some(self)}
+            // fn as_any(&self) -> &dyn std::any::Any {self}
+            // fn equals(&self, other: &dyn NativeObject) -> bool {
+            //     other.as_any().downcast_ref::<Self>().is_some()
+            // }
         }
         impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -47,25 +48,23 @@ macro_rules! args {
     };
     ($args:ident, ctx=$ctx:ident, $($aname:ident),+) => {
         let mut iter = $args.into_iter();
-        $(let $aname = iter.next().unwrap().value_of($ctx)?;)+
+        $(let $aname = iter.next().unwrap().value_of($ctx.clone())?;)+
     }
 }
 
 macro_rules! function {
     ($name:ident ($($aname:ident : $atype:ident),+) => $rtype:expr, $self:ident, $body:tt) => {
         function_head!($name ($($aname : $atype),+) => $rtype);
-        impl<'a> Callable<'a> for $name {
-            fn signature<'b>(
+        impl Callable for $name {
+            fn signature<'a:'b,'b>(
                 &self,
-                ctx: &'b ScriptContext<'b>,
+                ctx: Rc<ScriptContext<'b>>,
                 args: &Vec<Value<'a>>,
             ) -> Result<Type, Error>
-            where
-                'a: 'b
             {
                 let mut targs : Vec<Type> = Vec::with_capacity(args.len());
                 for x in args {
-                    targs.push(x.type_of(ctx)?);
+                    targs.push(x.type_of(ctx.clone())?);
                 }
                 args!(targs, $($aname),+);
                 use Type::*;
@@ -78,13 +77,11 @@ macro_rules! function {
                 })+
                 Ok($rtype)
             }
-            fn call<'b>(
+            fn call<'a:'b,'b>(
                 &self,
-                ctx: &'b ScriptContext<'b>,
+                ctx: Rc<ScriptContext<'b>>,
                 args: &Vec<Value<'a>>,
             ) -> Result<Value<'b>, Error>
-            where
-                'a: 'b,
             {
                 args!(args, ctx=ctx, $($aname),+);
                 $body
@@ -94,18 +91,15 @@ macro_rules! function {
 }
 
 function_head!(Index(obj: Any, index: Any) => Any);
-impl<'a> Callable<'a> for Index {
-    fn signature<'b>(
+impl Callable for Index {
+    fn signature<'a: 'b, 'b>(
         &self,
-        ctx: &'b ScriptContext<'b>,
+        ctx: Rc<ScriptContext<'b>>,
         args: &Vec<Value<'a>>,
-    ) -> Result<Type, Error>
-    where
-        'a: 'b,
-    {
+    ) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
-            targs.push(x.type_of(ctx)?);
+            targs.push(x.type_of(ctx.clone())?);
         }
         args!(targs, obj, _index);
         if let Type::Array(t) = obj {
@@ -117,14 +111,11 @@ impl<'a> Callable<'a> for Index {
             )
         }
     }
-    fn call<'b>(
+    fn call<'a: 'b, 'b>(
         &self,
-        ctx: &'b ScriptContext<'b>,
+        ctx: Rc<ScriptContext<'b>>,
         args: &Vec<Value<'a>>,
-    ) -> Result<Value<'b>, Error>
-    where
-        'a: 'b,
-    {
+    ) -> Result<Value<'b>, Error> {
         args!(args, ctx = ctx, obj, index);
         let index: i64 = index.try_into()?;
         let obj: &dyn Indexable = match &obj {
@@ -139,15 +130,12 @@ impl<'a> Callable<'a> for Index {
 }
 
 function_head!(Access(obj: Any, index: Any) => Any);
-impl<'a> Callable<'a> for Access {
-    fn signature<'b>(
+impl Callable for Access {
+    fn signature<'a: 'b, 'b>(
         &self,
-        ctx: &'b ScriptContext<'b>,
+        ctx: Rc<ScriptContext<'b>>,
         args: &Vec<Value<'a>>,
-    ) -> Result<Type, Error>
-    where
-        'a: 'b,
-    {
+    ) -> Result<Type, Error> {
         // args!(args, obj, index);
         let obj = &args[0];
         let index = &args[1];
@@ -166,15 +154,12 @@ impl<'a> Callable<'a> for Access {
             bail!("Type {:?} does not implement Accessible", obj)
         }
     }
-    fn call<'b>(
+    fn call<'a: 'b, 'b>(
         &self,
-        ctx: &'b ScriptContext<'b>,
+        ctx: Rc<ScriptContext<'b>>,
         args: &Vec<Value<'a>>,
-    ) -> Result<Value<'b>, Error>
-    where
-        'a: 'b,
-    {
-        let obj = args[0].value_of(ctx)?;
+    ) -> Result<Value<'b>, Error> {
+        let obj = args[0].value_of(ctx.clone())?;
         let index = &args[1];
         let index = if let Value::Identifier(index) = index {
             index
@@ -193,18 +178,15 @@ impl<'a> Callable<'a> for Access {
 }
 
 function_head!(If(cond: Boolean, yes: Any, no: Any) => Any);
-impl<'a> Callable<'a> for If {
-    fn signature<'b>(
+impl Callable for If {
+    fn signature<'a: 'b, 'b>(
         &self,
-        ctx: &'b ScriptContext<'b>,
+        ctx: Rc<ScriptContext<'b>>,
         args: &Vec<Value<'a>>,
-    ) -> Result<Type, Error>
-    where
-        'a: 'b,
-    {
+    ) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
-            targs.push(x.type_of(ctx)?);
+            targs.push(x.type_of(ctx.clone())?);
         }
         args!(targs, cond, yes, no);
         if Type::Boolean != cond {
@@ -215,15 +197,12 @@ impl<'a> Callable<'a> for If {
         }
         Ok(yes)
     }
-    fn call<'b>(
+    fn call<'a: 'b, 'b>(
         &self,
-        ctx: &'b ScriptContext<'b>,
+        ctx: Rc<ScriptContext<'b>>,
         args: &Vec<Value<'a>>,
-    ) -> Result<Value<'b>, Error>
-    where
-        'a: 'b,
-    {
-        let cond: bool = args[0].value_of(ctx)?.try_into()?;
+    ) -> Result<Value<'b>, Error> {
+        let cond: bool = args[0].value_of(ctx.clone())?.try_into()?;
         if cond {
             args[1].value_of(ctx)
         } else {
@@ -235,8 +214,8 @@ impl<'a> Callable<'a> for If {
 function_head!(Scope(vars: Array, expr: Any) => Any);
 fn make_context<'value, 'ctx>(
     vars: &Vec<Value<'value>>,
-    ctx: &'ctx ScriptContext<'ctx>,
-) -> Result<ScriptContext<'ctx>, Error>
+    ctx: Rc<ScriptContext<'ctx>>,
+) -> Result<Rc<ScriptContext<'ctx>>, Error>
 where
     'value: 'ctx,
 {
@@ -244,51 +223,42 @@ where
     for v in vars.iter() {
         let t = v.as_vec();
         let id: String = t[0].as_str().to_owned();
-        let value = t[1].clone();
+        let value = t[1].copy();
         nctx.set(id, value);
     }
-    Ok(nctx)
+    Ok(Rc::new(nctx))
 }
 
-impl<'a> Callable<'a> for Scope {
-    fn signature<'b>(
+impl Callable for Scope {
+    fn signature<'a: 'b, 'b>(
         &self,
-        ctx: &'b ScriptContext<'b>,
+        ctx: Rc<ScriptContext<'b>>,
         args: &Vec<Value<'a>>,
-    ) -> Result<Type, Error>
-    where
-        'a: 'b,
-    {
+    ) -> Result<Type, Error> {
         let ctx = make_context(&args[0].as_vec(), ctx)?;
-        let expr = args[1].type_of(&ctx)?;
+        let expr = args[1].type_of(ctx)?;
         Ok(expr)
     }
-    fn call<'b>(
+    fn call<'a: 'b, 'b>(
         &self,
-        ctx: &'b ScriptContext<'b>,
+        ctx: Rc<ScriptContext<'b>>,
         args: &Vec<Value<'a>>,
-    ) -> Result<Value<'b>, Error>
-    where
-        'a: 'b,
-    {
+    ) -> Result<Value<'b>, Error> {
         let ctx = make_context(&args[0].as_vec(), ctx)?;
-        args[1].value_of(&ctx)
+        args[1].value_of(ctx)
     }
 }
 
 function_head!(MemberOf(a: Any, ary: Array) => Boolean);
-impl<'a> Callable<'a> for MemberOf {
-    fn signature<'b>(
+impl Callable for MemberOf {
+    fn signature<'a: 'b, 'b>(
         &self,
-        ctx: &'b ScriptContext<'b>,
+        ctx: Rc<ScriptContext<'b>>,
         args: &Vec<Value<'a>>,
-    ) -> Result<Type, Error>
-    where
-        'a: 'b,
-    {
+    ) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
-            targs.push(x.type_of(ctx)?);
+            targs.push(x.type_of(ctx.clone())?);
         }
         args!(targs, a, ary);
         let ary = if let Type::Array(ary) = ary {
@@ -305,14 +275,11 @@ impl<'a> Callable<'a> for MemberOf {
         }
         Ok(Type::Boolean)
     }
-    fn call<'b>(
+    fn call<'a: 'b, 'b>(
         &self,
-        ctx: &'b ScriptContext<'b>,
+        ctx: Rc<ScriptContext<'b>>,
         args: &Vec<Value<'a>>,
-    ) -> Result<Value<'b>, Error>
-    where
-        'a: 'b,
-    {
+    ) -> Result<Value<'b>, Error> {
         args!(args, ctx = ctx, a, ary);
         let vec: Vec<Value> = ary.try_into()?;
         Ok(vec.into_iter().any(|v| v == a).into())
@@ -424,7 +391,7 @@ mod tests {
                 let func = Box::new($fn::new( $($in),+ ));
                 let output = $out;
                 // let input = $in;
-                let ret = func.call(&ctx).unwrap();
+                let ret = func.call(ctx).unwrap();
                 assert_eq!(ret, output);
             }
         };
