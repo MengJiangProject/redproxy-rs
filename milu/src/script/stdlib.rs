@@ -6,6 +6,8 @@ use super::*;
 
 macro_rules! function_head {
     ($name:ident ($($aname:ident : $atype:ident),+) => $rtype:expr) => {
+
+        // the String field is added to avoid hashing a empty struct always returns same value
         #[derive(Clone,Hash)]
         pub struct $name(String);
 
@@ -17,16 +19,7 @@ macro_rules! function_head {
             }
         }
         impl<'a> NativeObject<'a> for $name {
-            // fn type_of(&self, _ctx: &ScriptContext) -> Result<Type, Error>{ Ok(Type::NativeObject) }
-            // fn value_of(&self, _ctx: &ScriptContext) -> Result<Value, Error>{ bail!("not a value") }
-            fn as_evaluatable(&self) -> Option<&dyn Evaluatable>{None}
-            fn as_accessible(&self) -> Option<&dyn Accessible<'a>>{None}
-            fn as_indexable(&self) -> Option<&dyn Indexable<'a>>{None}
             fn as_callable(&self) -> Option<&dyn Callable>{Some(self)}
-            // fn as_any(&self) -> &dyn std::any::Any {self}
-            // fn equals(&self, other: &dyn NativeObject) -> bool {
-            //     other.as_any().downcast_ref::<Self>().is_some()
-            // }
         }
         impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -58,7 +51,7 @@ macro_rules! function {
         impl Callable for $name {
             fn signature<'a:'b,'b>(
                 &self,
-                ctx: Rc<ScriptContext<'b>>,
+                ctx: ScriptContextRef<'b>,
                 args: &Vec<Value<'a>>,
             ) -> Result<Type, Error>
             {
@@ -79,7 +72,7 @@ macro_rules! function {
             }
             fn call<'a:'b,'b>(
                 &self,
-                ctx: Rc<ScriptContext<'b>>,
+                ctx: ScriptContextRef<'b>,
                 args: &Vec<Value<'a>>,
             ) -> Result<Value<'b>, Error>
             {
@@ -94,7 +87,7 @@ function_head!(Index(obj: Any, index: Any) => Any);
 impl Callable for Index {
     fn signature<'a: 'b, 'b>(
         &self,
-        ctx: Rc<ScriptContext<'b>>,
+        ctx: ScriptContextRef<'b>,
         args: &Vec<Value<'a>>,
     ) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
@@ -113,7 +106,7 @@ impl Callable for Index {
     }
     fn call<'a: 'b, 'b>(
         &self,
-        ctx: Rc<ScriptContext<'b>>,
+        ctx: ScriptContextRef<'b>,
         args: &Vec<Value<'a>>,
     ) -> Result<Value<'b>, Error> {
         args!(args, ctx = ctx, obj, index);
@@ -133,7 +126,7 @@ function_head!(Access(obj: Any, index: Any) => Any);
 impl Callable for Access {
     fn signature<'a: 'b, 'b>(
         &self,
-        ctx: Rc<ScriptContext<'b>>,
+        ctx: ScriptContextRef<'b>,
         args: &Vec<Value<'a>>,
     ) -> Result<Type, Error> {
         // args!(args, obj, index);
@@ -156,7 +149,7 @@ impl Callable for Access {
     }
     fn call<'a: 'b, 'b>(
         &self,
-        ctx: Rc<ScriptContext<'b>>,
+        ctx: ScriptContextRef<'b>,
         args: &Vec<Value<'a>>,
     ) -> Result<Value<'b>, Error> {
         let obj = args[0].value_of(ctx.clone())?;
@@ -181,7 +174,7 @@ function_head!(If(cond: Boolean, yes: Any, no: Any) => Any);
 impl Callable for If {
     fn signature<'a: 'b, 'b>(
         &self,
-        ctx: Rc<ScriptContext<'b>>,
+        ctx: ScriptContextRef<'b>,
         args: &Vec<Value<'a>>,
     ) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
@@ -199,7 +192,7 @@ impl Callable for If {
     }
     fn call<'a: 'b, 'b>(
         &self,
-        ctx: Rc<ScriptContext<'b>>,
+        ctx: ScriptContextRef<'b>,
         args: &Vec<Value<'a>>,
     ) -> Result<Value<'b>, Error> {
         let cond: bool = args[0].value_of(ctx.clone())?.try_into()?;
@@ -233,7 +226,7 @@ impl Scope {
 impl Callable for Scope {
     fn signature<'a: 'b, 'b>(
         &self,
-        ctx: Rc<ScriptContext<'b>>,
+        ctx: ScriptContextRef<'b>,
         args: &Vec<Value<'a>>,
     ) -> Result<Type, Error> {
         let ctx = Self::make_context(&args[0].as_vec(), ctx)?;
@@ -242,7 +235,7 @@ impl Callable for Scope {
     }
     fn call<'a: 'b, 'b>(
         &self,
-        ctx: Rc<ScriptContext<'b>>,
+        ctx: ScriptContextRef<'b>,
         args: &Vec<Value<'a>>,
     ) -> Result<Value<'b>, Error> {
         let ctx = Self::make_context(&args[0].as_vec(), ctx)?;
@@ -254,7 +247,7 @@ function_head!(MemberOf(a: Any, ary: Array) => Boolean);
 impl Callable for MemberOf {
     fn signature<'a: 'b, 'b>(
         &self,
-        ctx: Rc<ScriptContext<'b>>,
+        ctx: ScriptContextRef<'b>,
         args: &Vec<Value<'a>>,
     ) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
@@ -278,7 +271,7 @@ impl Callable for MemberOf {
     }
     fn call<'a: 'b, 'b>(
         &self,
-        ctx: Rc<ScriptContext<'b>>,
+        ctx: ScriptContextRef<'b>,
         args: &Vec<Value<'a>>,
     ) -> Result<Value<'b>, Error> {
         args!(args, ctx = ctx, a, ary);

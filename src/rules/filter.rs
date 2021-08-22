@@ -9,9 +9,7 @@ use nom::error::{convert_error, VerboseError};
 use crate::context::Context;
 
 use milu::parser::root;
-use milu::script::{
-    Accessible, Callable, Evaluatable, Indexable, NativeObject, ScriptContext, Type, Value,
-};
+use milu::script::{Accessible, Evaluatable, NativeObject, ScriptContext, Type, Value};
 
 #[derive(Debug)]
 pub struct Filter {
@@ -23,7 +21,7 @@ impl Filter {
         let ctx = Default::default();
         let mut ctx = ScriptContext::new(Some(ctx));
         let adapter = ContextAdaptor::new(request);
-        let value = Value::NativeObject(Rc::new(adapter));
+        let value = adapter.into();
         ctx.set("request".to_string(), value);
         let ret = self.root.value_of(ctx.into())?.try_into()?;
         trace!("filter eval: {:?} => {}", request, ret);
@@ -113,25 +111,9 @@ impl<'a> Accessible<'a> for ContextAdaptor<'a> {
 }
 
 impl<'a> NativeObject<'a> for ContextAdaptor<'a> {
-    fn as_evaluatable(&self) -> Option<&dyn Evaluatable> {
-        None
-    }
     fn as_accessible(&self) -> Option<&dyn Accessible<'a>> {
         Some(self)
     }
-    fn as_indexable(&self) -> Option<&dyn Indexable<'a>> {
-        None
-    }
-    fn as_callable(&self) -> Option<&dyn Callable> {
-        None
-    }
-    // fn as_any(&self) -> &dyn std::any::Any {
-    //     self
-    // }
-    // fn equals(&self, other: &dyn NativeObject) -> bool {
-    //     // other.as_any().downcast_ref::<Self>().is_some()
-    //     false
-    // }
 }
 
 impl std::fmt::Display for ContextAdaptor<'_> {

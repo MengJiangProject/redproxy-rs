@@ -14,6 +14,8 @@ use rustyline_derive::Helper;
 use std::borrow::Cow::{self, Borrowed, Owned};
 use std::rc::Rc;
 
+use crate::script::Evaluatable;
+
 #[derive(Helper)]
 struct MyHelper {
     completer: FilenameCompleter,
