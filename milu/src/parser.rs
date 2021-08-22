@@ -18,7 +18,7 @@ mod string;
 use super::script::stdlib::*;
 use super::script::{Call, Value};
 
-fn parse_many(op: &str, mut args: Vec<Value>) -> Value {
+fn parse_many<'v>(op: &str, mut args: Vec<Value<'v>>) -> Value<'v> {
     let op = op.to_ascii_lowercase();
     match op.as_str() {
         //prioity 7
@@ -39,7 +39,7 @@ fn parse_many(op: &str, mut args: Vec<Value>) -> Value {
         _ => panic!("not implemented"),
     }
 }
-fn parse1(op: &str, p1: Value) -> Value {
+fn parse1<'v>(op: &str, p1: Value<'v>) -> Value<'v> {
     let op = op.to_ascii_lowercase();
     match op.as_str() {
         //prioity 7
@@ -48,7 +48,7 @@ fn parse1(op: &str, p1: Value) -> Value {
         _ => panic!("not implemented"),
     }
 }
-fn parse2(op: &str, p1: Value, p2: Value) -> Value {
+fn parse2<'v>(op: &str, p1: Value<'v>, p2: Value<'v>) -> Value<'v> {
     let op = op.to_ascii_lowercase();
 
     match op.as_str() {
@@ -124,6 +124,7 @@ macro_rules! rule {
             $context!($name, $body, $input)
         }
     };
+
     // ($vis:vis $name:ident ( $input:ident ) -> $rt:ty, $context:ident, $body:tt) => {
     //     #[allow(dead_code)]
     //     $vis fn $name<'a, O, E, F>($input: F) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
@@ -187,17 +188,17 @@ where
     preceded(blank, f)
 }
 
-rule!(string -> Value, {
+rule!(string -> Value<'static>, {
     map(string::parse_string,Into::into)
 });
 
-rule!(boolean -> Value, {
+rule!(boolean -> Value<'static>, {
     let parse_true = nom::combinator::value(true, tag("true"));
     let parse_false = nom::combinator::value(false, tag("false"));
     map(alt((parse_true, parse_false)),Into::into)
 });
 
-rule!(null -> Value, {
+rule!(null -> Value<'static>, {
     nom::combinator::value(Value::Null, tag("null"))
 });
 
@@ -226,8 +227,8 @@ rule!(decimal, {
     recognize(many1(terminated(digit1, many0(char('_')))))
 });
 
-rule!(integer -> Value, {
-    fn atoi(n: u32) -> impl Fn(&str) -> Result<Value, ParseIntError> {
+rule!(integer -> Value<'static>, {
+    fn atoi(n: u32) -> impl Fn(&str) -> Result<Value<'static>, ParseIntError> {
         move |x| i64::from_str_radix(x, n).map(Into::into)
     }
     alt((
@@ -238,7 +239,7 @@ rule!(integer -> Value, {
     ))
 });
 
-rule!(identifier -> Value, {
+rule!(identifier -> Value<'static>, {
     map(
         recognize(pair(
             alt((alpha1, tag("_"))),
@@ -248,7 +249,7 @@ rule!(identifier -> Value, {
     )
 });
 
-rule!(array -> Value, {
+rule!(array -> Value<'static>, {
     let body = terminated(
         separated_list0(ws(char(',')), op_0),
         opt(ws(char(',')))
@@ -256,7 +257,7 @@ rule!(array -> Value, {
     map(delimited(char('['), cut(body),ws(char(']'))), Into::into)
 });
 
-rule!(tuple -> Value, {
+rule!(tuple -> Value<'static>, {
     let body = map_opt(
         pair(many0(terminated(
             op_0,
@@ -275,7 +276,7 @@ rule!(tuple -> Value, {
     map(map(delimited(char('('), body,ws(char(')'))), Box::new), Value::Tuple)
 });
 
-rule!(value -> Value, {
+rule!(value -> Value<'static>, {
     // println!("value: i={}", i);
     alt((
         string,
@@ -287,7 +288,7 @@ rule!(value -> Value, {
     ))
 });
 
-rule!(op_value -> Value, {
+rule!(op_value -> Value<'static>, {
     alt((
         delimited(char('('), ws(op_0), ws(char(')'))),
         delimited(char('('), ws(value), ws(char(')'))),
@@ -295,21 +296,21 @@ rule!(op_value -> Value, {
     ))
 });
 
-rule!(op_index -> (&'a str,Vec<Value>), {
+rule!(op_index -> (&'a str,Vec<Value<'static>>), {
     map(
         delimited(tag("["), op_0, ws(char(']'))),
         |idx| ("index", vec![idx])
     )
 });
 
-rule!(op_access -> (&'a str,Vec<Value>), {
+rule!(op_access -> (&'a str,Vec<Value<'static>>), {
     map(
         preceded(tag("."), alt((identifier,integer))),
         |id| ("access", vec![id])
     )
 });
 
-rule!(op_call -> (&'a str,Vec<Value>), {
+rule!(op_call -> (&'a str,Vec<Value<'static>>), {
     map(
         delimited(
             char('('),
@@ -320,7 +321,7 @@ rule!(op_call -> (&'a str,Vec<Value>), {
     )
 });
 
-rule!(op_8(i) -> Value, {
+rule!(op_8(i) -> Value<'static>, {
     map(
         nom_tuple((
             op_value,
@@ -341,7 +342,7 @@ rule!(op_8(i) -> Value, {
 });
 
 //unary opreator
-rule!(op_7(i) -> Value, {
+rule!(op_7(i) -> Value<'static>, {
     alt((
         map(nom_tuple((alt((tag("!"), tag("~"))), op_7)),
             |(op,p1)|parse1(op, p1).into()
@@ -352,7 +353,7 @@ rule!(op_7(i) -> Value, {
 
 macro_rules! op_rule {
     ($name:ident, $next:ident, $tags:tt) => {
-        rule!($name(i) -> Value, {
+        rule!($name(i) -> Value<'static>, {
             map(
                 nom_tuple((
                     $next,
@@ -382,7 +383,7 @@ op_rule!(
 op_rule!(op_2, op_3, (tag("&&"), tag_no_case("and")));
 op_rule!(op_1, op_2, (tag("||"), tag_no_case("or")));
 
-rule!(op_if(i) -> Value, {
+rule!(op_if(i) -> Value<'static>, {
     map(
         alt((
             nom_tuple((
@@ -402,14 +403,14 @@ rule!(op_if(i) -> Value, {
     )
 });
 
-rule!(op_assign -> Value, {
+rule!(op_assign -> Value<'static>, {
     map(
         separated_pair(identifier,ws(tag("=")),op_0),
         |(name,value)| Value::Tuple(Box::new(vec![name,value]))
     )
 });
 
-rule!(op_let -> Value, {
+rule!(op_let -> Value<'static>, {
     map(
         nom_tuple((
             preceded(tag("let"),
@@ -424,7 +425,7 @@ rule!(op_let -> Value, {
     )
 });
 
-rule!(op_0 -> Value, {
+rule!(op_0 -> Value<'static>, {
     alt((
         op_if,
         op_let,
@@ -432,7 +433,7 @@ rule!(op_0 -> Value, {
     ))
 });
 
-rule!(pub root(i)->Value, {
+rule!(pub root(i)->Value<'static>, {
     all_consuming(terminated(op_0,delimited(multispace0,opt(tag(";;")),multispace0)))
 });
 
@@ -518,7 +519,7 @@ mod tests {
     }
 
     #[inline]
-    fn assert_ast(input: &str, value: Value) {
+    fn assert_ast(input: &str, value: Value<'static>) {
         let output = root::<nom::error::VerboseError<&str>>(input);
         println!("input={}\noutput={:?}", input, output);
         assert_eq!(output.unwrap().1, value);
