@@ -1,8 +1,10 @@
 use easy_error::{err_msg, Error, ResultExt};
 use log::trace;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 
 type Reader<'a> = &'a mut (dyn AsyncBufRead + Send + Unpin);
+type Writer<'a> = &'a mut (dyn AsyncWrite + Send + Unpin);
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct HttpRequest {
     pub method: String,
@@ -12,29 +14,53 @@ pub struct HttpRequest {
 }
 
 impl HttpRequest {
-    pub async fn new(socket: Reader<'_>) -> Result<Self, Error> {
-        let mut ret = Self::read(socket).await?;
-        read_headers(&mut ret.headers, socket).await?;
-        Ok(ret)
+    pub fn new<T1: ToString, T2: ToString>(method: T1, resource: T2) -> Self {
+        Self {
+            version: "HTTP/1.1".to_owned(),
+            method: method.to_string(),
+            resource: resource.to_string(),
+            headers: Vec::new(),
+        }
     }
-    async fn read(socket: Reader<'_>) -> Result<Self, Error> {
+    pub fn with_header<T1: ToString, T2: ToString>(mut self, k: T1, v: T2) -> Self {
+        self.headers.push((k.to_string(), v.to_string()));
+        self
+    }
+    pub async fn read_from(socket: Reader<'_>) -> Result<Self, Error> {
         let buf = read_line(socket).await?;
         let buf = buf.trim_end();
         let a: Vec<&str> = buf.split_ascii_whitespace().collect();
         trace!("request={}", buf);
-        if a.len() == 3 && a[2].starts_with("HTTP/") {
+        let mut ret = if a.len() == 3 && a[2].starts_with("HTTP/") {
             let method = a[0].into();
             let resource = a[1].into();
             let version = a[2].into();
-            Ok(Self {
+            Self {
                 method,
                 resource,
                 version,
                 headers: vec![],
-            })
+            }
         } else {
-            Err(err_msg("bad request"))
+            return Err(err_msg("bad request"));
+        };
+        read_headers(&mut ret.headers, socket).await?;
+        Ok(ret)
+    }
+    pub async fn write_to(&self, socket: Writer<'_>) -> Result<(), Error> {
+        let buf = format!("{} {} {}\r\n", self.method, self.resource, self.version);
+        socket.write(buf.as_bytes()).await.context("write error")?;
+        for (k, v) in &self.headers {
+            socket
+                .write(format!("{}: {}\r\n", k, v).as_bytes())
+                .await
+                .context("write error")?;
         }
+        socket
+            .write("\r\n".as_bytes())
+            .await
+            .context("write error")?;
+        Ok(())
     }
 }
 
@@ -47,29 +73,54 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    pub async fn new(socket: Reader<'_>) -> Result<Self, Error> {
-        let mut ret = Self::read(socket).await?;
-        read_headers(&mut ret.headers, socket).await?;
-        Ok(ret)
+    pub fn new<T: ToString>(code: u16, status: T) -> Self {
+        Self {
+            version: "HTTP/1.1".to_owned(),
+            code,
+            status: status.to_string(),
+            headers: Vec::new(),
+        }
     }
-    async fn read(socket: Reader<'_>) -> Result<Self, Error> {
+    #[allow(dead_code)]
+    pub fn with_header<T1: ToString, T2: ToString>(mut self, k: T1, v: T2) -> Self {
+        self.headers.push((k.to_string(), v.to_string()));
+        self
+    }
+    pub async fn read_from(socket: Reader<'_>) -> Result<Self, Error> {
         let buf = read_line(socket).await?;
         let buf = buf.trim_end();
         let a: Vec<&str> = buf.splitn(3, ' ').collect();
         trace!("response={}", buf);
-        if a.len() == 3 && a[0].starts_with("HTTP/") {
+        let mut ret = if a.len() == 3 && a[0].starts_with("HTTP/") {
             let version = a[0].into();
             let code = a[1].parse().context("failed to parse response code")?;
             let status = a[2].into();
-            Ok(Self {
+            Self {
                 version,
                 code,
                 status,
                 headers: vec![],
-            })
+            }
         } else {
-            Err(err_msg("bad response"))
+            return Err(err_msg("bad response"));
+        };
+        read_headers(&mut ret.headers, socket).await?;
+        Ok(ret)
+    }
+    pub async fn write_to(&self, socket: Writer<'_>) -> Result<(), Error> {
+        let buf = format!("{} {} {}\r\n", self.version, self.code, self.status);
+        socket.write(buf.as_bytes()).await.context("write error")?;
+        for (k, v) in &self.headers {
+            socket
+                .write(format!("{}: {}\r\n", k, v).as_bytes())
+                .await
+                .context("write error")?;
         }
+        socket
+            .write("\r\n".as_bytes())
+            .await
+            .context("write error")?;
+        Ok(())
     }
 }
 
@@ -115,7 +166,7 @@ mod tests {
         };
         let stream = Builder::new().read(input.as_bytes()).build();
         let mut stream = BufReader::new(stream);
-        assert_eq!(HttpRequest::new(&mut stream).await.unwrap(), output);
+        assert_eq!(HttpRequest::read_from(&mut stream).await.unwrap(), output);
     }
     #[test(tokio::test)]
     async fn parse_response() {
@@ -128,6 +179,6 @@ mod tests {
         };
         let stream = Builder::new().read(input.as_bytes()).build();
         let mut stream = BufReader::new(stream);
-        assert_eq!(HttpResponse::new(&mut stream).await.unwrap(), output);
+        assert_eq!(HttpResponse::read_from(&mut stream).await.unwrap(), output);
     }
 }

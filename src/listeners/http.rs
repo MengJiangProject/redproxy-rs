@@ -5,7 +5,7 @@ use tokio::io::{AsyncWriteExt, BufStream};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 
-use crate::common::http::HttpRequest;
+use crate::common::http::{HttpRequest, HttpResponse};
 use crate::common::tls::TlsServerConfig;
 use crate::context::{Context, IOStream};
 use crate::listeners::Listener;
@@ -47,7 +47,7 @@ impl Listener for HttpListener {
                     };
                     trace!("connected from {:?}", source);
                     let mut socket = BufStream::new(socket);
-                    let request = HttpRequest::new(&mut socket).await?;
+                    let request = HttpRequest::read_from(&mut socket).await?;
                     if !request.method.eq_ignore_ascii_case("CONNECT") {
                         bail!("Invalid request method: {}", request.method)
                     }
@@ -57,10 +57,9 @@ impl Listener for HttpListener {
                             request.resource
                         ))
                     })?;
-                    socket
-                        .write_all("HTTP/1.1 200 Connection established\r\n\r\n".as_bytes())
-                        .await
-                        .context("write_all")?;
+                    HttpResponse::new(200, "Connection established")
+                        .write_to(&mut socket)
+                        .await?;
                     socket.flush().await.context("flush")?;
                     queue
                         .send(Context {

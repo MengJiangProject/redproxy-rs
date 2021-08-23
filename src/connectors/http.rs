@@ -7,7 +7,7 @@ use tokio::{
 };
 use tokio_rustls::webpki::DNSNameRef;
 
-use crate::common::{copy::copy_bidi, tls::TlsClientConfig};
+use crate::common::{copy::copy_bidi, http::HttpRequest, tls::TlsClientConfig};
 use crate::context::Context;
 use crate::{common::http::HttpResponse, context::IOStream};
 use serde::{Deserialize, Serialize};
@@ -69,14 +69,12 @@ impl super::Connector for HttpConnector {
                 };
 
                 let mut server = BufStream::new(server);
-                let request = format!("CONNECT {} HTTP/1.1\r\nHost: {}\r\n\r\n", target, target);
-                trace!("request={:?}", request);
-                server
-                    .write_all(request.as_bytes())
-                    .await
-                    .context("sending request")?;
+                HttpRequest::new("CONNECT", &target)
+                    .with_header("Host", &target)
+                    .write_to(&mut server)
+                    .await?;
                 server.flush().await.context("flush")?;
-                let resp = HttpResponse::new(&mut server).await?;
+                let resp = HttpResponse::read_from(&mut server).await?;
                 if resp.code != 200 {
                     bail!("server failure {:?}", resp);
                 }
