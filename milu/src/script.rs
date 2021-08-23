@@ -243,9 +243,9 @@ pub enum Value<'a> {
     Boolean(bool),
     String(String),
     Identifier(String),
-    Array(Box<Vec<Value<'a>>>),
-    Tuple(Box<Vec<Value<'a>>>),
-    OpCall(Box<Call<'a>>),
+    Array(Rc<Vec<Value<'a>>>),
+    Tuple(Rc<Vec<Value<'a>>>),
+    OpCall(Rc<Call<'a>>),
     NativeObject(Rc<NativeObjectRef<'a>>),
 }
 
@@ -344,29 +344,37 @@ impl<'a> Evaluatable<'a> for Value<'a> {
 
 macro_rules! cast_value {
     ($ty:ty, $name:ident) => {
-        cast_value!($ty, $name, 'a, v, v, v);
+        cast_value_from!($ty, $name, 'a, |v| v);
+        cast_value_to!($ty, $name, 'a, |v| v);
     };
-    ($ty:ty, $name:ident, $a:lifetime, boxed) => {
-        cast_value!($ty, $name, $a, v, *v, Box::new(v));
+    ($ty:ty, $name:ident <$a:lifetime> , boxed) => {
+        cast_value_from!($ty, $name, $a, |v| Box::new(v));
+        cast_value_to!($ty, $name, $a, |v| *v);
     };
-    ($ty:ty, $name:ident, boxed) => {
-        cast_value!($ty, $name, 'a, v, *v, Box::new(v));
+    ($ty:ty, $name:ident <$a:lifetime> , rc) => {
+        cast_value_from!($ty, $name, $a, |v| Rc::new(v));
+        cast_value_to!(Rc<$ty>, $name, $a, |v| v);
     };
-    ($ty:ty, $name:ident, $a:lifetime, $v: ident, $from:expr, $to:expr) => {
+}
+macro_rules! cast_value_to {
+    ($ty:ty, $name:ident, $a:lifetime, | $v: ident | $transfrom:expr) => {
         impl<$a> TryFrom<Value<$a>> for $ty {
             type Error = easy_error::Error;
             fn try_from(x: Value<$a>) -> Result<$ty, Self::Error> {
                 if let Value::$name($v) = x {
-                    Ok($from)
+                    Ok($transfrom)
                 } else {
                     easy_error::bail!("unable to cast {:?} into {}", x, stringify!($ty))
                 }
             }
         }
-
+    };
+}
+macro_rules! cast_value_from {
+    ($ty:ty, $name:ident, $a:lifetime, | $v: ident | $transfrom:expr) => {
         impl<$a> From<$ty> for Value<$a> {
             fn from($v: $ty) -> Self {
-                Self::$name($to)
+                Self::$name($transfrom)
             }
         }
     };
@@ -375,8 +383,8 @@ macro_rules! cast_value {
 cast_value!(String, String);
 cast_value!(i64, Integer);
 cast_value!(bool, Boolean);
-cast_value!(Vec<Value<'a>>, Array, 'a, boxed);
-cast_value!(Call<'a>, OpCall, 'a, boxed);
+cast_value!(Vec<Value<'a>>, Array<'a>, rc);
+cast_value!(Call<'a>, OpCall<'a>, rc);
 
 impl From<&str> for Value<'_> {
     fn from(x: &str) -> Self {
@@ -398,11 +406,11 @@ impl std::fmt::Display for Value<'_> {
         use Value::*;
         match self {
             Null => write!(f, "null"),
-            String(s) => write!(f, "{}", s),
+            String(s) => write!(f, "{:?}", s),
             Integer(i) => write!(f, "{}", i),
             Boolean(b) => write!(f, "{}", b),
             Identifier(id) => write!(f, "<{}>", id),
-            OpCall(x) => write!(f, "{:?}", x),
+            OpCall(x) => write!(f, "{}", x),
             Array(x) => write!(
                 f,
                 "[{}]",
@@ -429,6 +437,20 @@ impl std::fmt::Display for Value<'_> {
 pub struct Call<'a> {
     func: Value<'a>,
     args: Vec<Value<'a>>,
+}
+impl std::fmt::Display for Call<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}({})",
+            self.func,
+            self.args
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    }
 }
 
 impl<'a> Call<'a> {
@@ -480,14 +502,20 @@ mod tests {
     macro_rules! eval_test {
         ($input: expr, $output: expr) => {{
             let ctx = Default::default();
-            let value = root::<nom::error::VerboseError<&str>>($input)
-                .unwrap()
-                .1
-                .value_of(ctx)
-                .unwrap();
+            let value = root::<nom::error::VerboseError<&str>>($input).unwrap().1;
+            println!("ast={}", value);
+            let value = value.value_of(ctx).unwrap();
             assert_eq!(value, $output);
         }};
     }
+
+    fn type_test(input: &str, output: Type) {
+        let ctx = Default::default();
+        let value = root::<nom::error::VerboseError<&str>>(input).unwrap().1;
+        let value = value.type_of(ctx).unwrap();
+        assert_eq!(value, output);
+    }
+
     #[test]
     fn one_plus_one() {
         type_test("1+1", Type::Integer);
@@ -503,7 +531,10 @@ mod tests {
     #[test]
     fn arrays() {
         type_test("[1,2,3]", Type::array_of(Type::Integer));
-        eval_test!("[1,2,3][0]", 1.into())
+        eval_test!(
+            "[if 1>2||1==1 then 1*1 else 99,2*2,3*3,to_integer(\"4\")][0]",
+            1.into()
+        )
     }
 
     #[test]
@@ -535,12 +566,5 @@ mod tests {
     fn scope() {
         type_test("let a=1;b=2 in a+b", Type::Integer);
         eval_test!("let a=1;b=2 in a+b", 3.into());
-    }
-
-    fn type_test(input: &str, output: Type) {
-        let ctx = Default::default();
-        let value = root::<nom::error::VerboseError<&str>>(input).unwrap().1;
-        let value = value.type_of(ctx).unwrap();
-        assert_eq!(value, output);
     }
 }

@@ -275,8 +275,14 @@ impl Callable for MemberOf {
         args: &Vec<Value<'a>>,
     ) -> Result<Value<'b>, Error> {
         args!(args, ctx = ctx, a, ary);
-        let vec: Vec<Value> = ary.try_into()?;
-        Ok(vec.into_iter().any(|v| v == a).into())
+        let vec: Rc<Vec<Value>> = ary.try_into()?;
+        let iter = vec.iter().map(|v| v.value_of(ctx.clone()));
+        for v in iter {
+            if v? == a {
+                return Ok(true.into());
+            }
+        }
+        Ok(false.into())
     }
 }
 
