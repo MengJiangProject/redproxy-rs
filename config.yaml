@@ -2,22 +2,31 @@ apiVersion: v1alpha
 kind: ProxyDefinition
 
 listeners:
+  - name: tproxy
+    bind: 0.0.0.0:8080
   - name: http
     bind: 0.0.0.0:8081
+  - name: https
+    type: http
+    bind: 0.0.0.0:8082
     tls:
       cert: test.crt
       key: test.key
-
-  - name: tproxy
-    bind: 0.0.0.0:8080
 
 connectors:
   - name: direct
   - name: http
     server: 192.168.100.107
     port: 3128
+  - name: https
+    type: http
+    server: 192.168.100.107
+    port: 3128
+    tls:
+      cert: test.crt
+      key: test.key
 
 rules:
-  - filter: request.source =~ "127.0.0.1"
+  - filter: request.source =~ "127.0.0.1" and request.target =~ "google.com"
     target: http
-  - target: http
+  #- target: http

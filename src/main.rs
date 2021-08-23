@@ -13,11 +13,41 @@ mod context;
 mod listeners;
 mod rules;
 
+const VERSION: &str = "v0.1.0";
+
 #[tokio::main]
 async fn main() -> Result<(), Terminator> {
-    env_logger::init();
+    let args = clap::App::new("redproxy")
+        .version(VERSION)
+        .arg(
+            clap::Arg::with_name("config")
+                .short("c")
+                .long("config")
+                .help("config filename")
+                .default_value("config.yaml")
+                .takes_value(true),
+        )
+        .arg(
+            clap::Arg::with_name("log-level")
+                .short("l")
+                .long("log")
+                .help("set log level")
+                .possible_values(&["erro", "warn", "info", "debug", "trace"])
+                .takes_value(true),
+        )
+        .arg(
+            clap::Arg::with_name("config-check")
+                .short("t")
+                .long("test")
+                .help("load and check config file then exits"),
+        )
+        .get_matches();
+    let config = args.value_of("config").unwrap_or("config.yaml");
+    let config_test = args.is_present("config-check");
+    let log_level = args.value_of("log-level").unwrap_or("info");
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or(log_level));
 
-    let mut cfg = config::Config::load("config.yaml").await?;
+    let mut cfg = config::Config::load(config).await?;
     let rules = &mut cfg.rules;
     rules.iter_mut().try_for_each(rules::Rule::init)?;
 
@@ -28,7 +58,6 @@ async fn main() -> Result<(), Terminator> {
     let mut listeners = listeners::config(&cfg.listeners)?;
     for l in listeners.iter_mut() {
         l.init().await?;
-        l.listen(tx.clone()).await?;
     }
 
     let mut connectors = connectors::config(&cfg.connectors)?;
@@ -49,6 +78,15 @@ async fn main() -> Result<(), Terminator> {
             Err(err_msg(format!("target not found: {}", r.target_name())))
         }
     })?;
+
+    if config_test {
+        println!("redproxy: the configuration file {} is ok", config);
+        return Ok(());
+    }
+
+    for l in listeners.iter() {
+        l.listen(tx.clone()).await?;
+    }
 
     loop {
         let ctx = rx.recv().await.unwrap();

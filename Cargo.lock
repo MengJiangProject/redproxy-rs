@@ -159,12 +159,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56899898ce76aaf4a0f24d914c97ea6ed976d42fec6ad33fcbb0a1103e07b2b0"
 
 [[package]]
-name = "dyn-clone"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee2626afccd7561a06cf1367e2950c4718ea04565e20fb5029b6c7d8ad09abcf"
-
-[[package]]
 name = "easy-error"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -316,7 +310,6 @@ name = "milu"
 version = "0.1.0"
 dependencies = [
  "clap",
- "dyn-clone",
  "easy-error",
  "nix",
  "nom",
@@ -494,6 +487,7 @@ name = "redproxy-rs"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "clap",
  "easy-error",
  "env_logger",
  "log",
