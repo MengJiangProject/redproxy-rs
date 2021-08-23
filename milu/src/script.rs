@@ -274,7 +274,7 @@ impl<'a> Value<'a> {
     fn as_i64(&self) -> i64 {
         match self {
             Self::Integer(a) => *a,
-            _ => panic!("as_i64: type mismatch"),
+            _ => panic!("as_i64: type mismatch, possible bug in parse"),
         }
     }
 }
