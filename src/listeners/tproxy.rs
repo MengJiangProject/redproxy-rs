@@ -11,7 +11,7 @@ use tokio::io::BufStream;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 
-use crate::context::{Context, TargetAddress};
+use crate::context::{Context, IOStream, TargetAddress};
 use serde::{Deserialize, Serialize};
 
 use super::Listener;
@@ -33,7 +33,7 @@ impl Listener for TProxyListener {
         Ok(())
     }
     async fn listen(&self, queue: Sender<Context>) -> Result<(), Error> {
-        info!("listening on {}", self.bind);
+        info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
         let self = self.clone();
         tokio::spawn(async move {
@@ -45,6 +45,7 @@ impl Listener for TProxyListener {
                     let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
                     let port = ntohs(dst.sin_port);
                     trace!("dst={:}:{:?}", addr, port);
+                    let socket: Box<dyn IOStream> = Box::new(socket);
                     let socket = BufStream::new(socket);
                     let target = TargetAddress::from((addr, port));
                     queue

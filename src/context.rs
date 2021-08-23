@@ -1,9 +1,12 @@
 use std::{
-    fmt::Display,
+    fmt::{Debug, Display},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     str::FromStr,
 };
-use tokio::{io::BufStream, net::TcpStream};
+use tokio::{
+    io::{AsyncRead, AsyncWrite, BufStream},
+    net::TcpStream,
+};
 
 #[derive(Debug)]
 pub struct InvalidAddress;
@@ -62,10 +65,19 @@ impl Display for TargetAddress {
     }
 }
 
+pub trait IOStream: AsyncRead + AsyncWrite + Send + Unpin {}
+impl Debug for dyn IOStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "IOStream")
+    }
+}
+
+impl<T> IOStream for T where T: AsyncRead + AsyncWrite + Send + Unpin {}
+
 #[derive(Debug)]
 pub struct Context {
     pub listener: String,
-    pub socket: BufStream<TcpStream>,
+    pub socket: BufStream<Box<dyn IOStream>>,
     pub target: TargetAddress,
     pub source: SocketAddr,
 }
