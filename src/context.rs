@@ -1,3 +1,4 @@
+// use easy_error::Error;
 use std::{
     fmt::{Debug, Display},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
@@ -66,15 +67,8 @@ impl Display for TargetAddress {
 }
 
 pub trait IOStream: AsyncRead + AsyncWrite + Send + Unpin {}
-impl Debug for dyn IOStream {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "IOStream")
-    }
-}
-
 impl<T> IOStream for T where T: AsyncRead + AsyncWrite + Send + Unpin {}
 
-#[derive(Debug)]
 pub struct Context {
     pub listener: String,
     pub socket: BufStream<Box<dyn IOStream>>,
@@ -89,3 +83,19 @@ impl std::hash::Hash for Context {
         self.source.hash(state);
     }
 }
+
+impl std::fmt::Debug for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Context")
+            .field("listener", &self.listener)
+            .field("target", &self.target)
+            .field("source", &self.source)
+            .finish()
+    }
+}
+
+// use async_trait::async_trait;
+// #[async_trait]
+// pub trait AsyncInit {
+//     async fn init(&mut self) -> Result<(), Error>;
+// }
