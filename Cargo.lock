@@ -88,6 +88,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c59e7af012c713f529e7a3ee57ce9b31ddd858d4b512923602f74608b009631"
 
 [[package]]
+name = "bytecount"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72feb31ffc86498dacdbd0fcebb56138e7177a8cc5cea4516031d15ae85a742e"
+
+[[package]]
 name = "bytes"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -313,6 +319,7 @@ dependencies = [
  "easy-error",
  "nix",
  "nom",
+ "nom_locate",
  "regex",
  "rustyline",
  "rustyline-derive",
@@ -377,6 +384,16 @@ dependencies = [
  "memchr",
  "minimal-lexical",
  "version_check",
+]
+
+[[package]]
+name = "nom_locate"
+version = "4.0.0"
+source = "git+https://github.com/fflorent/nom_locate.git#f3e8955230aeb17d3657c79faffd0c362a191eb0"
+dependencies = [
+ "bytecount",
+ "memchr",
+ "nom",
 ]
 
 [[package]]

@@ -201,7 +201,11 @@ pub struct ScriptContext<'a> {
 type ScriptContextRef<'a> = Rc<ScriptContext<'a>>;
 
 impl<'a> ScriptContext<'a> {
-    pub fn new(parent: Option<Rc<ScriptContext<'a>>>) -> Self {
+    pub fn new<'b>(parent: Option<Rc<ScriptContext<'b>>>) -> Self
+    where
+        'b: 'a,
+    {
+        let parent = unsafe { std::mem::transmute(parent) };
         Self {
             parent,
             varibles: Default::default(),
@@ -497,12 +501,12 @@ impl<'a> Call<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::parser::root;
+    use super::super::parser::parse;
     use super::*;
     macro_rules! eval_test {
         ($input: expr, $output: expr) => {{
             let ctx = Default::default();
-            let value = root::<nom::error::VerboseError<&str>>($input).unwrap().1;
+            let value = parse($input).unwrap();
             println!("ast={}", value);
             let value = value.value_of(ctx).unwrap();
             assert_eq!(value, $output);
@@ -511,7 +515,7 @@ mod tests {
 
     fn type_test(input: &str, output: Type) {
         let ctx = Default::default();
-        let value = root::<nom::error::VerboseError<&str>>(input).unwrap().1;
+        let value = parse(input).unwrap();
         let value = value.type_of(ctx).unwrap();
         assert_eq!(value, output);
     }
@@ -541,10 +545,7 @@ mod tests {
     fn array_type() {
         let input = "[1,\"true\",false]";
         let ctx = Default::default();
-        let value = root::<nom::error::VerboseError<&str>>(input)
-            .unwrap()
-            .1
-            .type_of(ctx);
+        let value = parse(input).unwrap().type_of(ctx);
         println!("t={:?}", value);
         assert!(value.is_err());
     }
@@ -554,11 +555,7 @@ mod tests {
         let ctx = Default::default();
         let mut ctx2 = ScriptContext::new(Some(ctx));
         ctx2.set("a".into(), 1.into());
-        let value = root::<nom::error::VerboseError<&str>>("a+1")
-            .unwrap()
-            .1
-            .value_of(ctx2.into())
-            .unwrap();
+        let value = parse("a+1").unwrap().value_of(ctx2.into()).unwrap();
         assert_eq!(value, 2.into());
     }
 

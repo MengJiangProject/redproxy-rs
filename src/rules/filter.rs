@@ -8,7 +8,7 @@ use nom::error::{convert_error, VerboseError};
 
 use crate::context::Context;
 
-use milu::parser::root;
+use milu::parser::parse;
 use milu::script::{Accessible, Evaluatable, NativeObject, ScriptContext, Type, Value};
 
 #[derive(Debug)]
@@ -32,17 +32,9 @@ impl Filter {
 impl FromStr for Filter {
     type Err = SyntaxError;
 
-    fn from_str<'a>(s: &'a str) -> Result<Self, Self::Err> {
-        root::<VerboseError<&str>>(s)
-            .map(|(rest, root)| {
-                assert!(
-                    rest.is_empty(),
-                    "parser not complete: val={:?} left={:}",
-                    root,
-                    rest,
-                );
-                Filter { root }
-            })
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse(s)
+            .map(|root| Filter { root })
             .map_err(|e| SyntaxError::new(e, s))
     }
 }

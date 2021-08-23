@@ -22,6 +22,7 @@ use nom::multi::fold_many0;
 use nom::sequence::{delimited, preceded};
 use nom::IResult;
 
+use super::Span;
 // parser combinators are constructed from the bottom up:
 // first we write parsers for the smallest elements (escaped characters),
 // then combine them into larger parsers.
@@ -29,9 +30,9 @@ use nom::IResult;
 /// Parse a unicode sequence, of the form u{XXXX}, where XXXX is 1 to 6
 /// hexadecimal numerals. We will combine this later with parse_escaped_char
 /// to parse sequences like \u{00AC}.
-fn parse_unicode<'a, E>(input: &'a str) -> IResult<&'a str, char, E>
+fn parse_unicode<'a, E>(input: Span<'a>) -> IResult<Span<'a>, char, E>
 where
-    E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    E: ParseError<Span<'a>> + FromExternalError<Span<'a>, std::num::ParseIntError>,
 {
     // `take_while_m_n` parses between `m` and `n` bytes (inclusive) that match
     // a predicate. `parse_hex` here parses between 1 and 6 hexadecimal numerals.
@@ -50,7 +51,9 @@ where
     // `map_res` takes the result of a parser and applies a function that returns
     // a Result. In this case we take the hex bytes from parse_hex and attempt to
     // convert them to a u32.
-    let parse_u32 = map_res(parse_delimited_hex, move |hex| u32::from_str_radix(hex, 16));
+    let parse_u32 = map_res(parse_delimited_hex, move |hex: Span| {
+        u32::from_str_radix(*hex, 16)
+    });
 
     // map_opt is like map_res, but it takes an Option instead of a Result. If
     // the function returns None, map_opt returns an error. In this case, because
@@ -60,9 +63,9 @@ where
 }
 
 /// Parse an escaped character: \n, \t, \r, \u{00AC}, etc.
-fn parse_escaped_char<'a, E>(input: &'a str) -> IResult<&'a str, char, E>
+fn parse_escaped_char<'a, E>(input: Span<'a>) -> IResult<Span<'a>, char, E>
 where
-    E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    E: ParseError<Span<'a>> + FromExternalError<Span<'a>, std::num::ParseIntError>,
 {
     preceded(
         char('\\'),
@@ -88,14 +91,14 @@ where
 
 /// Parse a backslash, followed by any amount of whitespace. This is used later
 /// to discard any escaped whitespace.
-fn parse_escaped_whitespace<'a, E: ParseError<&'a str>>(
-    input: &'a str,
-) -> IResult<&'a str, &'a str, E> {
+fn parse_escaped_whitespace<'a, E: ParseError<Span<'a>>>(
+    input: Span<'a>,
+) -> IResult<Span<'a>, Span<'a>, E> {
     preceded(char('\\'), multispace1)(input)
 }
 
 /// Parse a non-empty block of text that doesn't include \ or "
-fn parse_literal<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str, &'a str, E> {
+fn parse_literal<'a, E: ParseError<Span<'a>>>(input: Span<'a>) -> IResult<Span<'a>, Span<'a>, E> {
     // `is_not` parses a string of 0 or more characters that aren't one of the
     // given characters.
     let not_quote_slash = is_not("\"\\");
@@ -104,7 +107,7 @@ fn parse_literal<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str,
     // the parser. The verification function accepts out output only if it
     // returns true. In this case, we want to ensure that the output of is_not
     // is non-empty.
-    verify(not_quote_slash, |s: &str| !s.is_empty())(input)
+    verify(not_quote_slash, |s: &Span| !s.is_empty())(input)
 }
 
 /// A string fragment contains a fragment of a string being parsed: either
@@ -112,16 +115,16 @@ fn parse_literal<'a, E: ParseError<&'a str>>(input: &'a str) -> IResult<&'a str,
 /// parsed escaped character, or a block of escaped whitespace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StringFragment<'a> {
-    Literal(&'a str),
+    Literal(Span<'a>),
     EscapedChar(char),
     EscapedWS,
 }
 
 /// Combine parse_literal, parse_escaped_whitespace, and parse_escaped_char
 /// into a StringFragment.
-fn parse_fragment<'a, E>(input: &'a str) -> IResult<&'a str, StringFragment<'a>, E>
+fn parse_fragment<'a, E>(input: Span<'a>) -> IResult<Span<'a>, StringFragment<'a>, E>
 where
-    E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    E: ParseError<Span<'a>> + FromExternalError<Span<'a>, std::num::ParseIntError>,
 {
     alt((
         // The `map` combinator runs a parser, then applies a function to the output
@@ -134,9 +137,9 @@ where
 
 /// Parse a string. Use a loop of parse_fragment and push all of the fragments
 /// into an output string.
-pub fn parse_string<'a, E>(input: &'a str) -> IResult<&'a str, String, E>
+pub fn parse_string<'a, E>(input: Span<'a>) -> IResult<Span<'a>, String, E>
 where
-    E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
+    E: ParseError<Span<'a>> + FromExternalError<Span<'a>, std::num::ParseIntError>,
 {
     // fold_many0 is the equivalent of iterator::fold. It runs a parser in a loop,
     // and for each output value, calls a folding function on each output value.
@@ -149,7 +152,7 @@ where
         // string.
         |mut string, fragment| {
             match fragment {
-                StringFragment::Literal(s) => string.push_str(s),
+                StringFragment::Literal(s) => string.push_str(*s),
                 StringFragment::EscapedChar(c) => string.push(c),
                 StringFragment::EscapedWS => {}
             }
@@ -164,29 +167,26 @@ where
     delimited(char('"'), build_string, char('"'))(input)
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     #[test]
-//     fn test_parse_string() {
-//         let data = "\"abc\"";
-//         println!("EXAMPLE 1:\nParsing a simple input string: {}", data);
-//         let result = parse_string::<()>(data);
-//         assert_eq!(result, Ok(("", String::from("abc"))));
-//         println!("Result: {}\n\n", result.unwrap().1);
-//         let data = "\"tab:\\tafter tab, newline:\\nnew line, quote: \\\", emoji: \\u{1F602}, newline:\\nescaped whitespace: \\    abc\"";
-//         println!(
-//             "EXAMPLE 2:\nParsing a string with escape sequences, newline literal, and escaped whitespace:\n\n{}\n",
-//             data
-//         );
-//         let result = parse_string::<()>(data);
-//         assert_eq!(
-//             result,
-//             Ok((
-//             "",
-//             String::from("tab:\tafter tab, newline:\nnew line, quote: \", emoji: 😂, newline:\nescaped whitespace: abc")
-//             ))
-//         );
-//         println!("Result:\n\n{}", result.unwrap().1);
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_parse_string() {
+        let data = Span::new("\"abc\"");
+        println!("EXAMPLE 1:\nParsing a simple input string: {}", data);
+        let result = parse_string::<()>(data).unwrap().1;
+        assert_eq!(result, String::from("abc"));
+        println!("Result: {}\n\n", result);
+        let data = Span::new("\"tab:\\tafter tab, newline:\\nnew line, quote: \\\", emoji: \\u{1F602}, newline:\\nescaped whitespace: \\    abc\"");
+        println!(
+            "EXAMPLE 2:\nParsing a string with escape sequences, newline literal, and escaped whitespace:\n\n{}\n",
+            data
+        );
+        let result = parse_string::<()>(data).unwrap().1;
+        assert_eq!(
+            result,
+            String::from("tab:\tafter tab, newline:\nnew line, quote: \", emoji: 😂, newline:\nescaped whitespace: abc")
+        );
+        println!("Result:\n\n{}", result);
+    }
+}

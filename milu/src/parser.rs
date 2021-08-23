@@ -13,12 +13,15 @@ use nom::{
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple as nom_tuple},
     IResult, Parser,
 };
+use nom_locate::LocatedSpan;
 
 mod string;
 use super::script::stdlib::*;
 use super::script::{Call, Value};
 
-fn parse_many<'v>(op: &str, mut args: Vec<Value<'v>>) -> Value<'v> {
+pub type Span<'s> = LocatedSpan<&'s str>;
+
+fn parse_many<'v>(op: Span, mut args: Vec<Value<'v>>) -> Value<'v> {
     let op = op.to_ascii_lowercase();
     match op.as_str() {
         //prioity 7
@@ -39,7 +42,7 @@ fn parse_many<'v>(op: &str, mut args: Vec<Value<'v>>) -> Value<'v> {
         _ => panic!("not implemented"),
     }
 }
-fn parse1<'v>(op: &str, p1: Value<'v>) -> Value<'v> {
+fn parse1<'v>(op: Span, p1: Value<'v>) -> Value<'v> {
     let op = op.to_ascii_lowercase();
     match op.as_str() {
         //prioity 7
@@ -49,7 +52,7 @@ fn parse1<'v>(op: &str, p1: Value<'v>) -> Value<'v> {
         _ => panic!("not implemented"),
     }
 }
-fn parse2<'v>(op: &str, p1: Value<'v>, p2: Value<'v>) -> Value<'v> {
+fn parse2<'v>(op: Span, p1: Value<'v>, p2: Value<'v>) -> Value<'v> {
     let op = op.to_ascii_lowercase();
 
     match op.as_str() {
@@ -90,8 +93,8 @@ fn parse2<'v>(op: &str, p1: Value<'v>, p2: Value<'v>) -> Value<'v> {
 }
 
 // struct ParserContext<'a> {
-//     input: &'a str,
-//     ids: Vec<&'a str>,
+//     input: Span<'a>,
+//     ids: Vec<Span<'a>>,
 // }
 // all combinator made by this macro will remove any leading whitespaces
 macro_rules! rule {
@@ -100,11 +103,11 @@ macro_rules! rule {
     );
 
     ($vis:vis $name:ident, $body:block) => {
-        rule!($vis $name ( i ) -> &'a str, ctx, $body);
+        rule!($vis $name ( i ) -> Span<'a>, ctx, $body);
     };
 
     ($vis:vis $name:ident, $ctx:ident, $body:block) => {
-        rule!($vis $name ( i ) -> &'a str, $ctx, $body);
+        rule!($vis $name ( i ) -> Span<'a>, $ctx, $body);
     };
 
     ($vis:vis $name:ident -> $rt:ty, $body:block) => {
@@ -112,11 +115,11 @@ macro_rules! rule {
     };
 
     ($vis:vis $name:ident ( $input:ident ), $body:block) => {
-        rule!($vis $name ( $input ) -> &'a str, ctx, $body);
+        rule!($vis $name ( $input ) -> Span<'a>, ctx, $body);
     };
 
     ($vis:vis $name:ident ( $input:ident ), $ctx:ident, $body:block) => {
-        rule!($vis $name ( $input ) -> &'a str, $ctx, $body);
+        rule!($vis $name ( $input ) -> Span<'a>, $ctx, $body);
     };
 
     ($vis:vis $name:ident ( $input:ident ) -> $rt:ty, $body:block) => {
@@ -125,11 +128,11 @@ macro_rules! rule {
 
     ($vis:vis $name:ident ( $input:ident ) -> $rt:ty, $context:ident, $body:block) => {
         #[allow(dead_code)]
-        $vis fn $name<'a, E>($input: &'a str) -> IResult<&'a str, $rt, E>
+        $vis fn $name<'a, E>($input: Span<'a>) -> IResult<Span<'a>, $rt, E>
         where
-            E: ParseError<&'a str>
-                + ContextError<&'a str>
-                + FromExternalError<&'a str, ParseIntError>
+            E: ParseError<Span<'a>>
+                + ContextError<Span<'a>>
+                + FromExternalError<Span<'a>, ParseIntError>
                 + fmt::Debug,
         {
             $context!($name, $body, $input)
@@ -138,13 +141,13 @@ macro_rules! rule {
 
     // ($vis:vis $name:ident ( $input:ident ) -> $rt:ty, $context:ident, $body:tt) => {
     //     #[allow(dead_code)]
-    //     $vis fn $name<'a, O, E, F>($input: F) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
+    //     $vis fn $name<'a, O, E, F>($input: F) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, O, E>
     //     where
-    //         E: ParseError<&'a str>
-    //             + ContextError<&'a str>
-    //             + FromExternalError<&'a str, ParseIntError>
+    //         E: ParseError<Span<'a>>
+    //             + ContextError<Span<'a>>
+    //             + FromExternalError<Span<'a>, ParseIntError>
     //             + fmt::Debug,
-    //         F: Parser<&'a str, O, E>,
+    //         F: Parser<Span<'a>, O, E>,
     //     {
     //         $context!($name, $body, $input)
     //     }
@@ -188,13 +191,13 @@ rule!(blank(i), no_ctx, {
 });
 
 // ignore leading whitespaces
-fn ws<'a, O, E, F>(f: F) -> impl FnMut(&'a str) -> IResult<&'a str, O, E>
+fn ws<'a, O, E, F>(f: F) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, O, E>
 where
-    E: ParseError<&'a str>
-        + ContextError<&'a str>
-        + FromExternalError<&'a str, ParseIntError>
+    E: ParseError<Span<'a>>
+        + ContextError<Span<'a>>
+        + FromExternalError<Span<'a>, ParseIntError>
         + fmt::Debug,
-    F: Parser<&'a str, O, E>,
+    F: Parser<Span<'a>, O, E>,
 {
     preceded(blank, f)
 }
@@ -239,8 +242,8 @@ rule!(decimal, {
 });
 
 rule!(integer -> Value<'static>, {
-    fn atoi(n: u32) -> impl Fn(&str) -> Result<Value<'static>, ParseIntError> {
-        move |x| i64::from_str_radix(x, n).map(Into::into)
+    fn atoi<'a>(n: u32) -> impl Fn(Span<'a>) -> Result<Value<'static>, ParseIntError> {
+        move |x| i64::from_str_radix(*x, n).map(Into::into)
     }
     alt((
         map_res(binary, atoi(2)),
@@ -256,7 +259,7 @@ rule!(identifier -> Value<'static>, {
             alt((alpha1, tag("_"))),
             many0(alt((alphanumeric1, tag("_")))),
         )),
-        |x|Value::Identifier(String::from(x)),
+        |x:Span|Value::Identifier(String::from(*x)),
     )
 });
 
@@ -307,28 +310,28 @@ rule!(op_value -> Value<'static>, {
     ))
 });
 
-rule!(op_index -> (&'a str,Vec<Value<'static>>), {
+rule!(op_index -> (Span<'a>,Vec<Value<'static>>), {
     map(
         delimited(tag("["), op_0, ws(char(']'))),
-        |idx| ("index", vec![idx])
+        |idx| (Span::new("index"), vec![idx])
     )
 });
 
-rule!(op_access -> (&'a str,Vec<Value<'static>>), {
+rule!(op_access -> (Span<'a>,Vec<Value<'static>>), {
     map(
         preceded(tag("."), alt((identifier,integer))),
-        |id| ("access", vec![id])
+        |id| (Span::new("access"), vec![id])
     )
 });
 
-rule!(op_call -> (&'a str,Vec<Value<'static>>), {
+rule!(op_call -> (Span<'a>,Vec<Value<'static>>), {
     map(
         delimited(
             char('('),
             separated_list0(ws(char(',')), op_0),
             ws(char(')'))
         ),
-        |args|("call",args)
+        |args|(Span::new("call"),args)
     )
 });
 
@@ -345,7 +348,7 @@ rule!(op_8(i) -> Value<'static>, {
     |(p1, expr)| {
         // println!("p1={:?} expr={:?}", p1, expr);
         expr.into_iter().fold(p1, |p1, val| {
-            let (op, mut args) : (&str,Vec<Value>) = val;
+            let (op, mut args) : (Span,Vec<Value>) = val;
             args.insert(0,p1);
             parse_many(op, args).into()
         })
@@ -452,9 +455,26 @@ rule!(op_0 -> Value<'static>, {
     ))
 });
 
-rule!(pub root(i)->Value<'static>, {
+rule!(root(i)->Value<'static>, {
     all_consuming(terminated(op_0,delimited(multispace0,opt(tag(";;")),multispace0)))
 });
+
+use nom::error::VerboseError;
+use nom::Err;
+pub fn parse(input: &str) -> Result<Value<'static>, Err<VerboseError<&str>>> {
+    root::<VerboseError<Span>>(Span::new(input))
+        .map(|x| x.1)
+        .map_err(|e| match e {
+            Err::Error(ve) | Err::Failure(ve) => Err::Error(VerboseError {
+                errors: ve
+                    .errors
+                    .into_iter()
+                    .map(|(span, e)| (*span, e))
+                    .collect::<Vec<_>>(),
+            }),
+            Err::Incomplete(ic) => Err::Incomplete(ic),
+        })
+}
 
 #[cfg(test)]
 mod tests {
@@ -545,10 +565,10 @@ mod tests {
     }
 
     #[inline]
-    fn assert_ast(input: &str, value: Value<'static>) {
-        let output = root::<nom::error::VerboseError<&str>>(input);
+    fn assert_ast<'a>(input: &'a str, value: Value<'static>) {
+        let output = parse(input);
         println!("input={}\noutput={:?}", input, output);
-        assert_eq!(output.unwrap().1, value);
+        assert_eq!(output.unwrap(), value);
     }
 
     #[test]

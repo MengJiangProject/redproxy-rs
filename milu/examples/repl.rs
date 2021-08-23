@@ -1,5 +1,4 @@
 use easy_error::{ResultExt, Terminator};
-use nom::error::VerboseError;
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::config::OutputStreamType;
 use rustyline::error::ReadlineError;
@@ -136,9 +135,8 @@ fn repl() -> rustyline::Result<()> {
     println!("Press Ctrl-D to exit.");
     println!();
     let mut count = 1;
-    let ctx: Rc<script::ScriptContext> = Default::default();
-    // let mut buf = String::with_capacity(100);
     let mut buf = vec![];
+    let global: Rc<script::ScriptContext> = Default::default();
     loop {
         let p = format!("{}> ", count);
         rl.helper_mut().expect("No helper").colored_prompt = format!("\x1b[1;32m{}\x1b[0m", p);
@@ -148,8 +146,9 @@ fn repl() -> rustyline::Result<()> {
                 let line = line.trim_end();
                 buf.push(line.to_owned());
                 if line.ends_with(";;") {
+                    let ctx = global.clone();
                     let sbuf = buf.join(" ");
-                    eval(ctx.clone(), &sbuf);
+                    eval(ctx, &sbuf);
                     rl.add_history_entry(&sbuf);
                     count += 1;
                     buf.clear();
@@ -174,7 +173,7 @@ fn repl() -> rustyline::Result<()> {
 }
 
 fn eval(ctx: Rc<script::ScriptContext>, str: &str) -> bool {
-    let val = parser::root::<VerboseError<&str>>(str);
+    let val = parser::parse(str);
     if let Err(e) = val {
         let msg = match e {
             nom::Err::Error(e) | nom::Err::Failure(e) => nom::error::convert_error(str, e),
@@ -183,7 +182,7 @@ fn eval(ctx: Rc<script::ScriptContext>, str: &str) -> bool {
         eprintln!("parser error: {}", msg);
         return false;
     }
-    let val = val.unwrap().1;
+    let val = val.unwrap();
     let typ = val.type_of(ctx.clone());
     if let Err(e) = typ {
         eprintln!("type inference error: {}", e);
