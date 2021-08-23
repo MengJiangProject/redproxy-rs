@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 milu = { path = "milu" }
 tokio = { version = "1.9.0", features = ["full"] }
-tokio-rustls = "0.22.0"
+tokio-rustls = { version="0.22.0", features = ["dangerous_configuration"] }
 # rustls = "0.19"
 nix = { version = "0.22.0"}
 async-trait = "0.1.51"

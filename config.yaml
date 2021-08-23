@@ -16,17 +16,20 @@ listeners:
 connectors:
   - name: direct
   - name: http
-    server: 192.168.100.107
-    port: 3128
+    server: 192.168.100.1
+    port: 8848
   - name: https
     type: http
-    server: 192.168.100.107
-    port: 3128
+    server: 192.168.100.1
+    port: 3333
     tls:
-      cert: test.crt
-      key: test.key
+      insecure: true
+      ca: ca.crt
+      auth:
+        cert: proxy.crt
+        key: proxy.key
 
 rules:
   - filter: request.source =~ "127.0.0.1" and request.target =~ "google.com"
-    target: http
+    target: https
   #- target: http

@@ -1,5 +1,5 @@
 /target
-test.crt
-test.key
+*.crt
+*.key
 .vscode
 history.txt
