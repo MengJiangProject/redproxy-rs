@@ -32,4 +32,4 @@ connectors:
 rules:
   - filter: request.source =~ "127.0.0.1" and request.target =~ "google.com"
     target: https
-  #- target: http
+  - target: http
