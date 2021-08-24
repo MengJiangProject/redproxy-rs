@@ -38,14 +38,13 @@ impl super::Connector for HttpConnector {
         Ok(())
     }
 
-    async fn connect(&self, ctx: Context) -> Result<(), Error> {
+    async fn connect(&self, mut ctx: Context) -> Result<(), Error> {
         let server_addr = (self.server.to_owned(), self.port);
-        let mut client = ctx.socket;
-        let target = ctx.target;
         let tls_insecure = self.tls.as_ref().map(|x| x.insecure).unwrap_or(false);
         let tls_connector = self.tls.as_ref().map(|options| options.connector());
         tokio::spawn(async move {
             if let Err(err) = async {
+                let target = &ctx.target;
                 trace!("connecting to server {:?}", server_addr);
                 let server = TcpStream::connect(server_addr.clone())
                     .await
@@ -78,14 +77,17 @@ impl super::Connector for HttpConnector {
                 if resp.code != 200 {
                     bail!("server failure {:?}", resp);
                 }
+                ctx.on_connect().await;
+                let client = &mut ctx.socket;
                 // let mut client = client.into_inner();
-                copy_bidi(&mut client, &mut server)
+                copy_bidi(client, &mut server)
                     .await
                     .context("copy_bidirectional")
             }
             .await
             {
-                warn!("connection failed {:?} {:?}", target, err);
+                warn!("connection failed {:?} {:?}", ctx.target, err);
+                ctx.on_error(err).await;
             }
         });
         Ok(())

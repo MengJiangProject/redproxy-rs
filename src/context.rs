@@ -1,8 +1,11 @@
-// use easy_error::Error;
+use easy_error::Error;
 use std::{
     fmt::{Debug, Display},
+    future::Future,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    pin::Pin,
     str::FromStr,
+    sync::Arc,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, BufStream},
@@ -69,11 +72,37 @@ impl Display for TargetAddress {
 pub trait IOStream: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T> IOStream for T where T: AsyncRead + AsyncWrite + Send + Unpin {}
 
+pub trait ContextCallback {
+    fn on_connect<'a>(&self, ctx: &'a mut Context)
+        -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+    fn on_error<'a>(
+        &self,
+        ctx: &'a mut Context,
+        error: Error,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+}
+
 pub struct Context {
     pub listener: String,
     pub socket: BufStream<Box<dyn IOStream>>,
-    pub target: TargetAddress,
     pub source: SocketAddr,
+    pub target: TargetAddress,
+    pub callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
+}
+
+impl Context {
+    pub async fn on_connect(&mut self) {
+        if self.callback.is_some() {
+            let cb = self.callback.clone().unwrap();
+            cb.on_connect(self).await
+        }
+    }
+    pub async fn on_error(&mut self, error: Error) {
+        if self.callback.is_some() {
+            let cb = self.callback.clone().unwrap();
+            cb.on_error(self, error).await
+        }
+    }
 }
 
 impl std::hash::Hash for Context {

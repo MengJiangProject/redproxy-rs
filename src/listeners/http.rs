@@ -1,3 +1,7 @@
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error, ResultExt};
 use log::{info, trace, warn};
@@ -7,7 +11,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::common::http::{HttpRequest, HttpResponse};
 use crate::common::tls::TlsServerConfig;
-use crate::context::{Context, IOStream};
+use crate::context::{Context, ContextCallback, IOStream};
 use crate::listeners::Listener;
 use serde::{Deserialize, Serialize};
 
@@ -57,16 +61,53 @@ impl Listener for HttpListener {
                             request.resource
                         ))
                     })?;
-                    HttpResponse::new(200, "Connection established")
-                        .write_to(&mut socket)
-                        .await?;
-                    socket.flush().await.context("flush")?;
+                    struct Callback;
+                    impl ContextCallback for Callback {
+                        fn on_connect<'a>(
+                            &self,
+                            ctx: &'a mut Context,
+                        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+                            Box::pin(async move {
+                                HttpResponse::new(200, "Connection established")
+                                    .write_to(&mut ctx.socket)
+                                    .await
+                                    .err()
+                                    .map(|e| warn!("failed to send response: {}", e));
+                                ctx.socket
+                                    .flush()
+                                    .await
+                                    .err()
+                                    .map(|e| warn!("failed to flush buffer: {}", e));
+                            })
+                        }
+                        fn on_error<'a>(
+                            &self,
+                            ctx: &'a mut Context,
+                            error: Error,
+                        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+                            Box::pin(async move {
+                                HttpResponse::new(503, "Service unavailable")
+                                    .with_header("Error", error)
+                                    .write_to(&mut ctx.socket)
+                                    .await
+                                    .err()
+                                    .map(|e| warn!("failed to send response: {}", e));
+                                ctx.socket
+                                    .flush()
+                                    .await
+                                    .err()
+                                    .map(|e| warn!("failed to flush buffer: {}", e));
+                            })
+                        }
+                    }
+
                     queue
                         .send(Context {
                             socket,
                             target,
                             source,
                             listener: self.name().into(),
+                            callback: Some(Arc::new(Callback)),
                         })
                         .await
                         .context("enqueue")?;

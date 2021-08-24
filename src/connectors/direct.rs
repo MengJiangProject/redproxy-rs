@@ -26,23 +26,25 @@ impl super::Connector for DirectConnector {
         Ok(())
     }
 
-    async fn connect(&self, ctx: Context) -> Result<(), Error> {
+    async fn connect(&self, mut ctx: Context) -> Result<(), Error> {
         tokio::spawn(async move {
-            let mut client = ctx.socket;
-            let target = ctx.target;
             if let Err(err) = async {
+                let target = &ctx.target;
                 trace!("connecting to {:?}", target);
                 let server = target.connect_tcp().await.context("connect")?;
                 let mut server = BufStream::new(server);
                 trace!("connected to {:?}", target);
                 // let mut client = client.into_inner();
-                copy_bidi(&mut client, &mut server)
+                ctx.on_connect().await;
+                let client = &mut ctx.socket;
+                copy_bidi(client, &mut server)
                     .await
                     .context("copy_bidirectional")
             }
             .await
             {
-                warn!("connection failed {:?} {:?}", target, err);
+                warn!("connection failed {:?} {:?}", ctx.target, err);
+                ctx.on_error(err).await;
             }
         });
         Ok(())

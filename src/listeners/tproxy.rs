@@ -54,6 +54,7 @@ impl Listener for TProxyListener {
                             target,
                             source,
                             listener: self.name().into(),
+                            callback: None,
                         })
                         .await
                         .context("enqueue")?;
