@@ -59,7 +59,7 @@ where
     // the function returns None, map_opt returns an error. In this case, because
     // not all u32 values are valid unicode code points, we have to fallibly
     // convert to char with from_u32.
-    map_opt(parse_u32, |value| std::char::from_u32(value))(input)
+    map_opt(parse_u32, std::char::from_u32)(input)
 }
 
 /// Parse an escaped character: \n, \t, \r, \u{00AC}, etc.
@@ -147,7 +147,7 @@ where
         // Our parser function– parses a single string fragment
         parse_fragment,
         // Our init value, an empty string
-        || String::new(),
+        String::new,
         // Our folding function. For each fragment, append the fragment to the
         // string.
         |mut string, fragment| {

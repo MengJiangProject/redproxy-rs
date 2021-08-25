@@ -135,7 +135,9 @@ async fn read_headers(
         if buf.is_empty() {
             return Ok(());
         };
-        let a = buf.split_once(": ").ok_or(err_msg("bad response"))?;
+        let a = buf
+            .split_once(": ")
+            .ok_or_else(|| err_msg(format!("bad response: {:?}", buf)))?;
         headers.push((a.0.to_owned(), a.1.to_owned()))
     }
 }

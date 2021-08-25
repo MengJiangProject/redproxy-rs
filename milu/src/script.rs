@@ -13,7 +13,7 @@ pub enum Type {
     Integer,
     Boolean,
     Array(Box<Type>),
-    Tuple(Box<Vec<Type>>),
+    Tuple(Vec<Type>),
     NativeObject,
     Null,
     Any, //native only
@@ -24,7 +24,7 @@ impl Type {
         Self::Array(Box::new(t))
     }
     pub fn tuple_of(t: Vec<Self>) -> Self {
-        Self::Tuple(Box::new(t))
+        Self::Tuple(t)
     }
 }
 
@@ -98,12 +98,12 @@ pub trait Callable {
     fn signature<'a: 'b, 'b>(
         &self,
         ctx: ScriptContextRef<'b>,
-        args: &Vec<Value<'a>>,
+        args: &[Value<'a>],
     ) -> Result<Type, Error>;
     fn call<'a: 'b, 'b>(
         &self,
         ctx: ScriptContextRef<'b>,
-        args: &Vec<Value<'a>>,
+        args: &[Value<'a>],
     ) -> Result<Value<'b>, Error>;
 }
 
@@ -122,7 +122,7 @@ impl<'a> Accessible<'a> for HashMap<String, Value<'a>> {
     fn get(&self, name: &str) -> Result<Value<'a>, Error> {
         self.get(name)
             .map(Clone::clone)
-            .ok_or(err_msg(format!("undefined: {}", name)))
+            .ok_or_else(|| err_msg(format!("undefined: {}", name)))
     }
 }
 
@@ -214,12 +214,10 @@ impl<'a> ScriptContext<'a> {
     pub fn lookup(&self, id: &str) -> Result<Value<'a>, Error> {
         if let Some(r) = self.varibles.get(id) {
             Ok(r.clone())
+        } else if let Some(p) = &self.parent {
+            p.lookup(id)
         } else {
-            if let Some(p) = &self.parent {
-                p.lookup(id)
-            } else {
-                bail!("\"{}\" is undefined", id)
-            }
+            bail!("\"{}\" is undefined", id)
         }
     }
     pub fn set(&mut self, id: String, value: Value<'a>) {
@@ -262,15 +260,15 @@ impl<'a> Value<'a> {
     }
     fn as_vec(&self) -> &Vec<Value<'a>> {
         match self {
-            Self::Array(a) => &a,
-            Self::Tuple(a) => &a,
+            Self::Array(a) => a,
+            Self::Tuple(a) => a,
             _ => panic!("as_vec: type mismatch, possible bug in parse"),
         }
     }
     fn as_str(&self) -> &str {
         match self {
-            Self::String(a) => &a,
-            Self::Identifier(a) => &a,
+            Self::String(a) => a,
+            Self::Identifier(a) => a,
             _ => panic!("as_str: type mismatch, possible bug in parse"),
         }
     }
@@ -317,7 +315,7 @@ impl<'a> Evaluatable<'a> for Value<'a> {
                 for x in t.iter() {
                     ret.push(x.type_of(ctx.clone())?)
                 }
-                Ok(Type::Tuple(Box::new(ret)))
+                Ok(Type::Tuple(ret))
             }
             NativeObject(o) => o
                 .as_evaluatable()
@@ -334,11 +332,10 @@ impl<'a> Evaluatable<'a> for Value<'a> {
             Self::OpCall(f) => f.call(ctx),
             Self::NativeObject(f) => {
                 let e = f.as_evaluatable();
-                if e.is_some() {
-                    e.unwrap().value_of(ctx)
+                if let Some(e) = e {
+                    e.value_of(ctx)
                 } else {
                     Ok(self.unsafe_clone())
-                    // todo!()
                 }
             }
             _ => Ok(self.unsafe_clone()),

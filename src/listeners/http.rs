@@ -68,16 +68,15 @@ impl Listener for HttpListener {
                             ctx: &'a mut Context,
                         ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
                             Box::pin(async move {
-                                HttpResponse::new(200, "Connection established")
-                                    .write_to(&mut ctx.socket)
+                                let s = &mut ctx.socket;
+                                if let Some(e) = HttpResponse::new(200, "Connection established")
+                                    .write_to(s)
                                     .await
+                                    .and(s.flush().await.context("flush"))
                                     .err()
-                                    .map(|e| warn!("failed to send response: {}", e));
-                                ctx.socket
-                                    .flush()
-                                    .await
-                                    .err()
-                                    .map(|e| warn!("failed to flush buffer: {}", e));
+                                {
+                                    warn!("failed to send response: {}", e)
+                                }
                             })
                         }
                         fn on_error<'a>(
@@ -86,17 +85,16 @@ impl Listener for HttpListener {
                             error: Error,
                         ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
                             Box::pin(async move {
-                                HttpResponse::new(503, "Service unavailable")
+                                let s = &mut ctx.socket;
+                                if let Some(e) = HttpResponse::new(503, "Service unavailable")
                                     .with_header("Error", error)
-                                    .write_to(&mut ctx.socket)
+                                    .write_to(s)
                                     .await
+                                    .and(s.flush().await.context("flush"))
                                     .err()
-                                    .map(|e| warn!("failed to send response: {}", e));
-                                ctx.socket
-                                    .flush()
-                                    .await
-                                    .err()
-                                    .map(|e| warn!("failed to flush buffer: {}", e));
+                                {
+                                    warn!("failed to send response: {}", e)
+                                }
                             })
                         }
                     }

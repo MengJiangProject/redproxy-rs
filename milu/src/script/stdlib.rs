@@ -14,7 +14,7 @@ macro_rules! function_head {
         #[allow(dead_code)]
         impl<'a> $name {
             pub fn stub() -> $name {$name(stringify!($name).into())}
-            pub fn new($($aname : Value<'a>),+) -> Call<'a> {
+            pub fn make_call($($aname : Value<'a>),+) -> Call<'a> {
                 Call::new(vec![$name(stringify!($name).into()).into(), $($aname),+ ])
             }
         }
@@ -52,7 +52,7 @@ macro_rules! function {
             fn signature<'a:'b,'b>(
                 &self,
                 ctx: ScriptContextRef<'b>,
-                args: &Vec<Value<'a>>,
+                args: &[Value<'a>],
             ) -> Result<Type, Error>
             {
                 let mut targs : Vec<Type> = Vec::with_capacity(args.len());
@@ -73,7 +73,7 @@ macro_rules! function {
             fn call<'a:'b,'b>(
                 &self,
                 ctx: ScriptContextRef<'b>,
-                args: &Vec<Value<'a>>,
+                args: &[Value<'a>],
             ) -> Result<Value<'b>, Error>
             {
                 args!(args, ctx=ctx, $($aname),+);
@@ -88,7 +88,7 @@ impl Callable for Index {
     fn signature<'a: 'b, 'b>(
         &self,
         ctx: ScriptContextRef<'b>,
-        args: &Vec<Value<'a>>,
+        args: &[Value<'a>],
     ) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
@@ -107,7 +107,7 @@ impl Callable for Index {
     fn call<'a: 'b, 'b>(
         &self,
         ctx: ScriptContextRef<'b>,
-        args: &Vec<Value<'a>>,
+        args: &[Value<'a>],
     ) -> Result<Value<'b>, Error> {
         args!(args, ctx = ctx, obj, index);
         let index: i64 = index.try_into()?;
@@ -115,7 +115,7 @@ impl Callable for Index {
             Value::Array(a) => a.as_ref(),
             Value::NativeObject(a) => a
                 .as_indexable()
-                .ok_or(err_msg("NativeObject does not implement Indexible"))?,
+                .ok_or_else(|| err_msg("NativeObject does not implement Indexible"))?,
             _ => bail!("type mismatch"),
         };
         obj.get(index)?.value_of(ctx)
@@ -127,7 +127,7 @@ impl Callable for Access {
     fn signature<'a: 'b, 'b>(
         &self,
         ctx: ScriptContextRef<'b>,
-        args: &Vec<Value<'a>>,
+        args: &[Value<'a>],
     ) -> Result<Type, Error> {
         // args!(args, obj, index);
         let obj = &args[0];
@@ -140,7 +140,7 @@ impl Callable for Access {
         if let Value::NativeObject(obj) = obj {
             let obj = obj
                 .as_accessible()
-                .ok_or(err_msg("Object not accessible"))?;
+                .ok_or_else(|| err_msg("Object not accessible"))?;
             let t = obj.get(index)?;
             Ok(t.type_of(ctx)?)
         } else {
@@ -150,7 +150,7 @@ impl Callable for Access {
     fn call<'a: 'b, 'b>(
         &self,
         ctx: ScriptContextRef<'b>,
-        args: &Vec<Value<'a>>,
+        args: &[Value<'a>],
     ) -> Result<Value<'b>, Error> {
         let obj = args[0].value_of(ctx.clone())?;
         let index = &args[1];
@@ -162,7 +162,7 @@ impl Callable for Access {
         if let Value::NativeObject(obj) = obj {
             let obj = obj
                 .as_accessible()
-                .ok_or(err_msg("Object not accessible"))?;
+                .ok_or_else(|| err_msg("Object not accessible"))?;
             obj.get(index)?.value_of(ctx)
         } else {
             bail!("Type {:?} does not implement Accessible", obj)
@@ -175,7 +175,7 @@ impl Callable for If {
     fn signature<'a: 'b, 'b>(
         &self,
         ctx: ScriptContextRef<'b>,
-        args: &Vec<Value<'a>>,
+        args: &[Value<'a>],
     ) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
@@ -193,7 +193,7 @@ impl Callable for If {
     fn call<'a: 'b, 'b>(
         &self,
         ctx: ScriptContextRef<'b>,
-        args: &Vec<Value<'a>>,
+        args: &[Value<'a>],
     ) -> Result<Value<'b>, Error> {
         let cond: bool = args[0].value_of(ctx.clone())?.try_into()?;
         if cond {
@@ -207,7 +207,7 @@ impl Callable for If {
 function_head!(Scope(vars: Array, expr: Any) => Any);
 impl Scope {
     fn make_context<'value, 'ctx>(
-        vars: &Vec<Value<'value>>,
+        vars: &[Value<'value>],
         ctx: ScriptContextRef<'ctx>,
     ) -> Result<ScriptContextRef<'ctx>, Error>
     where
@@ -227,18 +227,18 @@ impl Callable for Scope {
     fn signature<'a: 'b, 'b>(
         &self,
         ctx: ScriptContextRef<'b>,
-        args: &Vec<Value<'a>>,
+        args: &[Value<'a>],
     ) -> Result<Type, Error> {
-        let ctx = Self::make_context(&args[0].as_vec(), ctx)?;
+        let ctx = Self::make_context(args[0].as_vec(), ctx)?;
         let expr = args[1].type_of(ctx)?;
         Ok(expr)
     }
     fn call<'a: 'b, 'b>(
         &self,
         ctx: ScriptContextRef<'b>,
-        args: &Vec<Value<'a>>,
+        args: &[Value<'a>],
     ) -> Result<Value<'b>, Error> {
-        let ctx = Self::make_context(&args[0].as_vec(), ctx)?;
+        let ctx = Self::make_context(args[0].as_vec(), ctx)?;
         args[1].value_of(ctx)
     }
 }
@@ -248,7 +248,7 @@ impl Callable for MemberOf {
     fn signature<'a: 'b, 'b>(
         &self,
         ctx: ScriptContextRef<'b>,
-        args: &Vec<Value<'a>>,
+        args: &[Value<'a>],
     ) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
@@ -272,7 +272,7 @@ impl Callable for MemberOf {
     fn call<'a: 'b, 'b>(
         &self,
         ctx: ScriptContextRef<'b>,
-        args: &Vec<Value<'a>>,
+        args: &[Value<'a>],
     ) -> Result<Value<'b>, Error> {
         args!(args, ctx = ctx, a, ary);
         let vec: Arc<Vec<Value>> = ary.try_into()?;
@@ -403,7 +403,7 @@ mod tests {
             #[test]
             fn $name() {
                 let ctx = Default::default();
-                let func = Box::new($fn::new( $($in),+ ));
+                let func = Box::new($fn::make_call( $($in),+ ));
                 let output = $out;
                 // let input = $in;
                 let ret = func.call(ctx).unwrap();

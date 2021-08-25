@@ -32,12 +32,12 @@ fn parse_many<'v>(op: Span, mut args: Vec<Value<'v>>) -> Value<'v> {
         "index" => {
             let p1 = args.remove(0);
             let p2 = args.remove(0);
-            Index::new(p1, p2).into()
+            Index::make_call(p1, p2).into()
         }
         "access" => {
             let p1 = args.remove(0);
             let p2 = args.remove(0);
-            Access::new(p1, p2).into()
+            Access::make_call(p1, p2).into()
         }
         _ => panic!("not implemented"),
     }
@@ -46,9 +46,9 @@ fn parse1<'v>(op: Span, p1: Value<'v>) -> Value<'v> {
     let op = op.to_ascii_lowercase();
     match op.as_str() {
         //prioity 7
-        "!" => Not::new(p1).into(),
-        "~" => BitNot::new(p1).into(),
-        "-" => Negative::new(p1).into(),
+        "!" => Not::make_call(p1).into(),
+        "~" => BitNot::make_call(p1).into(),
+        "-" => Negative::make_call(p1).into(),
         _ => panic!("not implemented"),
     }
 }
@@ -57,37 +57,37 @@ fn parse2<'v>(op: Span, p1: Value<'v>, p2: Value<'v>) -> Value<'v> {
 
     match op.as_str() {
         //prioity 6
-        "*" => Multiply::new(p1, p2).into(),
-        "/" => Divide::new(p1, p2).into(),
-        "%" => Mod::new(p1, p2).into(),
+        "*" => Multiply::make_call(p1, p2).into(),
+        "/" => Divide::make_call(p1, p2).into(),
+        "%" => Mod::make_call(p1, p2).into(),
         //prioity 5
-        "+" => Plus::new(p1, p2).into(),
-        "-" => Minus::new(p1, p2).into(),
+        "+" => Plus::make_call(p1, p2).into(),
+        "-" => Minus::make_call(p1, p2).into(),
         //prioity 4.1
-        "<<" => ShiftLeft::new(p1, p2).into(),
-        ">>" => ShiftRight::new(p1, p2).into(),
-        ">>>" => ShiftRightUnsigned::new(p1, p2).into(),
+        "<<" => ShiftLeft::make_call(p1, p2).into(),
+        ">>" => ShiftRight::make_call(p1, p2).into(),
+        ">>>" => ShiftRightUnsigned::make_call(p1, p2).into(),
         //prioity 4
-        ">" => Greater::new(p1, p2).into(),
-        ">=" => GreaterOrEqual::new(p1, p2).into(),
-        "<" => Lesser::new(p1, p2).into(),
-        "<=" => LesserOrEqual::new(p1, p2).into(),
+        ">" => Greater::make_call(p1, p2).into(),
+        ">=" => GreaterOrEqual::make_call(p1, p2).into(),
+        "<" => Lesser::make_call(p1, p2).into(),
+        "<=" => LesserOrEqual::make_call(p1, p2).into(),
         //prioity 3
-        "==" => Equal::new(p1, p2).into(),
-        "!=" => NotEqual::new(p1, p2).into(),
-        "=~" => Like::new(p1, p2).into(),
-        "!~" => NotLike::new(p1, p2).into(),
-        "_:" => MemberOf::new(p1, p2).into(),
+        "==" => Equal::make_call(p1, p2).into(),
+        "!=" => NotEqual::make_call(p1, p2).into(),
+        "=~" => Like::make_call(p1, p2).into(),
+        "!~" => NotLike::make_call(p1, p2).into(),
+        "_:" => MemberOf::make_call(p1, p2).into(),
         //prioity 2.x
-        "&" => BitAnd::new(p1, p2).into(),
-        "^" => BitXor::new(p1, p2).into(),
-        "|" => BitOr::new(p1, p2).into(),
+        "&" => BitAnd::make_call(p1, p2).into(),
+        "^" => BitXor::make_call(p1, p2).into(),
+        "|" => BitOr::make_call(p1, p2).into(),
         //prioity 2
-        "&&" | "and" => And::new(p1, p2).into(),
+        "&&" | "and" => And::make_call(p1, p2).into(),
         //prioity 1
-        "^^" | "xor" => Xor::new(p1, p2).into(),
+        "^^" | "xor" => Xor::make_call(p1, p2).into(),
         //prioity 1
-        "||" | "or" => Or::new(p1, p2).into(),
+        "||" | "or" => Or::make_call(p1, p2).into(),
         _ => panic!("not implemented"),
     }
 }
@@ -350,7 +350,7 @@ rule!(op_8(i) -> Value<'static>, {
         expr.into_iter().fold(p1, |p1, val| {
             let (op, mut args) : (Span,Vec<Value>) = val;
             args.insert(0,p1);
-            parse_many(op, args).into()
+            parse_many(op, args)
         })
     })
 });
@@ -359,7 +359,7 @@ rule!(op_8(i) -> Value<'static>, {
 rule!(op_7(i) -> Value<'static>, {
     alt((
         map(nom_tuple((alt((tag("!"), tag("~"), tag("-"))), op_7)),
-            |(op,p1)|parse1(op, p1).into()
+            |(op,p1)|parse1(op, p1)
         ),
         op_8
     ))
@@ -420,7 +420,7 @@ rule!(op_if(i) -> Value<'static>, {
             )) ,
         )),
         |(cond, yes, no)| {
-            If::new(cond, yes, no).into()
+            If::make_call(cond, yes, no).into()
         }
     )
 });
@@ -443,7 +443,7 @@ rule!(op_let -> Value<'static>, {
             ),
             preceded(ws(tag("in")),op_0),
         )),
-        |(vars,expr)| Scope::new(vars.into(),expr).into()
+        |(vars,expr)| Scope::make_call(vars.into(),expr).into()
     )
 });
 
@@ -483,16 +483,19 @@ mod tests {
     use super::*;
     macro_rules! expr {
         ($id:ident,$name:ident) => {
+            expr!($id, $name, make_call);
+        };
+        ($id:ident,$name:ident,$make_call:ident) => {
             #[allow(unused_macros)]
             macro_rules! $id {
                 ($p1:expr) => {
-                    $name::new($p1).into()
+                    $name::$make_call($p1).into()
                 };
                 ($p1:expr,$p2:expr) => {
-                    $name::new($p1, $p2).into()
+                    $name::$make_call($p1, $p2).into()
                 };
                 ($p1:expr,$p2:expr,$p3:expr) => {
-                    $name::new($p1, $p2, $p3).into()
+                    $name::$make_call($p1, $p2, $p3).into()
                 };
             }
         };
@@ -512,7 +515,7 @@ mod tests {
     expr!(div, Divide);
     expr!(equal, Equal);
     expr!(member_of, MemberOf);
-    expr!(call, Call);
+    expr!(call, Call, new);
     expr!(scope, Scope);
     expr!(index, Index);
     expr!(access, Access);
@@ -565,7 +568,7 @@ mod tests {
     }
 
     #[inline]
-    fn assert_ast<'a>(input: &'a str, value: Value<'static>) {
+    fn assert_ast(input: &str, value: Value<'static>) {
         let output = parse(input);
         println!("input={}\noutput={:?}", input, output);
         assert_eq!(output.unwrap(), value);

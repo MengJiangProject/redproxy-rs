@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::BufReader;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use easy_error::{err_msg, Error, ResultExt};
@@ -18,8 +18,8 @@ use tokio_rustls::{
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TlsServerConfig {
-    cert: PathBuf,
-    key: PathBuf,
+    cert: String,
+    key: String,
     client: Option<TlsClientVerifyConfig>,
     #[serde(skip)]
     populated: Option<TlsServerConfigPopulated>,
@@ -37,7 +37,7 @@ impl std::fmt::Debug for TlsServerConfigPopulated {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TlsClientVerifyConfig {
-    ca: PathBuf,
+    ca: String,
     required: bool,
 }
 
@@ -124,7 +124,11 @@ impl TlsClientConfig {
     }
     fn root_store(&self) -> Result<RootCertStore, Error> {
         let mut ret = RootCertStore::empty();
-        let certs = self.ca.as_ref().map(load_certs).unwrap_or(Ok(vec![]))?;
+        let certs = self
+            .ca
+            .as_ref()
+            .map(load_certs)
+            .unwrap_or_else(|| Ok(vec![]))?;
         for cert in certs {
             ret.add(&cert).context("fail to add trusted certificate")?;
         }
@@ -194,13 +198,13 @@ impl std::fmt::Debug for TlsClientConfigPopulated {
     }
 }
 
-fn load_certs(path: &PathBuf) -> Result<Vec<Certificate>, Error> {
+fn load_certs<P: AsRef<Path>>(path: P) -> Result<Vec<Certificate>, Error> {
     let file = File::open(path).context("failed to read certificates")?;
     let mut reader = BufReader::new(file);
     certs(&mut reader).map_err(|_| err_msg("fail to load certificate"))
 }
 
-fn load_keys(path: &PathBuf) -> Result<Vec<PrivateKey>, Error> {
+fn load_keys<P: AsRef<Path>>(path: P) -> Result<Vec<PrivateKey>, Error> {
     let file = File::open(path).context("failed to read private key")?;
     let mut reader = BufReader::new(file);
     rsa_private_keys(&mut reader).map_err(|_| err_msg("fail to load private key"))

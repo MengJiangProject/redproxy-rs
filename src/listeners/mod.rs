@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use easy_error::{err_msg, Error};
-use serde_yaml::{Sequence, Value};
+use serde_yaml::Value;
 use tokio::sync::mpsc::Sender;
 
 use crate::context::Context;
@@ -17,7 +17,7 @@ pub trait Listener: std::fmt::Debug {
     fn name(&self) -> &str;
 }
 
-pub fn config(listeners: &Sequence) -> Result<Vec<Box<dyn Listener>>, Error> {
+pub fn config(listeners: &[Value]) -> Result<Vec<Box<dyn Listener>>, Error> {
     let mut ret = Vec::with_capacity(listeners.len());
     for l in listeners {
         let ll = from_value(l)?;
@@ -27,7 +27,9 @@ pub fn config(listeners: &Sequence) -> Result<Vec<Box<dyn Listener>>, Error> {
 }
 
 pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
-    let name = value.get("name").ok_or(err_msg("missing name"))?;
+    let name = value
+        .get("name")
+        .ok_or_else(|| err_msg("missing listener name"))?;
     let tname = value.get("type").or(Some(name)).unwrap();
     match tname.as_str() {
         Some("http") => http::from_value(value),

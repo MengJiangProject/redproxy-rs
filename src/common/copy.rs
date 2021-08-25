@@ -174,7 +174,7 @@ where
             }
             TransferState::ShuttingDown(count) => {
                 // Ignore "Transport endpoint is not connected"
-                if let Poll::Pending = w.as_mut().poll_shutdown(cx) {
+                if w.as_mut().poll_shutdown(cx).is_pending() {
                     return Poll::Pending;
                 }
                 *state = TransferState::Done(*count);

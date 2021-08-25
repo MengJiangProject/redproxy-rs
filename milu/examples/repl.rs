@@ -154,11 +154,11 @@ fn repl() -> rustyline::Result<()> {
                 }
             }
             Err(ReadlineError::Interrupted) => {
-                println!("CTRL-C");
+                println!("Interrupted");
                 break;
             }
             Err(ReadlineError::Eof) => {
-                println!("CTRL-D");
+                println!("Ctrl-D");
                 break;
             }
             Err(err) => {
@@ -195,5 +195,5 @@ fn eval(ctx: ScriptContextRef, str: &str) -> bool {
     let val = val.unwrap();
     let typ = typ.unwrap();
     println!("{} : {}", val, typ);
-    return true;
+    true
 }
