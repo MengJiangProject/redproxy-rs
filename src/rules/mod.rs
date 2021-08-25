@@ -13,7 +13,7 @@ pub struct Rule {
     #[serde(rename = "target")]
     target_name: String,
     #[serde(skip)]
-    target: Option<Arc<ConnectorRef>>,
+    pub target: Option<Arc<ConnectorRef>>,
     #[serde(rename = "filter")]
     filter_str: Option<String>,
     #[serde(skip)]
@@ -29,11 +29,16 @@ impl Rule {
         Ok(())
     }
 
-    pub fn evaluate(&self, context: &Context) -> bool {
+    pub fn evaluate(&self, request: &Context) -> bool {
+        trace!(
+            "evaluate filter={:?} target={}",
+            self.filter_str,
+            self.target_name
+        );
         if self.filter.is_none() {
             true
         } else {
-            match self.filter.as_ref().unwrap().evaluate(context) {
+            match self.filter.as_ref().unwrap().evaluate(request) {
                 Ok(b) => b,
                 Err(e) => {
                     trace!("error evaluating filter: {:?}", e);
@@ -41,14 +46,6 @@ impl Rule {
                 }
             }
         }
-    }
-
-    pub fn target(&self) -> Arc<ConnectorRef> {
-        self.target.clone().unwrap()
-    }
-
-    pub fn set_target(&mut self, target: Arc<ConnectorRef>) {
-        self.target = Some(target);
     }
 
     /// Get a reference to the rule's target name.

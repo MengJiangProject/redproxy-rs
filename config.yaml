@@ -32,4 +32,9 @@ connectors:
 rules:
   - filter: request.source =~ "127.0.0.1" and request.target =~ "google.com"
     target: https
+  - filter: request.target =~ "deny-me.com"
+    # target "deny" is a resvered target name for explicitly deny a matching request
+    target: deny
   - target: http
+    # an empty filter means that all requests will be accepted.
+    # if no rule matches the request, access will be denied.

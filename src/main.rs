@@ -72,8 +72,10 @@ async fn main() -> Result<(), Terminator> {
         .collect();
 
     rules.iter_mut().try_for_each(|r| {
-        if let Some(t) = connectors.get(r.target_name()) {
-            r.set_target(t.clone());
+        if r.target_name() == "deny" {
+            Ok(())
+        } else if let Some(t) = connectors.get(r.target_name()) {
+            r.target = Some(t.clone());
             Ok(())
         } else {
             Err(err_msg(format!("target not found: {}", r.target_name())))
@@ -92,31 +94,41 @@ async fn main() -> Result<(), Terminator> {
     let cfg = Arc::new(cfg);
     loop {
         let ctx = rx.recv().await.unwrap();
-        tokio::spawn(process(ctx, cfg.clone()));
-        async fn process(mut ctx: Context, cfg: Arc<Config>) {
-            let connector = cfg.rules.iter().find_map(|x| {
-                if x.evaluate(&ctx) {
-                    Some(x.target())
-                } else {
-                    None
-                }
-            });
-            if connector.is_none() {
-                warn!("no rules matching context: {:?}", ctx);
-                return ctx.on_error(err_msg("no rules matching")).await;
-            }
-            let connector = connector.unwrap();
-            let server = connector.as_ref().connect(&ctx).await;
-            if let Err(e) = server {
-                warn!("failed to connect to upstream: {}", e);
-                return ctx.on_error(e).await;
-            }
-            ctx.on_connect().await;
-            let mut server = server.unwrap();
-            let client = &mut ctx.socket;
-            if let Err(e) = copy_bidi(client, &mut server).await {
-                warn!("error in io thread: {}", e);
-            }
+        tokio::spawn(process_request(ctx, cfg.clone()));
+    }
+}
+
+async fn process_request(mut ctx: Context, cfg: Arc<Config>) {
+    let connector = cfg.rules.iter().find_map(|x| {
+        if x.evaluate(&ctx) {
+            Some(x.target.as_ref())
+        } else {
+            None
         }
+    });
+    // Outer Option is None means no filter matches request, thus implicitly denial
+    if connector.is_none() {
+        warn!("implicitly denied: {:?}", ctx);
+        return ctx.on_error(err_msg("access denied")).await;
+    }
+    let connector = connector.unwrap();
+
+    // Inner Option is None means matching rule is explicitly denial
+    if connector.is_none() {
+        warn!("explicitly denied: {:?}", ctx);
+        return ctx.on_error(err_msg("access denied")).await;
+    }
+    let connector = connector.unwrap();
+
+    let server = connector.as_ref().connect(&ctx).await;
+    if let Err(e) = server {
+        warn!("failed to connect to upstream: {}", e);
+        return ctx.on_error(e).await;
+    }
+    ctx.on_connect().await;
+    let mut server = server.unwrap();
+    let client = &mut ctx.socket;
+    if let Err(e) = copy_bidi(client, &mut server).await {
+        warn!("error in io thread: {}", e);
     }
 }
