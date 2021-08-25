@@ -12,7 +12,7 @@ mod context;
 mod listeners;
 mod rules;
 
-use crate::{common::copy::copy_bidi, connectors::ConnectorRef, context::Context};
+use crate::{common::copy::copy_bidi, config::Config, context::Context};
 
 const VERSION: &str = "v0.1.0";
 
@@ -89,21 +89,23 @@ async fn main() -> Result<(), Terminator> {
         l.listen(tx.clone()).await?;
     }
 
+    let cfg = Arc::new(cfg);
     loop {
         let ctx = rx.recv().await.unwrap();
-        let connector = rules.iter().find_map(|x| {
-            if x.evaluate(&ctx) {
-                Some(x.target())
-            } else {
-                None
+        tokio::spawn(process(ctx, cfg.clone()));
+        async fn process(mut ctx: Context, cfg: Arc<Config>) {
+            let connector = cfg.rules.iter().find_map(|x| {
+                if x.evaluate(&ctx) {
+                    Some(x.target())
+                } else {
+                    None
+                }
+            });
+            if connector.is_none() {
+                warn!("no rules matching context: {:?}", ctx);
+                return ctx.on_error(err_msg("no rules matching")).await;
             }
-        });
-        if let Some(connector) = connector {
-            tokio::spawn(process(ctx, connector));
-        } else {
-            warn!("no rules matching context: {:?}", ctx);
-        };
-        async fn process(mut ctx: Context, connector: Arc<ConnectorRef>) {
+            let connector = connector.unwrap();
             let server = connector.as_ref().connect(&ctx).await;
             if let Err(e) = server {
                 warn!("failed to connect to upstream: {}", e);

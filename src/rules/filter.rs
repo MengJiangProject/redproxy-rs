@@ -1,5 +1,4 @@
 use std::convert::TryInto;
-use std::rc::Rc;
 use std::{fmt, str::FromStr};
 
 use easy_error::{bail, Error};
@@ -9,7 +8,9 @@ use nom::error::{convert_error, VerboseError};
 use crate::context::Context;
 
 use milu::parser::parse;
-use milu::script::{Accessible, Evaluatable, NativeObject, ScriptContext, Type, Value};
+use milu::script::{
+    Accessible, Evaluatable, NativeObject, ScriptContext, ScriptContextRef, Type, Value,
+};
 
 #[derive(Debug)]
 pub struct Filter {
@@ -91,7 +92,7 @@ impl<'a> Accessible<'a> for ContextAdaptor<'a> {
         }
     }
 
-    fn type_of<'b>(&self, name: &str, _ctx: Rc<ScriptContext<'b>>) -> Result<Type, Error>
+    fn type_of<'b>(&self, name: &str, _ctx: ScriptContextRef<'b>) -> Result<Type, Error>
     where
         'a: 'b,
     {

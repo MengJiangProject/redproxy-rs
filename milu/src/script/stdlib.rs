@@ -208,8 +208,8 @@ function_head!(Scope(vars: Array, expr: Any) => Any);
 impl Scope {
     fn make_context<'value, 'ctx>(
         vars: &Vec<Value<'value>>,
-        ctx: Rc<ScriptContext<'ctx>>,
-    ) -> Result<Rc<ScriptContext<'ctx>>, Error>
+        ctx: ScriptContextRef<'ctx>,
+    ) -> Result<ScriptContextRef<'ctx>, Error>
     where
         'value: 'ctx,
     {
@@ -220,7 +220,7 @@ impl Scope {
             let value = t[1].unsafe_clone();
             nctx.set(id, value);
         }
-        Ok(Rc::new(nctx))
+        Ok(Arc::new(nctx))
     }
 }
 impl Callable for Scope {
@@ -275,7 +275,7 @@ impl Callable for MemberOf {
         args: &Vec<Value<'a>>,
     ) -> Result<Value<'b>, Error> {
         args!(args, ctx = ctx, a, ary);
-        let vec: Rc<Vec<Value>> = ary.try_into()?;
+        let vec: Arc<Vec<Value>> = ary.try_into()?;
         let iter = vec.iter().map(|v| v.value_of(ctx.clone()));
         for v in iter {
             if v? == a {

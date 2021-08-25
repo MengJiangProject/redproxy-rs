@@ -8,11 +8,10 @@ use rustyline::validate::{self, MatchingBracketValidator, Validator};
 use rustyline::{Cmd, CompletionType, Config, Context, EditMode, Editor, KeyEvent};
 use rustyline_derive::Helper;
 use std::borrow::Cow::{self, Borrowed, Owned};
-use std::rc::Rc;
 
 use milu::parser;
-use milu::script;
 use milu::script::Evaluatable;
+use milu::script::ScriptContextRef;
 
 #[derive(Helper)]
 struct MyHelper {
@@ -136,7 +135,7 @@ fn repl() -> rustyline::Result<()> {
     println!();
     let mut count = 1;
     let mut buf = vec![];
-    let global: Rc<script::ScriptContext> = Default::default();
+    let global: ScriptContextRef = Default::default();
     loop {
         let p = format!("{}> ", count);
         rl.helper_mut().expect("No helper").colored_prompt = format!("\x1b[1;32m{}\x1b[0m", p);
@@ -172,7 +171,7 @@ fn repl() -> rustyline::Result<()> {
     rl.append_history("history.txt")
 }
 
-fn eval(ctx: Rc<script::ScriptContext>, str: &str) -> bool {
+fn eval(ctx: ScriptContextRef, str: &str) -> bool {
     let val = parser::parse(str);
     if let Err(e) = val {
         let msg = match e {

@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     convert::{TryFrom, TryInto},
     fmt::Display,
-    rc::Rc,
+    sync::Arc,
 };
 pub mod stdlib;
 
@@ -69,7 +69,7 @@ impl Display for Type {
 }
 
 pub trait Evaluatable<'a> {
-    fn type_of<'b>(&self, ctx: Rc<ScriptContext<'b>>) -> Result<Type, Error>
+    fn type_of<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Type, Error>
     where
         'a: 'b;
     fn value_of<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Value<'b>, Error>
@@ -183,7 +183,7 @@ pub trait NativeObject<'a>: std::fmt::Debug + NativeObjectHash {
     }
 }
 
-type NativeObjectRef<'a> = Box<dyn NativeObject<'a> + 'a>;
+type NativeObjectRef<'a> = Box<dyn NativeObject<'a> + Send + Sync + 'a>;
 impl<'a> Eq for NativeObjectRef<'a> {}
 impl<'a> PartialEq for NativeObjectRef<'a> {
     fn eq(&self, other: &NativeObjectRef<'a>) -> bool {
@@ -198,10 +198,10 @@ pub struct ScriptContext<'a> {
     varibles: HashMap<String, Value<'a>>,
 }
 
-type ScriptContextRef<'a> = Rc<ScriptContext<'a>>;
+pub type ScriptContextRef<'a> = Arc<ScriptContext<'a>>;
 
 impl<'a> ScriptContext<'a> {
-    pub fn new<'b>(parent: Option<Rc<ScriptContext<'b>>>) -> Self
+    pub fn new<'b>(parent: Option<ScriptContextRef<'b>>) -> Self
     where
         'b: 'a,
     {
@@ -247,10 +247,10 @@ pub enum Value<'a> {
     Boolean(bool),
     String(String),
     Identifier(String),
-    Array(Rc<Vec<Value<'a>>>),
-    Tuple(Rc<Vec<Value<'a>>>),
-    OpCall(Rc<Call<'a>>),
-    NativeObject(Rc<NativeObjectRef<'a>>),
+    Array(Arc<Vec<Value<'a>>>),
+    Tuple(Arc<Vec<Value<'a>>>),
+    OpCall(Arc<Call<'a>>),
+    NativeObject(Arc<NativeObjectRef<'a>>),
 }
 
 impl<'a> Value<'a> {
@@ -355,9 +355,9 @@ macro_rules! cast_value {
         cast_value_from!($ty, $name, $a, |v| Box::new(v));
         cast_value_to!($ty, $name, $a, |v| *v);
     };
-    ($ty:ty, $name:ident <$a:lifetime> , rc) => {
-        cast_value_from!($ty, $name, $a, |v| Rc::new(v));
-        cast_value_to!(Rc<$ty>, $name, $a, |v| v);
+    ($ty:ty, $name:ident <$a:lifetime> , arc) => {
+        cast_value_from!($ty, $name, $a, |v| Arc::new(v));
+        cast_value_to!(Arc<$ty>, $name, $a, |v| v);
     };
 }
 macro_rules! cast_value_to {
@@ -387,8 +387,8 @@ macro_rules! cast_value_from {
 cast_value!(String, String);
 cast_value!(i64, Integer);
 cast_value!(bool, Boolean);
-cast_value!(Vec<Value<'a>>, Array<'a>, rc);
-cast_value!(Call<'a>, OpCall<'a>, rc);
+cast_value!(Vec<Value<'a>>, Array<'a>, arc);
+cast_value!(Call<'a>, OpCall<'a>, arc);
 
 impl From<&str> for Value<'_> {
     fn from(x: &str) -> Self {
@@ -398,10 +398,10 @@ impl From<&str> for Value<'_> {
 
 impl<'a, T> From<T> for Value<'a>
 where
-    T: NativeObject<'a> + 'a,
+    T: NativeObject<'a> + Send + Sync + 'a,
 {
     fn from(x: T) -> Self {
-        Value::NativeObject(Rc::new(Box::new(x)))
+        Value::NativeObject(Arc::new(Box::new(x)))
     }
 }
 
@@ -478,7 +478,7 @@ impl<'a> Call<'a> {
         let func = func.as_callable().unwrap();
         func.call(ctx, &self.args)
     }
-    fn func<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Rc<NativeObjectRef<'b>>, Error>
+    fn func<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Arc<NativeObjectRef<'b>>, Error>
     where
         'a: 'b,
     {

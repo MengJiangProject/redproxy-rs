@@ -1,4 +1,4 @@
-use std::{fmt, num::ParseIntError, rc::Rc};
+use std::{fmt, num::ParseIntError, sync::Arc};
 
 use nom::{
     branch::alt,
@@ -287,7 +287,7 @@ rule!(tuple -> Value<'static>, {
             Some(ary)
         }
     );
-    map(map(delimited(char('('), body,ws(char(')'))), Rc::new), Value::Tuple)
+    map(map(delimited(char('('), body,ws(char(')'))), Arc::new), Value::Tuple)
 });
 
 rule!(value -> Value<'static>, {
@@ -428,7 +428,7 @@ rule!(op_if(i) -> Value<'static>, {
 rule!(op_assign -> Value<'static>, {
     map(
         separated_pair(identifier,ws(tag("=")),op_0),
-        |(name,value)| Value::Tuple(Rc::new(vec![name,value]))
+        |(name,value)| Value::Tuple(Arc::new(vec![name,value]))
     )
 });
 
@@ -550,7 +550,7 @@ mod tests {
 
     macro_rules! array {
         ($($st:expr),*) => {
-            Value::Array(Rc::new(vec![
+            Value::Array(Arc::new(vec![
                 $($st),*
             ]))
         };
@@ -558,7 +558,7 @@ mod tests {
 
     macro_rules! tuple {
         ($($st:expr),*) => {
-            Value::Tuple(Rc::new(vec![
+            Value::Tuple(Arc::new(vec![
                 $($st),*
             ]))
         };
