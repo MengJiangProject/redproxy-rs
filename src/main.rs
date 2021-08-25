@@ -3,7 +3,7 @@ extern crate nom;
 use std::{collections::HashMap, sync::Arc};
 
 use easy_error::{err_msg, Terminator};
-use log::trace;
+use log::{trace, warn};
 use tokio::sync::mpsc::channel;
 
 mod common;
@@ -99,7 +99,7 @@ async fn main() -> Result<(), Terminator> {
         }) {
             hit.connect(ctx).await?;
         } else {
-            easy_error::bail!("empty target")
+            warn!("no rules matching context: {:?}", ctx)
         }
     }
 }

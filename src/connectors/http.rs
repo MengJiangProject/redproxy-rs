@@ -75,7 +75,7 @@ impl super::Connector for HttpConnector {
                 server.flush().await.context("flush")?;
                 let resp = HttpResponse::read_from(&mut server).await?;
                 if resp.code != 200 {
-                    bail!("server failure {:?}", resp);
+                    bail!("upstream server failure: {:?}", resp);
                 }
                 ctx.on_connect().await;
                 let client = &mut ctx.socket;
