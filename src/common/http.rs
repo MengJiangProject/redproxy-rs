@@ -131,7 +131,7 @@ async fn read_headers(
     loop {
         let buf = read_line(socket).await?;
         let buf = buf.trim_end();
-        trace!("header={}", buf);
+        trace!("header={:?}", buf);
         if buf.is_empty() {
             return Ok(());
         };

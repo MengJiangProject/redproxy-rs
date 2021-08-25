@@ -2,7 +2,7 @@ use std::os::unix::prelude::AsRawFd;
 
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
-use log::{info, trace, warn};
+use log::{debug, info, trace, warn};
 use nix::sys::socket::getsockopt;
 use nix::sys::socket::sockopt::OriginalDst;
 use serde_yaml::Value;
@@ -40,7 +40,7 @@ impl Listener for TProxyListener {
             loop {
                 if let Err(e) = async {
                     let (socket, source) = listener.accept().await.context("accept")?;
-                    trace!("connected from {:?}", source);
+                    debug!("connected from {:?}", source);
                     let dst = getsockopt(socket.as_raw_fd(), OriginalDst).context("getsockopt")?;
                     let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
                     let port = ntohs(dst.sin_port);

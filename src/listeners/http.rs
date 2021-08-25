@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error, ResultExt};
-use log::{info, trace, warn};
+use log::{debug, info, warn};
 use tokio::io::{AsyncWriteExt, BufStream};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
@@ -49,7 +49,7 @@ impl Listener for HttpListener {
                     } else {
                         Box::new(socket)
                     };
-                    trace!("connected from {:?}", source);
+                    debug!("connected from {:?}", source);
                     let mut socket = BufStream::new(socket);
                     let request = HttpRequest::read_from(&mut socket).await?;
                     if !request.method.eq_ignore_ascii_case("CONNECT") {

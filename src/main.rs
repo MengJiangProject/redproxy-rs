@@ -1,7 +1,7 @@
 extern crate nom;
 
 use easy_error::{err_msg, Terminator};
-use log::{trace, warn};
+use log::{info, trace, warn};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::mpsc::channel;
 
@@ -108,14 +108,14 @@ async fn process_request(mut ctx: Context, cfg: Arc<Config>) {
     });
     // Outer Option is None means no filter matches request, thus implicitly denial
     if connector.is_none() {
-        warn!("implicitly denied: {:?}", ctx);
+        info!("implicitly denied: {:?}", ctx);
         return ctx.on_error(err_msg("access denied")).await;
     }
     let connector = connector.unwrap();
 
     // Inner Option is None means matching rule is explicitly denial
     if connector.is_none() {
-        warn!("explicitly denied: {:?}", ctx);
+        info!("explicitly denied: {:?}", ctx);
         return ctx.on_error(err_msg("access denied")).await;
     }
     let connector = connector.unwrap();
