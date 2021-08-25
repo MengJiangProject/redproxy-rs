@@ -14,11 +14,11 @@ mod rules;
 
 use crate::{common::copy::copy_bidi, config::Config, context::Context};
 
-const VERSION: &str = "v0.1.0";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[tokio::main]
 async fn main() -> Result<(), Terminator> {
-    let args = clap::App::new("redproxy")
+    let args = clap::App::new(env!("CARGO_BIN_NAME"))
         .version(VERSION)
         .arg(
             clap::Arg::with_name("config")

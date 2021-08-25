@@ -82,7 +82,7 @@ impl Validator for MyHelper {
     }
 }
 
-const VERSION: &str = "v0.1.0";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 fn main() -> Result<(), Terminator> {
     let args = clap::App::new("milu-repl")
         .version(VERSION)
