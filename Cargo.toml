@@ -14,7 +14,7 @@ milu = { path = "milu" }
 tokio = { version = "1.10.1", features = ["full"] }
 tokio-rustls = { version="0.22.0", features = ["dangerous_configuration"] }
 # rustls = "0.19"
-nix = { version = "0.22.0"}
+nix = { version = "0.22.1"}
 async-trait = "0.1.51"
 easy-error = "1.0.0"
 log = "0.4"
