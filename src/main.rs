@@ -120,7 +120,7 @@ async fn process_request(mut ctx: Context, cfg: Arc<Config>) {
     }
     let connector = connector.unwrap();
 
-    let server = connector.as_ref().connect(&ctx).await;
+    let server = connector.connect(&ctx).await;
     if let Err(e) = server {
         warn!("failed to connect to upstream: {}", e);
         return ctx.on_error(e).await;
