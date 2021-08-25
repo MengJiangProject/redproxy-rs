@@ -2,12 +2,16 @@ name: Rust Build and Test
 
 on:
   push:
-    branches: [master]
+    branches:
+      - master
+    tags:
+      - v*
   pull_request:
-    branches: [master]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
+  CICD_INTERMEDIATES_DIR: "intermediates"
 
 jobs:
   #run build first to populate caches
