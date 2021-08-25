@@ -38,7 +38,8 @@ jobs:
           override: true
       - uses: actions-rs/cargo@v1
         with:
-          command: check --workspace
+          command: check
+          args: --workspace
 
   clippy:
     name: Clippy
@@ -68,7 +69,8 @@ jobs:
           override: true
       - uses: actions-rs/cargo@v1
         with:
-          command: test --workspace
+          command: test
+          args: --workspace
 
   build:
     name: Build
@@ -91,4 +93,5 @@ jobs:
           override: true
       - uses: actions-rs/cargo@v1
         with:
-          command: build --workspace --all-targets
+          command: build
+          args: --workspace --all-targets
