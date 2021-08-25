@@ -69,8 +69,13 @@ impl Display for TargetAddress {
     }
 }
 
-pub trait IOStream: AsyncRead + AsyncWrite + Send + Unpin {}
-impl<T> IOStream for T where T: AsyncRead + AsyncWrite + Send + Unpin {}
+pub trait IOStream: AsyncRead + AsyncWrite + Send + Sync + Unpin {}
+impl<T> IOStream for T where T: AsyncRead + AsyncWrite + Send + Sync + Unpin {}
+pub type IOBufStream = BufStream<Box<dyn IOStream>>;
+
+pub fn make_buffered_stream<T: IOStream + 'static>(stream: T) -> IOBufStream {
+    BufStream::new(Box::new(stream))
+}
 
 pub trait ContextCallback {
     fn on_connect<'a>(&self, ctx: &'a mut Context)
@@ -84,7 +89,7 @@ pub trait ContextCallback {
 
 pub struct Context {
     pub listener: String,
-    pub socket: BufStream<Box<dyn IOStream>>,
+    pub socket: IOBufStream,
     pub source: SocketAddr,
     pub target: TargetAddress,
     pub callback: Option<Arc<dyn ContextCallback + Send + Sync>>,

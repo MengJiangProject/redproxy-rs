@@ -6,14 +6,14 @@ use log::trace;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{connectors::Connector, context::Context};
+use crate::{connectors::ConnectorRef, context::Context};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct Rule {
     #[serde(rename = "target")]
     target_name: String,
     #[serde(skip)]
-    target: Option<Arc<Box<dyn Connector>>>,
+    target: Option<Arc<ConnectorRef>>,
     #[serde(rename = "filter")]
     filter_str: Option<String>,
     #[serde(skip)]
@@ -43,16 +43,34 @@ impl Rule {
         }
     }
 
-    pub fn target(&self) -> Arc<Box<dyn Connector>> {
+    pub fn target(&self) -> Arc<ConnectorRef> {
         self.target.clone().unwrap()
     }
 
-    pub fn set_target(&mut self, target: Arc<Box<dyn Connector>>) {
+    pub fn set_target(&mut self, target: Arc<ConnectorRef>) {
         self.target = Some(target);
     }
 
     /// Get a reference to the rule's target name.
     pub fn target_name(&self) -> &str {
         self.target_name.as_str()
+    }
+}
+
+impl std::fmt::Debug for Rule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Rule")
+            .field("target_name", &self.target_name)
+            .field(
+                "target",
+                if self.target.is_some() {
+                    &"Some"
+                } else {
+                    &"None"
+                },
+            )
+            .field("filter_str", &self.filter_str)
+            .field("filter", &self.filter)
+            .finish()
     }
 }

@@ -1,4 +1,4 @@
-use crate::context::Context;
+use crate::context::{Context, IOBufStream};
 use async_trait::async_trait;
 use easy_error::{err_msg, Error};
 use serde_yaml::{Sequence, Value};
@@ -6,13 +6,15 @@ use serde_yaml::{Sequence, Value};
 pub mod direct;
 pub mod http;
 #[async_trait]
-pub trait Connector: std::fmt::Debug {
+pub trait Connector {
     async fn init(&mut self) -> Result<(), Error>;
-    async fn connect(&self, ctx: Context) -> Result<(), Error>;
+    // async fn connect(&self, ctx: Context) -> Result<(), Error>;
+    async fn connect(&self, ctx: &Context) -> Result<IOBufStream, Error>;
     fn name(&self) -> &str;
 }
 
-pub fn config(connectors: &Sequence) -> Result<Vec<Box<dyn Connector>>, Error> {
+pub type ConnectorRef = Box<dyn Connector + Send + Sync>;
+pub fn config(connectors: &Sequence) -> Result<Vec<ConnectorRef>, Error> {
     let mut ret = Vec::with_capacity(connectors.len());
     for c in connectors {
         let c = from_value(c)?;
@@ -21,7 +23,7 @@ pub fn config(connectors: &Sequence) -> Result<Vec<Box<dyn Connector>>, Error> {
     Ok(ret)
 }
 
-pub fn from_value(value: &Value) -> Result<Box<dyn Connector>, Error> {
+pub fn from_value(value: &Value) -> Result<ConnectorRef, Error> {
     let name = value.get("name").ok_or(err_msg("missing name"))?;
     let tname = value.get("type").or(Some(name)).unwrap();
     match tname.as_str() {

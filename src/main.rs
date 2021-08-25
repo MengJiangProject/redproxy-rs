@@ -1,9 +1,8 @@
 extern crate nom;
 
-use std::{collections::HashMap, sync::Arc};
-
 use easy_error::{err_msg, Terminator};
 use log::{trace, warn};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::mpsc::channel;
 
 mod common;
@@ -12,6 +11,8 @@ mod connectors;
 mod context;
 mod listeners;
 mod rules;
+
+use crate::{common::copy::copy_bidi, connectors::ConnectorRef, context::Context};
 
 const VERSION: &str = "v0.1.0";
 
@@ -90,16 +91,30 @@ async fn main() -> Result<(), Terminator> {
 
     loop {
         let ctx = rx.recv().await.unwrap();
-        if let Some(hit) = rules.iter().find_map(|x| {
+        let connector = rules.iter().find_map(|x| {
             if x.evaluate(&ctx) {
                 Some(x.target())
             } else {
                 None
             }
-        }) {
-            hit.connect(ctx).await?;
+        });
+        if let Some(connector) = connector {
+            tokio::spawn(process(ctx, connector));
         } else {
-            warn!("no rules matching context: {:?}", ctx)
+            warn!("no rules matching context: {:?}", ctx);
+        };
+        async fn process(mut ctx: Context, connector: Arc<ConnectorRef>) {
+            let server = connector.as_ref().connect(&ctx).await;
+            if let Err(e) = server {
+                warn!("failed to connect to upstream: {}", e);
+                return ctx.on_error(e).await;
+            }
+            ctx.on_connect().await;
+            let mut server = server.unwrap();
+            let client = &mut ctx.socket;
+            if let Err(e) = copy_bidi(client, &mut server).await {
+                warn!("error in io thread: {}", e);
+            }
         }
     }
 }

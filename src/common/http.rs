@@ -60,7 +60,7 @@ impl HttpRequest {
             .write("\r\n".as_bytes())
             .await
             .context("write error")?;
-        Ok(())
+        socket.flush().await.context("flush")
     }
 }
 
@@ -120,7 +120,7 @@ impl HttpResponse {
             .write("\r\n".as_bytes())
             .await
             .context("write error")?;
-        Ok(())
+        socket.flush().await.context("flush")
     }
 }
 
