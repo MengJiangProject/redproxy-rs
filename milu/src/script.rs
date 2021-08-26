@@ -79,7 +79,7 @@ pub trait Evaluatable<'a> {
 
 pub trait Indexable<'a> {
     fn length(&self) -> usize;
-    fn type_of<'b>(&self, index: i64, ctx: ScriptContextRef<'b>) -> Result<Type, Error>
+    fn type_of<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Type, Error>
     where
         'a: 'b;
     fn get(&self, index: i64) -> Result<Value<'a>, Error>;
@@ -131,11 +131,11 @@ impl<'a> Indexable<'a> for Vec<Value<'a>> {
         self.len()
     }
 
-    fn type_of<'b>(&self, index: i64, ctx: ScriptContextRef<'b>) -> Result<Type, Error>
+    fn type_of<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Type, Error>
     where
         'a: 'b,
     {
-        Indexable::get(self, index).and_then(|x| x.type_of(ctx))
+        Indexable::get(self, 0).and_then(|x| x.type_of(ctx))
     }
 
     fn get(&self, index: i64) -> Result<Value<'a>, Error> {
@@ -153,18 +153,22 @@ impl<'a> Indexable<'a> for Vec<Value<'a>> {
 }
 
 pub trait NativeObjectHash {
-    fn hash(&self) -> u64;
+    fn gen_hash(&self) -> u64;
+    fn hash_with_state(&self, st: &mut dyn std::hash::Hasher);
 }
 
-impl<T> NativeObjectHash for T
+impl<'a, T> NativeObjectHash for T
 where
-    T: std::hash::Hash,
+    T: std::hash::Hash + ?Sized + NativeObject<'a>,
 {
-    fn hash(&self) -> u64 {
+    fn gen_hash(&self) -> u64 {
         use std::hash::Hasher;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        std::hash::Hash::hash(self, &mut hasher);
+        self.hash(&mut hasher);
         hasher.finish()
+    }
+    fn hash_with_state(&self, mut st: &mut dyn std::hash::Hasher) {
+        self.hash(&mut st);
     }
 }
 
@@ -189,7 +193,13 @@ impl<'a> PartialEq for NativeObjectRef<'a> {
     fn eq(&self, other: &NativeObjectRef<'a>) -> bool {
         // println!("self={:?} hash={}", self, self.hash());
         // println!("other={:?} hash={}", other, other.hash());
-        self.hash() == other.hash()
+        self.gen_hash() == other.gen_hash()
+    }
+}
+
+impl<'a> std::hash::Hash for NativeObjectRef<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.hash_with_state(state)
     }
 }
 
@@ -238,7 +248,7 @@ impl Default for ScriptContext<'_> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Value<'a> {
     Null,
     Integer(i64),
@@ -434,7 +444,7 @@ impl std::fmt::Display for Value<'_> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Call<'a> {
     func: Value<'a>,
     args: Vec<Value<'a>>,
@@ -560,5 +570,11 @@ mod tests {
     fn scope() {
         type_test("let a=1;b=2 in a+b", Type::Integer);
         eval_test!("let a=1;b=2 in a+b", 3.into());
+    }
+
+    #[test]
+    fn access_tuple() {
+        type_test("(1,\"2\",false).1", Type::String);
+        eval_test!("(1,\"2\",false).1", "2".into());
     }
 }

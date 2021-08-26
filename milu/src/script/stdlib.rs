@@ -83,6 +83,8 @@ macro_rules! function {
     };
 }
 
+// Access an array which is a sequence of values in same type with a dynamic index
+// Can not access a tuple dynamically because it's not able to do type inference statically.
 function_head!(Index(obj: Any, index: Any) => Any);
 impl Callable for Index {
     fn signature<'a: 'b, 'b>(
@@ -90,18 +92,20 @@ impl Callable for Index {
         ctx: ScriptContextRef<'b>,
         args: &[Value<'a>],
     ) -> Result<Type, Error> {
-        let mut targs: Vec<Type> = Vec::with_capacity(args.len());
-        for x in args {
-            targs.push(x.type_of(ctx.clone())?);
-        }
-        args!(targs, obj, _index);
-        if let Type::Array(t) = obj {
+        let obj = &args[0];
+        let index = &args[1];
+        if index.type_of(ctx.clone())? != Type::Integer {
+            bail!("Index not a integer type")
+        } else if let Value::NativeObject(nobj) = obj {
+            if let Some(idx) = nobj.as_indexable() {
+                idx.type_of(ctx)
+            } else {
+                bail!("NativeObject not in indexable")
+            }
+        } else if let Type::Array(t) = obj.type_of(ctx)? {
             Ok(*t)
         } else {
-            bail!(
-                "trying to index type {:?} which does not implement Indexable",
-                obj
-            )
+            bail!("Object does not implement Indexable: {:?}", obj)
         }
     }
     fn call<'a: 'b, 'b>(
@@ -122,6 +126,7 @@ impl Callable for Index {
     }
 }
 
+// Access a nativeobject or a tuple
 function_head!(Access(obj: Any, index: Any) => Any);
 impl Callable for Access {
     fn signature<'a: 'b, 'b>(
@@ -129,43 +134,106 @@ impl Callable for Access {
         ctx: ScriptContextRef<'b>,
         args: &[Value<'a>],
     ) -> Result<Type, Error> {
-        // args!(args, obj, index);
+        fn accessible<'a: 'b, 'b>(
+            ctx: ScriptContextRef<'b>,
+            obj: &dyn Accessible<'a>,
+            index: &Value<'a>,
+        ) -> Result<Type, Error> {
+            let index = if let Value::Identifier(index) = index {
+                index
+            } else {
+                bail!("Can not access a NativeObject with: {:?}", index)
+            };
+            obj.type_of(index, ctx)
+        }
+
+        fn tuple<'a: 'b, 'b>(
+            _ctx: ScriptContextRef<'b>,
+            obj: Type,
+            index: &Value<'a>,
+        ) -> Result<Type, Error> {
+            let index = if let Value::Integer(index) = index {
+                index
+            } else {
+                bail!("Can not access a tuple with: {}", index)
+            };
+            if let Type::Tuple(mut t) = obj {
+                Ok(t.remove(*index as usize))
+            } else {
+                bail!("Can not access type: {}", obj)
+            }
+        }
+
         let obj = &args[0];
-        let index = &args[1];
-        let index = if let Value::Identifier(index) = index {
-            index
-        } else {
-            bail!("Index must be an identifier")
-        };
+        let index = &args[1]; // index is always a literal value, either identifier or integer
         if let Value::NativeObject(obj) = obj {
-            let obj = obj
-                .as_accessible()
-                .ok_or_else(|| err_msg("Object not accessible"))?;
-            let t = obj.get(index)?;
-            Ok(t.type_of(ctx)?)
+            if let Some(obj) = obj.as_accessible() {
+                accessible(ctx, obj, index)
+            } else if let Some(obj) = obj.as_evaluatable() {
+                let obj = obj.type_of(ctx.clone())?;
+                tuple(ctx, obj, index)
+            } else {
+                bail!("NativeObject not accessible or tuple")
+            }
+        } else if let Value::Tuple(_) = obj {
+            let obj = obj.type_of(ctx.clone())?;
+            tuple(ctx, obj, index)
         } else {
-            bail!("Type {:?} does not implement Accessible", obj)
+            bail!("Object {:?} is not Tuple nor Accessible", obj)
         }
     }
+
     fn call<'a: 'b, 'b>(
         &self,
         ctx: ScriptContextRef<'b>,
         args: &[Value<'a>],
     ) -> Result<Value<'b>, Error> {
+        fn accessible<'a: 'b, 'b>(
+            ctx: ScriptContextRef<'b>,
+            obj: &dyn Accessible<'b>,
+            index: &Value<'a>,
+        ) -> Result<Value<'b>, Error> {
+            let index = if let Value::Identifier(index) = index {
+                index
+            } else {
+                bail!("Can not access a NativeObject with: {:?}", index)
+            };
+            let ret = obj.get(index)?;
+            ret.value_of(ctx)
+        }
+
+        fn tuple<'a: 'b, 'b>(
+            ctx: ScriptContextRef<'b>,
+            obj: Value<'b>,
+            index: &Value<'a>,
+        ) -> Result<Value<'b>, Error> {
+            let index = if let Value::Integer(index) = index {
+                index
+            } else {
+                bail!("Can not access a tuple with: {}", index)
+            };
+            if let Value::Tuple(t) = obj {
+                t[*index as usize].value_of(ctx)
+            } else {
+                bail!("Can not access type: {}", obj)
+            }
+        }
+
         let obj = args[0].value_of(ctx.clone())?;
-        let index = &args[1];
-        let index = if let Value::Identifier(index) = index {
-            index
-        } else {
-            bail!("Index must be an identifier")
-        };
+        let index = &args[1]; // index is always a literal value, either identifier or integer
         if let Value::NativeObject(obj) = obj {
-            let obj = obj
-                .as_accessible()
-                .ok_or_else(|| err_msg("Object not accessible"))?;
-            obj.get(index)?.value_of(ctx)
+            if let Some(obj) = obj.as_accessible() {
+                accessible(ctx, obj, index)
+            } else if let Some(obj) = obj.as_evaluatable() {
+                let obj = obj.value_of(ctx.clone())?;
+                tuple(ctx, obj, index)
+            } else {
+                bail!("NativeObject not accessible or tuple")
+            }
+        } else if let Value::Tuple(_) = obj {
+            tuple(ctx, obj, index)
         } else {
-            bail!("Type {:?} does not implement Accessible", obj)
+            bail!("Object {:?} is not Tuple nor Accessible", obj)
         }
     }
 }
@@ -397,20 +465,68 @@ function!(Split(a: String, b: String)=>Type::array_of(String), self, {
 mod tests {
     // use super::super::*;
     use super::*;
-
     macro_rules! op_test {
         ($name:ident, $fn:ident, [ $($in:expr),+ ] , $out:expr) => {
             #[test]
             fn $name() {
-                let ctx = Default::default();
-                let func = Box::new($fn::make_call( $($in),+ ));
-                let output = $out;
-                // let input = $in;
-                let ret = func.call(ctx).unwrap();
+                let ctx : ScriptContextRef = Default::default();
+                let func : Value = $fn::make_call( $($in),+ ).into();
+                let output : Value = $out;
+                let otype = output.type_of(ctx.clone()).unwrap();
+                let rtype = func.type_of(ctx.clone()).unwrap();
+                assert_eq!(otype, rtype);
+                let ret = func.value_of(ctx).unwrap();
                 assert_eq!(ret, output);
             }
         };
     }
+
+    op_test!(
+        access_tuple,
+        Access,
+        [Value::Tuple(Arc::new(vec![1.into(), 2.into()])), 0.into()],
+        1.into()
+    );
+
+    #[derive(Debug)]
+    struct Test<'a> {
+        map: HashMap<String, Value<'a>>,
+        array: Vec<Value<'a>>,
+    }
+
+    impl<'a> Test<'a> {
+        fn new() -> Self {
+            let mut map: HashMap<String, Value<'a>> = Default::default();
+            map.insert("test".into(), 1.into());
+            let array = vec![1.into(), 2.into(), 3.into()];
+            Self { map, array }
+        }
+    }
+
+    impl std::hash::Hash for Test<'_> {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            std::hash::Hash::hash(&self.map.keys().collect::<Vec<_>>(), state);
+        }
+    }
+
+    impl<'a> NativeObject<'a> for Test<'a> {
+        fn as_accessible(&self) -> Option<&dyn Accessible<'a>> {
+            Some(&self.map)
+        }
+
+        fn as_indexable(&self) -> Option<&dyn Indexable<'a>> {
+            Some(&self.array)
+        }
+    }
+
+    op_test!(
+        access_hashmap,
+        Access,
+        [Test::new().into(), Value::Identifier("test".into())],
+        1.into()
+    );
+
+    op_test!(index, Index, [Test::new().into(), 0.into()], 1.into());
 
     op_test!(not, Not, [false.into()], true.into());
     op_test!(bit_not, BitNot, [(!1234).into()], 1234.into());

@@ -65,7 +65,7 @@ scope
         b
 ```
 ---
-- [ ] todo: access tuple member by index
+- [x] done: access tuple member by index
 
 ```
 (1,2,3).1 == 2
