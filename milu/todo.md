@@ -72,6 +72,11 @@ scope
 ```
 
 ---
+- [ ] todo: combine bitwise operator with with logical operator
+
+change `1&2` to `1&&2`, free the `|` opreator for later use.
+
+---
 - [ ] todo: array contcat
 ```
 [1|[2,3]] == [1,2,3]
@@ -80,14 +85,26 @@ scope
 ---
 - [ ] todo: add function definition
 ```
-let fib(a) : int->[int] =
-    let n = fib(a-1);
-        x = a + n[0];
-    in
-        if a == 1
-        then [1]
-        else [x|n]
-in fib(10)
+syntax: fun {id,}+ = expr 
+
+example:
+let fib a = 
+        if a == 1 or a == 2
+        then 1
+        else fib(a-2)+fib(a-1)
+in let x=10 in fib(x)
+
+ast:
+
+let
+    [tuple]
+        id: fib
+        func:
+            [tuple]: (a,int)
+            if 
+                a == 1 or a == 2
+                1
+                fib(a-2)+fib(a-1)
 ```
 ---
 - [ ] todo: generic funtion signatures:

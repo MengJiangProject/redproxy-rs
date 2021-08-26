@@ -236,6 +236,10 @@ impl Callable for Access {
             bail!("Object {:?} is not Tuple nor Accessible", obj)
         }
     }
+
+    fn unresovled_ids<'a, 'b>(&self, args: &'a [Value<'b>], ids: &mut HashSet<&'a Value<'b>>) {
+        args[0].unresovled_ids(ids) // args[1] is always literal identifier or integer, thus not unresolved
+    }
 }
 
 function_head!(If(cond: Boolean, yes: Any, no: Any) => Any);
@@ -308,6 +312,23 @@ impl Callable for Scope {
     ) -> Result<Value<'b>, Error> {
         let ctx = Self::make_context(args[0].as_vec(), ctx)?;
         args[1].value_of(ctx)
+    }
+
+    fn unresovled_ids<'a, 'b>(&self, args: &'a [Value<'b>], ids: &mut HashSet<&'a Value<'b>>) {
+        let mut unresolved = HashSet::new();
+        args[1].unresovled_ids(&mut unresolved); // first get all unresolved ids in expr
+
+        let mut known = HashSet::new();
+        for v in args[0].as_vec().iter() {
+            // list all known ids
+            let t = v.as_vec();
+            known.insert(&t[0]);
+
+            // let dose not affect in its assignments
+            t[1].unresovled_ids(ids)
+        }
+        let unresolved = unresolved.difference(&known).cloned().collect();
+        *ids = ids.union(&unresolved).cloned().collect();
     }
 }
 

@@ -1,6 +1,6 @@
 use easy_error::{bail, err_msg, Error, ResultExt};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     convert::{TryFrom, TryInto},
     fmt::Display,
     sync::Arc,
@@ -105,6 +105,9 @@ pub trait Callable {
         ctx: ScriptContextRef<'b>,
         args: &[Value<'a>],
     ) -> Result<Value<'b>, Error>;
+    fn unresovled_ids<'a, 'b>(&self, args: &'a [Value<'b>], ids: &mut HashSet<&'a Value<'b>>) {
+        args.iter().for_each(|v| v.unresovled_ids(ids))
+    }
 }
 
 impl<'a> Accessible<'a> for HashMap<String, Value<'a>> {
@@ -121,7 +124,7 @@ impl<'a> Accessible<'a> for HashMap<String, Value<'a>> {
 
     fn get(&self, name: &str) -> Result<Value<'a>, Error> {
         self.get(name)
-            .map(Clone::clone)
+            .cloned()
             .ok_or_else(|| err_msg(format!("undefined: {}", name)))
     }
 }
@@ -288,6 +291,27 @@ impl<'a> Value<'a> {
             Self::Integer(a) => *a,
             _ => panic!("as_i64: type mismatch, possible bug in parse"),
         }
+    }
+    fn unresovled_ids<'b>(&'b self, ids: &mut HashSet<&'b Value<'a>>)
+    where
+        'a: 'b,
+    {
+        match self {
+            Self::Identifier(_) => {
+                ids.insert(self);
+            }
+            Self::Array(a) => a.iter().for_each(|v| v.unresovled_ids(ids)),
+            Self::Tuple(a) => a.iter().for_each(|v| v.unresovled_ids(ids)),
+            Self::OpCall(a) => a.unresovled_ids(ids),
+            _ => (),
+        }
+    }
+
+    /// Returns `true` if the value is [`Identifier`].
+    ///
+    /// [`Identifier`]: Value::Identifier
+    pub fn is_identifier(&self) -> bool {
+        matches!(self, Self::Identifier(..))
     }
 }
 
@@ -504,6 +528,15 @@ impl<'a> Call<'a> {
             bail!("func does not implement Callable: {:?}", func)
         }
     }
+    fn unresovled_ids<'b>(&'b self, list: &mut HashSet<&'b Value<'a>>) {
+        if self.func.is_identifier() {
+            list.insert(&self.func);
+        } else if let Value::NativeObject(x) = &self.func {
+            if let Some(c) = x.as_callable() {
+                c.unresovled_ids(&self.args, list)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -537,6 +570,20 @@ mod tests {
     fn to_string() {
         type_test("to_string(100*2)", Type::String);
         eval_test!("to_string(100*2)", "200".into())
+    }
+
+    #[test]
+    fn unresovled_ids() {
+        let value = parse("let a=1;b=2 in a+b").unwrap();
+        let mut unresovled_ids = HashSet::new();
+        value.unresovled_ids(&mut unresovled_ids);
+        assert!(unresovled_ids.is_empty());
+
+        let value = parse("let a=1;b=a+1 in a+b+c").unwrap();
+        let mut unresovled_ids = HashSet::new();
+        value.unresovled_ids(&mut unresovled_ids);
+        assert!(unresovled_ids.contains(&Value::Identifier("a".into())));
+        assert!(unresovled_ids.contains(&Value::Identifier("c".into())))
     }
 
     #[test]
