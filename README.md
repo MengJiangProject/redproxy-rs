@@ -13,4 +13,5 @@ Protocol supported:
 see [config.yaml](config.yaml)
 
 ## why would you build such things?
-Just because I am feeling boring.
+Just because I am feeling boring. 
+I had a [TypeScript version of this](https://github.com/bearice/redproxy) running on my router for years, and I just wanted to replace it with something nicer.
