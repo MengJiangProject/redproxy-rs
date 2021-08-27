@@ -5,10 +5,11 @@ use tokio::sync::mpsc::Sender;
 
 use crate::context::Context;
 
-pub mod http;
+mod http;
+mod socks;
 
 #[cfg(any(target_os = "android", target_os = "linux"))]
-pub mod tproxy;
+mod tproxy;
 
 #[async_trait]
 pub trait Listener: std::fmt::Debug {
@@ -33,6 +34,7 @@ pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
     let tname = value.get("type").or(Some(name)).unwrap();
     match tname.as_str() {
         Some("http") => http::from_value(value),
+        Some("socks") => socks::from_value(value),
         #[cfg(any(target_os = "android", target_os = "linux"))]
         Some("tproxy") => tproxy::from_value(value),
         _ => Err(err_msg("not implemented")),

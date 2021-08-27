@@ -12,6 +12,8 @@ listeners:
     tls:
       cert: test.crt
       key: test.key
+  - name: socks
+    bind: 0.0.0.0:1080
 
 connectors:
   - name: direct
@@ -28,6 +30,9 @@ connectors:
       auth:
         cert: proxy.crt
         key: proxy.key
+  - name: socks
+    server: 192.168.100.1
+    port: 1080
 
 rules:
   - filter: request.source =~ "127.0.0.1" and request.target =~ "google.com"
@@ -35,6 +40,6 @@ rules:
   - filter: request.target =~ "deny-me.com"
     # target "deny" is a resvered target name for explicitly deny a matching request
     target: deny
-  - target: http
+  - target: socks
     # an empty filter means that all requests will be accepted.
     # if no rule matches the request, access will be denied.

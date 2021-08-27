@@ -2,7 +2,7 @@ use easy_error::Error;
 use std::{
     fmt::{Debug, Display},
     future::Future,
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     str::FromStr,
     sync::Arc,
@@ -23,7 +23,7 @@ impl std::fmt::Display for InvalidAddress {
 
 impl std::error::Error for InvalidAddress {}
 
-#[derive(Debug, Hash, Clone)]
+#[derive(Debug, Hash, Clone, Eq, PartialEq)]
 pub enum TargetAddress {
     DomainPort(String, u16),
     SocketAddr(SocketAddr),
@@ -42,6 +42,22 @@ impl From<(Ipv4Addr, u16)> for TargetAddress {
     fn from((ip, port): (Ipv4Addr, u16)) -> Self {
         let a = SocketAddrV4::new(ip, port);
         Self::SocketAddr(SocketAddr::V4(a))
+    }
+}
+
+impl From<(u32, u16)> for TargetAddress {
+    fn from((ip, port): (u32, u16)) -> Self {
+        let ip = ip.into();
+        let a = SocketAddrV4::new(ip, port);
+        Self::SocketAddr(SocketAddr::V4(a))
+    }
+}
+
+impl From<([u8; 16], u16)> for TargetAddress {
+    fn from((ip, port): ([u8; 16], u16)) -> Self {
+        let ip = ip.into();
+        let a = SocketAddrV6::new(ip, port, 0, 0);
+        Self::SocketAddr(SocketAddr::V6(a))
     }
 }
 
@@ -128,6 +144,23 @@ impl std::fmt::Debug for Context {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn target_address() {
+        let a = TargetAddress::DomainPort("aaa".to_owned(), 100);
+        let b = "aaa:100".parse().unwrap();
+        assert_eq!(a, b);
+
+        let a = TargetAddress::SocketAddr(SocketAddr::V4(SocketAddrV4::new(
+            "1.2.3.4".parse().unwrap(),
+            100,
+        )));
+        let b = (0x01020304u32, 100).into();
+        assert_eq!(a, b);
+    }
+}
 // use async_trait::async_trait;
 // #[async_trait]
 // pub trait AsyncInit {

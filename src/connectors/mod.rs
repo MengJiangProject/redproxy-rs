@@ -3,8 +3,9 @@ use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error};
 use serde_yaml::Value;
 
-pub mod direct;
-pub mod http;
+mod direct;
+mod http;
+mod socks;
 #[async_trait]
 pub trait Connector {
     async fn init(&mut self) -> Result<(), Error>;
@@ -34,6 +35,7 @@ pub fn from_value(value: &Value) -> Result<ConnectorRef, Error> {
     match tname.as_str() {
         Some("direct") => direct::from_value(value),
         Some("http") => http::from_value(value),
+        Some("socks") => socks::from_value(value),
         _ => Err(err_msg("not implemented")),
     }
 }
