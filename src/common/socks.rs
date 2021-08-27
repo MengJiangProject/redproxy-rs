@@ -77,7 +77,7 @@ impl<T> SocksRequest<T> {
         if method.is_none() {
             socket.write(&[5, 0xff]).await.context("write")?;
             socket.flush().await.context("flush")?;
-            bail!("No auth method selected")
+            bail!("No auth method in common, client wants: {:?}", buf)
         }
 
         // authentication
