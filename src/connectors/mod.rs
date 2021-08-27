@@ -31,11 +31,11 @@ pub fn from_value(value: &Value) -> Result<ConnectorRef, Error> {
     if name == "deny" {
         bail!("connector name \"deny\" is reserved")
     }
-    let tname = value.get("type").or(Some(name)).unwrap();
-    match tname.as_str() {
-        Some("direct") => direct::from_value(value),
-        Some("http") => http::from_value(value),
-        Some("socks") => socks::from_value(value),
-        _ => Err(err_msg("not implemented")),
+    let tname = value.get("type").or(Some(name)).unwrap().as_str().unwrap();
+    match tname {
+        "direct" => direct::from_value(value),
+        "http" => http::from_value(value),
+        "socks" => socks::from_value(value),
+        name => bail!("unknown connector type: {:?}", name),
     }
 }

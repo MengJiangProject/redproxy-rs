@@ -7,7 +7,7 @@ use tokio_rustls::webpki::DNSNameRef;
 
 use crate::{
     common::{
-        socks::{NoAuth, SocksRequest, SocksResponse},
+        socks::{PasswordAuth, SocksRequest, SocksResponse},
         tls::TlsClientConfig,
     },
     context::{make_buffered_stream, Context, IOBufStream},
@@ -20,7 +20,20 @@ pub struct SocksConnector {
     name: String,
     server: String,
     port: u16,
+    #[serde(default = "default_socks_version")]
+    version: u8,
+    auth: Option<SocksAuthData>,
     tls: Option<TlsClientConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SocksAuthData {
+    username: String,
+    password: String,
+}
+
+fn default_socks_version() -> u8 {
+    5
 }
 
 pub fn from_value(value: &serde_yaml::Value) -> Result<ConnectorRef, Error> {
@@ -37,6 +50,9 @@ impl super::Connector for SocksConnector {
     async fn init(&mut self) -> Result<(), Error> {
         if let Some(Err(e)) = self.tls.as_mut().map(TlsClientConfig::init) {
             return Err(e);
+        }
+        if self.version != 4 && self.version != 5 {
+            bail!("illegal socks version {}", self.version);
         }
         Ok(())
     }
@@ -73,13 +89,17 @@ impl super::Connector for SocksConnector {
             make_buffered_stream(server)
         };
 
+        let auth = self
+            .auth
+            .to_owned()
+            .map(|auth| (auth.username, auth.password));
         let req = SocksRequest {
-            version: 5,
+            version: self.version,
             cmd: 1,
             target: ctx.target.clone(),
-            auth: (),
+            auth,
         };
-        req.write_to(&mut server, NoAuth).await?;
+        req.write_to(&mut server, PasswordAuth::optional()).await?;
         let resp = SocksResponse::read_from(&mut server).await?;
         if resp.cmd != 0 {
             bail!("upstream server failure: {:?}", resp.cmd);

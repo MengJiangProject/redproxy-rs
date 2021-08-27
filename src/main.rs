@@ -129,6 +129,6 @@ async fn process_request(mut ctx: Context, cfg: Arc<Config>) {
     let mut server = server.unwrap();
     let client = &mut ctx.socket;
     if let Err(e) = copy_bidi(client, &mut server).await {
-        warn!("error in io thread: {}", e);
+        warn!("error in io thread: {} ctx={:?}", e, ctx);
     }
 }

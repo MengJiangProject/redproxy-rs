@@ -14,6 +14,11 @@ listeners:
       key: test.key
   - name: socks
     bind: 0.0.0.0:1080
+    auth:
+      required: true
+      users:
+        - username: a
+          password: a
 
 connectors:
   - name: direct
@@ -33,13 +38,24 @@ connectors:
   - name: socks
     server: 192.168.100.1
     port: 1080
+  - name: socks-tls
+    type: socks
+    server: 192.168.100.1
+    port: 9123
+    auth:
+      username: proxy
+      password: fuckgfw
+    tls:
+      insecure: true
 
 rules:
   - filter: request.source =~ "127.0.0.1" and request.target =~ "google.com"
     target: https
+  - filter: request.target =~ "2607:f8b0"
+    target: https
   - filter: request.target =~ "deny-me.com"
     # target "deny" is a resvered target name for explicitly deny a matching request
     target: deny
-  - target: socks
+  - target: socks-tls
     # an empty filter means that all requests will be accepted.
     # if no rule matches the request, access will be denied.

@@ -25,7 +25,7 @@ pub trait SocksAuthServer<T> {
 
 #[async_trait]
 pub trait SocksAuthClient<T> {
-    fn auth_method(&self) -> &[u8];
+    fn supported_methods(&self, data: &T) -> &[u8];
     async fn auth_v4(&self, data: &T) -> Result<String, Error>;
     async fn auth_v5<IO: RW>(&self, data: &T, method: u8, socket: &mut IO) -> Result<(), Error>;
 }
@@ -160,7 +160,7 @@ impl<T> SocksRequest<T> {
     ) -> Result<(), Error> {
         // pre auth negotiation
         socket.write_u8(self.version).await.context("version")?;
-        let methods = auth.auth_method();
+        let methods = auth.supported_methods(&self.auth);
         socket
             .write_u8(methods.len() as u8)
             .await
@@ -219,10 +219,10 @@ impl SocksAuthServer<()> for NoAuth {
 
 #[async_trait]
 impl SocksAuthClient<()> for NoAuth {
-    fn auth_method(&self) -> &[u8] {
+    fn supported_methods(&self, _: &()) -> &[u8] {
         &[0]
     }
-    async fn auth_v4(&self, _data: &()) -> Result<String, Error> {
+    async fn auth_v4(&self, _: &()) -> Result<String, Error> {
         Ok("NoAuth".into())
     }
     async fn auth_v5<IO: RW>(
@@ -234,36 +234,108 @@ impl SocksAuthClient<()> for NoAuth {
         Ok(())
     }
 }
-pub struct PasswordAuth;
+pub struct PasswordAuth {
+    pub required: bool,
+}
+
+#[allow(dead_code)]
+impl PasswordAuth {
+    fn new(required: bool) -> Self {
+        Self { required }
+    }
+    pub fn required() -> Self {
+        Self::new(true)
+    }
+    pub fn optional() -> Self {
+        Self::new(false)
+    }
+}
+
 #[async_trait]
-impl SocksAuthServer<(String, String)> for PasswordAuth {
-    fn select_method(&self, method: &[u8]) -> Option<u8> {
-        if method.contains(&2) {
+impl SocksAuthServer<Option<(String, String)>> for PasswordAuth {
+    fn select_method(&self, methods: &[u8]) -> Option<u8> {
+        if methods.contains(&0) && !self.required {
+            Some(0)
+        } else if methods.contains(&2) {
             Some(2)
         } else {
             None
         }
     }
-    async fn auth_v4(&self, client_id: String) -> Result<(String, String), Error> {
-        Ok((client_id, "".into()))
+    async fn auth_v4(&self, client_id: String) -> Result<Option<(String, String)>, Error> {
+        Ok(Some((client_id, "".into())))
     }
     async fn auth_v5<IO: RW>(
         &self,
         method: u8,
         socket: &mut IO,
-    ) -> Result<(String, String), Error> {
+    ) -> Result<Option<(String, String)>, Error> {
         match method {
+            0 => Ok(None),
             2 => {
                 let _ver = socket.read_u8().await.context("auth version")?;
                 let user = read_length_and_string(socket).await?;
                 let pass = read_length_and_string(socket).await?;
-                Ok((user, pass))
+                socket.write_u8(1).await.context("auth result")?;
+                socket.write_u8(0).await.context("auth result")?;
+                socket.flush().await.context("auth result")?;
+                Ok(Some((user, pass)))
             }
-            _ => panic!("not supported method {}", method),
+            _ => bail!("not supported method {}", method),
         }
     }
 }
 
+#[async_trait]
+impl SocksAuthClient<Option<(String, String)>> for PasswordAuth {
+    fn supported_methods(&self, data: &Option<(String, String)>) -> &[u8] {
+        if data.is_some() {
+            &[0, 2]
+        } else {
+            &[0]
+        }
+    }
+
+    async fn auth_v4(&self, data: &Option<(String, String)>) -> Result<String, Error> {
+        Ok(format!("{:?}", data))
+    }
+
+    async fn auth_v5<IO: RW>(
+        &self,
+        data: &Option<(String, String)>,
+        method: u8,
+        socket: &mut IO,
+    ) -> Result<(), Error> {
+        match method {
+            0 => Ok(()),
+            2 => {
+                let (user, pass) = data.as_ref().unwrap();
+                socket.write_u8(1).await.context("auth version")?;
+                socket
+                    .write_u8(user.len() as u8)
+                    .await
+                    .context("auth user")?;
+                socket.write(user.as_bytes()).await.context("auth user")?;
+                socket
+                    .write_u8(pass.len() as u8)
+                    .await
+                    .context("auth pass")?;
+                socket.write(pass.as_bytes()).await.context("auth user")?;
+                socket.flush().await.context("auth")?;
+                let _ver = socket.read_u8().await.context("auth result")?;
+                let result = socket.read_u8().await.context("auth result")?;
+                if result == 0 {
+                    Ok(())
+                } else {
+                    bail!("authenication failed")
+                }
+            }
+            _ => bail!("not supported method {}", method),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct SocksResponse {
     pub version: u8,
     pub cmd: u8,
@@ -275,7 +347,7 @@ impl SocksResponse {
     pub async fn read_from<IO: RW>(socket: &mut IO) -> Result<Self, Error> {
         let version = socket.read_u8().await.context("read ver")?;
         match version {
-            4 => Self::read_v4(socket).await,
+            0 => Self::read_v4(socket).await,
             5 => Self::read_v5(socket).await,
             _ => bail!("Unknown socks version: {}", version),
         }
@@ -331,8 +403,8 @@ impl SocksResponse {
         socket.flush().await.context("flush")
     }
     pub async fn write_v4<IO: RW>(&self, socket: &mut IO) -> Result<(), Error> {
-        socket.write_u8(self.version).await.context("version")?;
-        let cmd = if self.cmd == 0 { 91 } else { 92 }; //map v5 response code to v4
+        socket.write_u8(0).await.context("vn")?;
+        let cmd = if self.cmd == 0 { 90 } else { 91 }; //map v5 response code to v4
         socket.write_u8(cmd).await.context("cmd")?;
         let (dst, dport) = match &self.target {
             TargetAddress::DomainPort(_, port) => ([0u8, 0, 0, 1], *port),
@@ -397,12 +469,12 @@ mod tests {
             version: 4,
             cmd: 1,
             target: "1.2.3.4:5".parse().unwrap(),
-            auth: ("abc".to_string(), "".to_string()),
+            auth: Some(("abc".to_string(), "".to_string())),
         };
         let stream = Builder::new().read(&input).build();
         let mut stream = BufReader::new(stream);
         assert_eq!(
-            SocksRequest::read_from(&mut stream, PasswordAuth)
+            SocksRequest::read_from(&mut stream, PasswordAuth::required())
                 .await
                 .unwrap(),
             output
@@ -417,15 +489,153 @@ mod tests {
             version: 4,
             cmd: 1,
             target: "xyz:5".parse().unwrap(),
-            auth: ("abc".to_string(), "".to_string()),
+            auth: Some(("abc".to_string(), "".to_string())),
         };
         let stream = Builder::new().read(&input).build();
         let mut stream = BufReader::new(stream);
         assert_eq!(
-            SocksRequest::read_from(&mut stream, PasswordAuth)
+            SocksRequest::read_from(&mut stream, PasswordAuth::required())
                 .await
                 .unwrap(),
             output
         );
+    }
+    #[test(tokio::test)]
+    async fn parse_request_v5() {
+        let read1 = [
+            5, 1, 2, //pre auth
+        ];
+        let write1 = [
+            5, 2, //pre auth
+        ];
+        let read2 = [
+            1, //auth ver
+            3, b'a', b'b', b'c', //user
+            3, b'd', b'e', b'f', //pass
+        ];
+        let write2 = [
+            1, //auth ver
+            0, //auth result
+        ];
+        let read3 = [
+            5, 1, 0, 3, 3, b'x', b'y', b'z', 0, 5, //request
+        ];
+        let output = SocksRequest {
+            version: 5,
+            cmd: 1,
+            target: "xyz:5".parse().unwrap(),
+            auth: Some(("abc".to_string(), "def".to_string())),
+        };
+        let stream = Builder::new()
+            .read(&read1)
+            .write(&write1)
+            .read(&read2)
+            .write(&write2)
+            .read(&read3)
+            .build();
+        let mut stream = BufReader::new(stream);
+        assert_eq!(
+            SocksRequest::read_from(&mut stream, PasswordAuth::required())
+                .await
+                .unwrap(),
+            output
+        );
+    }
+    #[test(tokio::test)]
+    async fn write_request_v5() {
+        let write1 = [
+            5, 2, 0, 2, //pre auth
+        ];
+        let read1 = [
+            5, 2, //pre auth
+        ];
+        let write2 = [
+            1, //auth ver
+            3, b'a', b'b', b'c', //user
+            3, b'd', b'e', b'f', //pass
+        ];
+        let read2 = [
+            1, //auth ver
+            0, //auth result
+        ];
+        let write3 = [
+            5, 1, 0, 3, 3, b'x', b'y', b'z', 0, 5, //request
+        ];
+        let output = SocksRequest {
+            version: 5,
+            cmd: 1,
+            target: "xyz:5".parse().unwrap(),
+            auth: Some(("abc".to_string(), "def".to_string())),
+        };
+        let stream = Builder::new()
+            .write(&write1)
+            .read(&read1)
+            .write(&write2)
+            .read(&read2)
+            .write(&write3)
+            .build();
+        let mut stream = BufReader::new(stream);
+        output
+            .write_to(&mut stream, PasswordAuth::required())
+            .await
+            .unwrap();
+    }
+    #[test(tokio::test)]
+    async fn parse_response_v4() {
+        let input = [0, 1, 0, 5, 1, 2, 3, 4];
+        let output = SocksResponse {
+            version: 4,
+            cmd: 1,
+            target: "1.2.3.4:5".parse().unwrap(),
+            // auth: Some(("abc".to_string(), "".to_string())),
+        };
+        let stream = Builder::new().read(&input).build();
+        let mut stream = BufReader::new(stream);
+        assert_eq!(SocksResponse::read_from(&mut stream).await.unwrap(), output);
+    }
+    #[test(tokio::test)]
+    async fn parse_response_v5() {
+        let input = [
+            5, 1, 0, 4, // ver 5 cmd 1 resv 0 type 4
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, // ipv6 address ::1
+            0, 5, //port 5
+        ];
+        let output = SocksResponse {
+            version: 5,
+            cmd: 1,
+            target: "[::1]:5".parse().unwrap(),
+        };
+        let stream = Builder::new().read(&input).build();
+        let mut stream = BufReader::new(stream);
+        assert_eq!(SocksResponse::read_from(&mut stream).await.unwrap(), output);
+    }
+    #[test(tokio::test)]
+    async fn write_response_v4() {
+        let write = [0, 91, 0, 5, 1, 2, 3, 4];
+        let output = SocksResponse {
+            version: 4,
+            cmd: 1,
+            target: "1.2.3.4:5".parse().unwrap(),
+            // auth: Some(("abc".to_string(), "".to_string())),
+        };
+        let stream = Builder::new().write(&write).build();
+        let mut stream = BufReader::new(stream);
+        output.write_to(&mut stream).await.unwrap();
+    }
+    #[test(tokio::test)]
+    async fn write_response_v5() {
+        let write = [
+            5, 1, 0, 4, // ver 5 cmd 1 resv 0 type 4
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, // ipv6 address ::1
+            0, 5, //port 5
+        ];
+        let output = SocksResponse {
+            version: 5,
+            cmd: 1,
+            target: "[::1]:5".parse().unwrap(),
+        };
+        let stream = Builder::new().write(&write).build();
+        let mut stream = BufReader::new(stream);
+        output.write_to(&mut stream).await.unwrap();
     }
 }
