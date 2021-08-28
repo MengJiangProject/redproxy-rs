@@ -226,6 +226,7 @@ impl<'a> ScriptContext<'a> {
     }
     pub fn lookup(&self, id: &str) -> Result<Value<'a>, Error> {
         if let Some(r) = self.varibles.get(id) {
+            log::trace!("lookup({})={}", id, r);
             Ok(r.clone())
         } else if let Some(p) = &self.parent {
             p.lookup(id)
@@ -320,6 +321,7 @@ impl<'a> Evaluatable<'a> for Value<'a> {
     where
         'a: 'b,
     {
+        log::trace!("type_of={}", self);
         use Value::*;
         match self {
             Null => Ok(Type::Null),
@@ -361,8 +363,9 @@ impl<'a> Evaluatable<'a> for Value<'a> {
     where
         'a: 'b,
     {
+        log::trace!("value_of={}", self);
         match self {
-            Self::Identifier(id) => ctx.lookup(id),
+            Self::Identifier(id) => ctx.lookup(id).and_then(|x| x.value_of(ctx)),
             Self::OpCall(f) => f.call(ctx),
             Self::NativeObject(f) => {
                 let e = f.as_evaluatable();

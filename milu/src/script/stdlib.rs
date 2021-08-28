@@ -276,6 +276,47 @@ impl Callable for If {
     }
 }
 
+struct ScopeBinding<'a> {
+    ctx: ScriptContextRef<'a>,
+    value: Value<'a>,
+}
+
+impl std::fmt::Debug for ScopeBinding<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScopeBinding")
+            .field("value", &self.value)
+            .finish()
+    }
+}
+
+impl std::hash::Hash for ScopeBinding<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.value.hash(state);
+    }
+}
+
+impl<'a> Evaluatable<'a> for ScopeBinding<'a> {
+    fn type_of<'b>(&self, _ctx: ScriptContextRef<'b>) -> Result<Type, Error>
+    where
+        'a: 'b,
+    {
+        self.value.type_of(self.ctx.clone())
+    }
+
+    fn value_of<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Value<'b>, Error>
+    where
+        'a: 'b,
+    {
+        self.value.value_of(self.ctx.clone())?.value_of(ctx)
+    }
+}
+
+impl<'a> NativeObject<'a> for ScopeBinding<'a> {
+    fn as_evaluatable(&self) -> Option<&dyn Evaluatable<'a>> {
+        Some(self)
+    }
+}
+
 function_head!(Scope(vars: Array, expr: Any) => Any);
 impl Scope {
     fn make_context<'value, 'ctx>(
@@ -285,12 +326,16 @@ impl Scope {
     where
         'value: 'ctx,
     {
-        let mut nctx = ScriptContext::new(Some(ctx));
+        let mut nctx = ScriptContext::new(Some(ctx.clone()));
         for v in vars.iter() {
             let t = v.as_vec();
             let id: String = t[0].as_str().to_owned();
             let value = t[1].unsafe_clone();
-            nctx.set(id, value);
+            let value = ScopeBinding {
+                ctx: ctx.clone(),
+                value,
+            };
+            nctx.set(id, value.into());
         }
         Ok(Arc::new(nctx))
     }
