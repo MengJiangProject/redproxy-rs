@@ -1,5 +1,5 @@
 use std::{
-    ascii, fs, io,
+    ascii, fs,
     net::SocketAddr,
     path::{self, Path, PathBuf},
     str,
@@ -9,11 +9,6 @@ use std::{
 use easy_error::{bail, err_msg, Error, ResultExt};
 use futures_util::{stream::StreamExt, TryFutureExt};
 use log::{error, info};
-use quinn::{
-    Certificate, CertificateChain, ClientConfig, ClientConfigBuilder, Endpoint, Incoming,
-    PrivateKey, ServerConfig, ServerConfigBuilder, TransportConfig,
-};
-use std::error::Error as StdError;
 
 pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 
@@ -48,7 +43,6 @@ fn main() {
 }
 
 #[tokio::main]
-#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 async fn run(options: Opt) -> Result<(), Error> {
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.max_concurrent_uni_streams(0).unwrap();
@@ -111,11 +105,7 @@ async fn run(options: Opt) -> Result<(), Error> {
 }
 
 async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(), Error> {
-    let quinn::NewConnection {
-        connection,
-        mut bi_streams,
-        ..
-    } = conn.await.context("connection")?;
+    let quinn::NewConnection { mut bi_streams, .. } = conn.await.context("connection")?;
 
     async {
         info!("established");

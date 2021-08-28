@@ -1,30 +1,13 @@
 use std::{
-    fs,
     io::{self, Write},
-    net::ToSocketAddrs,
-    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use easy_error::{err_msg, Error, ResultExt};
-
-struct Opt {
-    keylog: bool,
-    host: Option<String>,
-    ca: Option<PathBuf>,
-    rebind: bool,
-}
-
 fn main() {
-    let opt = Opt {
-        keylog: false,
-        host: None,
-        ca: None,
-        rebind: false,
-    };
     let code = {
-        if let Err(e) = run(opt) {
+        if let Err(e) = run() {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -52,13 +35,7 @@ impl rustls::ServerCertVerifier for SkipCertificationVerification {
     }
 }
 pub fn insecure(mut cfg: ClientConfig) -> ClientConfig {
-    // let mut cfg = quinn::ClientConfigBuilder::default().build();
-
-    // Get a mutable reference to the 'crypto' config in the 'client config'.
     let tls_cfg: &mut rustls::ClientConfig = std::sync::Arc::get_mut(&mut cfg.crypto).unwrap();
-
-    // Change the certification verifier.
-    // This is only available when compiled with the 'dangerous_configuration' feature.
     tls_cfg
         .dangerous()
         .set_certificate_verifier(Arc::new(SkipCertificationVerification));
@@ -66,16 +43,14 @@ pub fn insecure(mut cfg: ClientConfig) -> ClientConfig {
 }
 
 #[tokio::main]
-async fn run(options: Opt) -> Result<(), Error> {
+async fn run() -> Result<(), Error> {
     let url = "/";
     let remote = "127.0.0.1:4433".parse().unwrap();
 
     let mut endpoint = quinn::Endpoint::builder();
     let mut client_config = quinn::ClientConfigBuilder::default();
     client_config.protocols(ALPN_QUIC_HTTP);
-    if options.keylog {
-        client_config.enable_keylog();
-    }
+    client_config.enable_keylog();
     let cfg = insecure(client_config.build());
     endpoint.default_client_config(cfg);
 
@@ -83,7 +58,7 @@ async fn run(options: Opt) -> Result<(), Error> {
 
     let request = format!("GET {}\r\n", url);
     let start = Instant::now();
-    let rebind = options.rebind;
+    let rebind = true;
     let host = "localhost";
 
     eprintln!("connecting to {} at {}", host, remote);
