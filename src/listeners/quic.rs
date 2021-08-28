@@ -1,3 +1,4 @@
+#[cfg(feature = "quic")]
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
