@@ -135,6 +135,7 @@ jobs:
           args: --workspace
 
   build-corss:
+    if: ${{ github.event_name == 'release' && github.event.action == 'created' }}
     needs: [build, test, fmt, clippy, check]
     name: ${{ matrix.job.os }} (${{ matrix.job.target }})
     runs-on: ${{ matrix.job.os }}
