@@ -1,7 +1,7 @@
 use easy_error::{bail, err_msg, Error, ResultExt};
 use log::{debug, warn};
 use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc};
-use tokio::{io::AsyncWriteExt, sync::mpsc::Sender};
+use tokio::sync::mpsc::Sender;
 
 use crate::{
     common::http::HttpRequest,
@@ -21,6 +21,9 @@ pub async fn h11c_handshake(
     debug!("connected from {:?}", source);
     let request = HttpRequest::read_from(&mut socket).await?;
     if !request.method.eq_ignore_ascii_case("CONNECT") {
+        HttpResponse::new(400, "Bad Request")
+            .write_to(&mut socket)
+            .await?;
         bail!("Invalid request method: {}", request.method)
     }
     let target = request.resource.parse().map_err(|_e| {
@@ -51,11 +54,9 @@ impl ContextCallback for Callback {
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
             let s = &mut ctx.socket;
-            if let Some(e) = HttpResponse::new(200, "Connection established")
+            if let Err(e) = HttpResponse::new(200, "Connection established")
                 .write_to(s)
                 .await
-                .and(s.flush().await.context("flush"))
-                .err()
             {
                 warn!("failed to send response: {}", e)
             }
@@ -68,12 +69,12 @@ impl ContextCallback for Callback {
     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
             let s = &mut ctx.socket;
-            if let Some(e) = HttpResponse::new(503, "Service unavailable")
-                .with_header("Error", error)
-                .write_to(s)
+            let buf = format!("Error: {} Cause: {:?}", error, error.cause);
+            if let Err(e) = HttpResponse::new(503, "Service unavailable")
+                .with_header("Content-Type", "text/plain")
+                .with_header("Content-Length", buf.as_bytes().len())
+                .write_with_body(s, buf.as_bytes())
                 .await
-                .and(s.flush().await.context("flush"))
-                .err()
             {
                 warn!("failed to send response: {}", e)
             }
