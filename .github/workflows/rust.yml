@@ -10,6 +10,8 @@ on:
       - v*
   pull_request:
   workflow_dispatch:
+  release:
+    types: [published, created, edited]
 
 env:
   CARGO_TERM_COLOR: always
@@ -135,7 +137,7 @@ jobs:
           args: --workspace --all-features
 
   build-corss:
-    if: ${{ github.event_name == 'release' && github.event.action == 'created' }}
+    if: ${{ github.event_name == 'release' }}
     needs: [build, test, fmt, clippy, check]
     name: ${{ matrix.job.os }} (${{ matrix.job.target }})
     runs-on: ${{ matrix.job.os }}
