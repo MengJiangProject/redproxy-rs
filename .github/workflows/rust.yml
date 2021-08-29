@@ -4,14 +4,10 @@ on:
   push:
     branches:
       - master
-      - staging
-      - trying
-    tags:
-      - v*
   pull_request:
   workflow_dispatch:
   release:
-    types: [published, created, edited]
+    types: [created, edited]
 
 env:
   CARGO_TERM_COLOR: always
