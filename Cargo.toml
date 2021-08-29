@@ -20,7 +20,7 @@ path = "src/quic-client.rs"
 required-features = ["quic"]
 
 [features]
-quic = ["quinn","futures-util"]
+quic = ["quinn","futures-util","pin-project-lite"]
 
 [dependencies]
 milu = { path = "milu" }
@@ -42,6 +42,7 @@ clap = "~2.33"
 
 quinn = { version = "0.7.2", optional = true}
 futures-util = { version = "0.3.16", optional = true}
+pin-project-lite = { version = "0.2.6", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4.2"
