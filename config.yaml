@@ -71,12 +71,12 @@ rules:
   # available varibles are request: { source: string, target: string, listener: string }
   # available functions: split(str,str)->[str] to_string(any)->str to_integer(str)->int
   - filter: request.source =~ "127.0.0.1" and request.target =~ "google.com"
-    target: quic
+    target: direct
   - filter: request.target =~ "2607:f8b0"
     target: https
   - filter: request.target =~ "deny-me.com"
     # target "deny" is a resvered target name for explicitly deny a matching request
     target: deny
-  - target: socks-tls
+  - target: direct
     # an empty filter means that all requests will be accepted.
     # if no rule matches the request, access will be denied.
