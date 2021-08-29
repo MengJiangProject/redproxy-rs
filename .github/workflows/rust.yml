@@ -39,7 +39,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --workspace --all-targets
+          args: --workspace --all-targets --all-features
 
   fmt:
     needs: build
@@ -132,7 +132,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --workspace
+          args: --workspace --all-features
 
   build-corss:
     if: ${{ github.event_name == 'release' && github.event.action == 'created' }}
@@ -216,7 +216,7 @@ jobs:
         with:
           use-cross: ${{ matrix.job.use-cross }}
           command: build
-          args: --locked --release --target=${{ matrix.job.target }} --workspace
+          args: --locked --release --target=${{ matrix.job.target }} --workspace  --all-features
 
       - name: Strip debug information from executable
         id: strip
