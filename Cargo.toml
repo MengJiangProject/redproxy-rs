@@ -9,16 +9,6 @@ default-run = "redproxy-rs"
 name = "redproxy-rs"
 path = "src/main.rs"
 
-[[bin]]
-name = "quic-server"
-path = "src/quic-server.rs"
-required-features = ["quic"]
-
-[[bin]]
-name = "quic-client"
-path = "src/quic-client.rs"
-required-features = ["quic"]
-
 [features]
 quic = ["quinn","futures-util","pin-project-lite"]
 
