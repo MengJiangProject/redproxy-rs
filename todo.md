@@ -1,3 +1,4 @@
+- [ ] TODO: support BIND and UDP ASSOCIATE in socks protocol
 - [ ] TODO: per-flow statics and prometheus intergration
 - [ ] TODO: RESTful api to list active and recent activities
 - [ ] TODO: GraphQL integration perhaps
