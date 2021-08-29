@@ -7,7 +7,10 @@ use serde_yaml::Value;
 
 mod direct;
 mod http;
+#[cfg(feature = "quic")]
+mod quic;
 mod socks;
+
 #[async_trait]
 pub trait Connector {
     async fn init(&mut self) -> Result<(), Error>;
@@ -38,6 +41,9 @@ pub fn from_value(value: &Value) -> Result<ConnectorRef, Error> {
         "direct" => direct::from_value(value),
         "http" => http::from_value(value),
         "socks" => socks::from_value(value),
+        #[cfg(feature = "quic")]
+        "quic" => quic::from_value(value),
+
         name => bail!("unknown connector type: {:?}", name),
     }
 }

@@ -61,7 +61,7 @@ impl TlsClientVerifyConfig {
 }
 
 impl TlsServerConfig {
-    fn certs(&self) -> Result<(Vec<Certificate>, PrivateKey), Error> {
+    pub fn certs(&self) -> Result<(Vec<Certificate>, PrivateKey), Error> {
         let certs = load_certs(&self.cert)?;
         let mut keys = load_keys(&self.key)?;
         let key = keys.remove(0);
@@ -98,16 +98,16 @@ impl TlsServerConfig {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TlsClientConfig {
-    ca: Option<PathBuf>,
+    pub ca: Option<PathBuf>,
     #[serde(default)]
     pub insecure: bool,
-    auth: Option<TlsClientAuthConfig>,
+    pub auth: Option<TlsClientAuthConfig>,
     #[serde(skip)]
     populated: Option<TlsClientConfigPopulated>,
 }
 
 impl TlsClientConfig {
-    fn insecure_verifier(&self) -> Arc<dyn ServerCertVerifier> {
+    pub fn insecure_verifier(&self) -> Arc<dyn ServerCertVerifier> {
         struct InsecureVerifier;
         impl ServerCertVerifier for InsecureVerifier {
             fn verify_server_cert(
@@ -122,7 +122,7 @@ impl TlsClientConfig {
         }
         Arc::new(InsecureVerifier)
     }
-    fn root_store(&self) -> Result<RootCertStore, Error> {
+    pub fn root_store(&self) -> Result<RootCertStore, Error> {
         let mut ret = RootCertStore::empty();
         let certs = self
             .ca
@@ -172,14 +172,14 @@ pub struct TlsClientAuthConfig {
 }
 
 impl TlsClientAuthConfig {
-    fn certs(&self) -> Result<(Vec<Certificate>, PrivateKey), Error> {
+    pub fn certs(&self) -> Result<(Vec<Certificate>, PrivateKey), Error> {
         let certs = load_certs(&self.cert)?;
         let mut keys = load_keys(&self.key)?;
         let key = keys.remove(0);
         Ok((certs, key))
     }
 
-    fn setup(&self, config: &mut ClientConfig) -> Result<(), Error> {
+    pub fn setup(&self, config: &mut ClientConfig) -> Result<(), Error> {
         let (certs, key) = self.certs()?;
         config
             .set_single_client_cert(certs, key)

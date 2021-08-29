@@ -26,6 +26,11 @@ listeners:
       users:
         - username: a
           password: a
+  - name: quic
+    bind: 0.0.0.0:4433
+    tls:
+      cert: test.crt
+      key: test.key
 
 connectors:
   - name: direct
@@ -54,12 +59,19 @@ connectors:
       password: fuckgfw
     tls:
       insecure: true
+  - name: quic
+    server: 127.0.0.1
+    port: 4433
+    tls:
+      insecure: true
 
 rules:
+  - filter: request.listener == "quic"
+    target: direct
   # available varibles are request: { source: string, target: string, listener: string }
   # available functions: split(str,str)->[str] to_string(any)->str to_integer(str)->int
   - filter: request.source =~ "127.0.0.1" and request.target =~ "google.com"
-    target: https
+    target: quic
   - filter: request.target =~ "2607:f8b0"
     target: https
   - filter: request.target =~ "deny-me.com"
