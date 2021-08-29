@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::context::{Context, IOBufStream};
 use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error};
@@ -10,7 +12,7 @@ mod socks;
 pub trait Connector {
     async fn init(&mut self) -> Result<(), Error>;
     // async fn connect(&self, ctx: Context) -> Result<(), Error>;
-    async fn connect(&self, ctx: &Context) -> Result<IOBufStream, Error>;
+    async fn connect(self: Arc<Self>, ctx: &Context) -> Result<IOBufStream, Error>;
     fn name(&self) -> &str;
 }
 

@@ -12,7 +12,10 @@ mod context;
 mod listeners;
 mod rules;
 
-use crate::{common::copy::copy_bidi, config::Config, context::Context};
+use crate::{
+    common::copy::copy_bidi, config::Config, connectors::Connector, context::Context,
+    listeners::Listener,
+};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -66,9 +69,9 @@ async fn main() -> Result<(), Terminator> {
         c.init().await?;
     }
 
-    let connectors: HashMap<String, _> = connectors
+    let connectors: HashMap<String, Arc<dyn Connector + Send + Sync>> = connectors
         .into_iter()
-        .map(|c| (c.name().into(), Arc::new(c)))
+        .map(|c| (c.name().into(), c.into()))
         .collect();
 
     rules.iter_mut().try_for_each(|r| {
@@ -87,8 +90,9 @@ async fn main() -> Result<(), Terminator> {
         return Ok(());
     }
 
+    let listeners: Vec<Arc<dyn Listener>> = listeners.into_iter().map(|x| x.into()).collect();
     for l in listeners.iter() {
-        l.listen(tx.clone()).await?;
+        l.clone().listen(tx.clone()).await?;
     }
 
     let cfg = Arc::new(cfg);
@@ -101,7 +105,7 @@ async fn main() -> Result<(), Terminator> {
 async fn process_request(mut ctx: Context, cfg: Arc<Config>) {
     let connector = cfg.rules.iter().find_map(|x| {
         if x.evaluate(&ctx) {
-            Some(x.target.as_ref())
+            Some(x.target.clone())
         } else {
             None
         }

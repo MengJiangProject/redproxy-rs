@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
 use log::trace;
@@ -26,7 +28,7 @@ impl super::Connector for DirectConnector {
         Ok(())
     }
 
-    async fn connect(&self, ctx: &Context) -> Result<IOBufStream, Error> {
+    async fn connect(self: Arc<Self>, ctx: &Context) -> Result<IOBufStream, Error> {
         let target = &ctx.target;
         trace!("connecting to {:?}", target);
         let server = make_buffered_stream(target.connect_tcp().await.context("connect")?);

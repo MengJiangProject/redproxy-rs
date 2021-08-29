@@ -6,14 +6,14 @@ use log::trace;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{connectors::ConnectorRef, context::Context};
+use crate::{connectors::Connector, context::Context};
 
 #[derive(Serialize, Deserialize)]
 pub struct Rule {
     #[serde(rename = "target")]
     target_name: String,
     #[serde(skip)]
-    pub target: Option<Arc<ConnectorRef>>,
+    pub target: Option<Arc<dyn Connector + Send + Sync>>,
     #[serde(rename = "filter")]
     filter_str: Option<String>,
     #[serde(skip)]

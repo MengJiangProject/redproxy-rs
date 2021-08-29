@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use easy_error::{err_msg, Error};
 use serde_yaml::Value;
@@ -17,7 +19,7 @@ mod tproxy;
 #[async_trait]
 pub trait Listener: std::fmt::Debug {
     async fn init(&mut self) -> Result<(), Error>;
-    async fn listen(&self, queue: Sender<Context>) -> Result<(), Error>;
+    async fn listen(self: Arc<Self>, queue: Sender<Context>) -> Result<(), Error>;
     fn name(&self) -> &str;
 }
 

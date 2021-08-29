@@ -49,10 +49,10 @@ impl Listener for SocksListener {
         }
         Ok(())
     }
-    async fn listen(&self, queue: Sender<Context>) -> Result<(), Error> {
+    async fn listen(self: Arc<Self>, queue: Sender<Context>) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
-        let this = Arc::new(self.clone());
+        let this = self.clone();
         tokio::spawn(this.accept(listener, queue));
         Ok(())
     }
