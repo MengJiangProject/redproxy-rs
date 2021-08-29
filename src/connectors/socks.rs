@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use easy_error::{bail, Error, ResultExt};
 use log::trace;
@@ -57,7 +59,7 @@ impl super::Connector for SocksConnector {
         Ok(())
     }
 
-    async fn connect(&self, ctx: &Context) -> Result<IOBufStream, Error> {
+    async fn connect(self: Arc<Self>, ctx: &Context) -> Result<IOBufStream, Error> {
         let tls_insecure = self.tls.as_ref().map(|x| x.insecure).unwrap_or(false);
         let tls_connector = self.tls.as_ref().map(|options| options.connector());
         trace!(

@@ -1,4 +1,4 @@
-use std::os::unix::prelude::AsRawFd;
+use std::{os::unix::prelude::AsRawFd, sync::Arc};
 
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
@@ -32,7 +32,7 @@ impl Listener for TProxyListener {
     async fn init(&mut self) -> Result<(), Error> {
         Ok(())
     }
-    async fn listen(&self, queue: Sender<Context>) -> Result<(), Error> {
+    async fn listen(self: Arc<Self>, queue: Sender<Context>) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
         let self = self.clone();
