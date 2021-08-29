@@ -122,6 +122,11 @@ impl HttpResponse {
             .context("write error")?;
         socket.flush().await.context("flush")
     }
+    pub async fn write_with_body(&self, socket: Writer<'_>, body: &[u8]) -> Result<(), Error> {
+        self.write_to(socket).await?;
+        socket.write(body).await.context("write error")?;
+        Ok(())
+    }
 }
 
 async fn read_headers(
