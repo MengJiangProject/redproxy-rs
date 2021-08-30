@@ -10,6 +10,7 @@ name = "redproxy-rs"
 path = "src/main.rs"
 
 [features]
+default = ["quic"]
 quic = ["quinn","futures-util","pin-project-lite"]
 
 [dependencies]
