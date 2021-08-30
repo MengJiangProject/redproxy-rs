@@ -15,7 +15,7 @@ listeners:
       key: test.key
       client:
         ca: ca.crt
-        required: false
+        required: true
   - name: socks
     bind: 0.0.0.0:1080
     auth:
