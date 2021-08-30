@@ -34,7 +34,7 @@ impl Listener for QuicListener {
         self.tls.init()?;
         Ok(())
     }
-    async fn listen(self: Arc<Self>, queue: Sender<Context>) -> Result<(), Error> {
+    async fn listen(self: Arc<Self>, queue: Sender<Arc<Context>>) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let epb = create_quic_server(&self.tls)?;
         let bind_addr = self.bind.parse().context("parse bind")?;
@@ -51,7 +51,7 @@ impl QuicListener {
         self: Arc<Self>,
         _endpoint: Endpoint,
         mut incoming: Incoming,
-        queue: Sender<Context>,
+        queue: Sender<Arc<Context>>,
     ) -> Result<(), Error> {
         while let Some(conn) = incoming.next().await {
             let name = self.name().to_owned();

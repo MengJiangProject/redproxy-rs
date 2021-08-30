@@ -1,18 +1,18 @@
 use std::future::Future;
 use std::net::SocketAddr;
+use std::ops::DerefMut;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use easy_error::{err_msg, Error, ResultExt};
 use log::{debug, info, trace, warn};
-use tokio::io::BufStream;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Sender;
 
 use crate::common::socks::{PasswordAuth, SocksRequest, SocksResponse};
 use crate::common::tls::TlsServerConfig;
-use crate::context::{Context, ContextCallback, IOStream};
+use crate::context::{make_buffered_stream, Context, ContextCallback, IOStream};
 use crate::listeners::Listener;
 use serde::{Deserialize, Serialize};
 
@@ -49,7 +49,7 @@ impl Listener for SocksListener {
         }
         Ok(())
     }
-    async fn listen(self: Arc<Self>, queue: Sender<Context>) -> Result<(), Error> {
+    async fn listen(self: Arc<Self>, queue: Sender<Arc<Context>>) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
         let this = self.clone();
@@ -63,7 +63,7 @@ impl Listener for SocksListener {
 }
 
 impl SocksListener {
-    async fn accept(self: Arc<Self>, listener: TcpListener, queue: Sender<Context>) {
+    async fn accept(self: Arc<Self>, listener: TcpListener, queue: Sender<Arc<Context>>) {
         loop {
             let this = self.clone();
             let queue = queue.clone();
@@ -88,7 +88,7 @@ impl SocksListener {
         self: Arc<Self>,
         socket: TcpStream,
         source: SocketAddr,
-        queue: Sender<Context>,
+        queue: Sender<Arc<Context>>,
     ) -> Result<(), Error> {
         let tls_acceptor = self.tls.as_ref().map(|options| options.acceptor());
         let socket: Box<dyn IOStream> = if let Some(acceptor) = tls_acceptor {
@@ -97,34 +97,31 @@ impl SocksListener {
             Box::new(socket)
         };
         debug!("connected from {:?}", source);
-        let mut socket = BufStream::new(socket);
+        let mut ctx = Context::new(self.name.to_owned(), make_buffered_stream(socket), source);
         let auth_required = self
             .auth
             .as_ref()
             .map(|options| options.required)
             .unwrap_or(false);
-        let auth_server = PasswordAuth {
-            required: auth_required,
-        };
-        let request = SocksRequest::read_from(&mut socket, auth_server).await?;
-        trace!("request {:?}", request);
-        let target = request.target;
-        let callback = Callback::new(request.version);
-        let mut ctx = Context {
-            socket,
-            target,
-            source,
-            listener: self.name().into(),
-            callback: Some(callback.clone()),
+
+        let request = {
+            let mut socket = ctx.lock_socket().await;
+            let auth_server = PasswordAuth {
+                required: auth_required,
+            };
+            SocksRequest::read_from(socket.deref_mut(), auth_server).await?
         };
 
-        if !auth_required || self.lookup_user(request.auth) {
-            queue.send(ctx).await.context("enqueue")?;
-        } else {
-            callback
-                .on_error(&mut ctx, err_msg("not authencated"))
-                .await;
+        trace!("request {:?}", request);
+        ctx.target = request.target;
+        ctx.set_callback(Callback {
+            version: request.version,
+        });
+        if auth_required && !self.lookup_user(request.auth) {
+            Arc::new(ctx).on_error(err_msg("not authencated")).await;
             trace!("not authencated");
+        } else {
+            ctx.enqueue(&queue).await?;
         }
         Ok(())
     }
@@ -141,21 +138,15 @@ impl SocksListener {
 struct Callback {
     version: u8,
 }
-impl Callback {
-    fn new(version: u8) -> Arc<Self> {
-        Arc::new(Callback { version })
-    }
-}
+
 impl ContextCallback for Callback {
-    fn on_connect<'a>(
-        &self,
-        ctx: &'a mut Context,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+    fn on_connect(&self, ctx: Arc<Context>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let version = self.version;
         let target = ctx.target.clone();
         let cmd = 0;
         Box::pin(async move {
-            let s = &mut ctx.socket;
+            let mut socket = ctx.lock_socket().await;
+            let s = socket.deref_mut();
             let resp = SocksResponse {
                 version,
                 cmd,
@@ -166,16 +157,17 @@ impl ContextCallback for Callback {
             }
         })
     }
-    fn on_error<'a>(
+    fn on_error(
         &self,
-        ctx: &'a mut Context,
+        ctx: Arc<Context>,
         _error: Error,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let version = self.version;
         let target = ctx.target.clone();
         let cmd = 1;
         Box::pin(async move {
-            let s = &mut ctx.socket;
+            let mut socket = ctx.lock_socket().await;
+            let s = socket.deref_mut();
             let resp = SocksResponse {
                 version,
                 cmd,

@@ -1,15 +1,21 @@
-use easy_error::Error;
+use easy_error::{Error, ResultExt};
+use log::trace;
 use std::{
     fmt::{Debug, Display},
     future::Future,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     str::FromStr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::SystemTime,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, BufStream},
     net::TcpStream,
+    sync::{mpsc::Sender, Mutex, MutexGuard},
 };
 
 #[derive(Debug)]
@@ -27,6 +33,7 @@ impl std::error::Error for InvalidAddress {}
 pub enum TargetAddress {
     DomainPort(String, u16),
     SocketAddr(SocketAddr),
+    Unknown,
 }
 
 impl TargetAddress {
@@ -34,6 +41,7 @@ impl TargetAddress {
         match self {
             Self::DomainPort(host, port) => TcpStream::connect((host.as_str(), *port)).await,
             Self::SocketAddr(addr) => TcpStream::connect(addr).await,
+            _ => unreachable!(),
         }
     }
 }
@@ -81,7 +89,14 @@ impl Display for TargetAddress {
         match self {
             Self::DomainPort(domain, port) => write!(f, "{}:{}", domain, port),
             Self::SocketAddr(addr) => write!(f, "{}", addr),
+            Self::Unknown => write!(f, "unknown"),
         }
+    }
+}
+
+impl Default for TargetAddress {
+    fn default() -> Self {
+        Self::Unknown
     }
 }
 
@@ -94,35 +109,68 @@ pub fn make_buffered_stream<T: IOStream + 'static>(stream: T) -> IOBufStream {
 }
 
 pub trait ContextCallback {
-    fn on_connect<'a>(&self, ctx: &'a mut Context)
-        -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
-    fn on_error<'a>(
-        &self,
-        ctx: &'a mut Context,
-        error: Error,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+    fn on_connect(&self, ctx: Arc<Context>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+    fn on_error(&self, ctx: Arc<Context>, error: Error)
+        -> Pin<Box<dyn Future<Output = ()> + Send>>;
 }
 
+static NEXT_CONTEXT_ID: AtomicU64 = AtomicU64::new(0);
+
 pub struct Context {
+    pub id: u64,
+    pub create_at: SystemTime,
     pub listener: String,
-    pub socket: IOBufStream,
+    socket: Arc<Mutex<IOBufStream>>,
     pub source: SocketAddr,
     pub target: TargetAddress,
-    pub callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
+    callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
 }
 
 impl Context {
-    pub async fn on_connect(&mut self) {
+    pub fn new(listener: String, socket: IOBufStream, source: SocketAddr) -> Self {
+        let socket = Arc::new(Mutex::new(socket));
+        Self {
+            id: NEXT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed),
+            create_at: SystemTime::now(),
+            listener,
+            socket,
+            source,
+            target: Default::default(),
+            callback: None,
+        }
+    }
+
+    pub async fn enqueue(self, queue: &Sender<Arc<Context>>) -> Result<(), Error> {
+        queue.send(Arc::new(self)).await.context("enqueue")
+    }
+
+    pub async fn on_connect(self: Arc<Context>) {
         if self.callback.is_some() {
             let cb = self.callback.clone().unwrap();
             cb.on_connect(self).await
         }
     }
-    pub async fn on_error(&mut self, error: Error) {
+    pub async fn on_error(self: Arc<Context>, error: Error) {
         if self.callback.is_some() {
             let cb = self.callback.clone().unwrap();
             cb.on_error(self, error).await
         }
+    }
+
+    /// Set the context's callback.
+    pub fn set_callback<T: ContextCallback + Send + Sync + 'static>(&mut self, callback: T) {
+        self.callback = Some(Arc::new(callback));
+    }
+
+    /// Get a reference to the context's socket.
+    pub async fn lock_socket(&self) -> MutexGuard<'_, IOBufStream> {
+        self.socket.lock().await
+    }
+}
+
+impl Drop for Context {
+    fn drop(&mut self) {
+        trace!("Context dropped: {}", self);
     }
 }
 
@@ -134,13 +182,23 @@ impl std::hash::Hash for Context {
     }
 }
 
+impl Display for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "l={}, s={}, t={}",
+            self.listener, self.source, self.target
+        )
+    }
+}
+
 impl std::fmt::Debug for Context {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Context")
-            .field("listener", &self.listener)
-            .field("target", &self.target)
-            .field("source", &self.source)
-            .finish()
+        write!(
+            f,
+            "l={}, s={}, t={}",
+            self.listener, self.source, self.target
+        )
     }
 }
 

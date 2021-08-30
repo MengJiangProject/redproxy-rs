@@ -145,6 +145,7 @@ impl<T> SocksRequest<T> {
                     ([0, 0, 0, 1], a.port())
                 }
             }
+            _ => unreachable!(),
         };
         socket.write_u16(dport).await.context("dport")?;
         socket.write(&dst).await.context("dport")?;
@@ -191,6 +192,7 @@ impl<T> SocksRequest<T> {
                 IpAddr::V6(v6) => (4u8, v6.octets().into(), a.port()),
                 IpAddr::V4(v4) => (1u8, v4.octets().into(), a.port()),
             },
+            _ => unreachable!(),
         };
         socket.write_u8(t).await.context("type")?;
         socket.write(&addr).await.context("addr")?;
@@ -415,6 +417,7 @@ impl SocksResponse {
                     ([0, 0, 0, 1], a.port())
                 }
             }
+            _ => unreachable!(),
         };
         socket.write_u16(dport).await.context("dport")?;
         socket.write(&dst).await.context("dport")?;
@@ -434,6 +437,7 @@ impl SocksResponse {
                 IpAddr::V6(v6) => (4u8, v6.octets().into(), a.port()),
                 IpAddr::V4(v4) => (1u8, v4.octets().into(), a.port()),
             },
+            _ => unreachable!(),
         };
         socket.write_u8(t).await.context("type")?;
         socket.write(&addr).await.context("addr")?;

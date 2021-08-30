@@ -34,7 +34,7 @@ impl Listener for HttpListener {
         }
         Ok(())
     }
-    async fn listen(self: Arc<Self>, queue: Sender<Context>) -> Result<(), Error> {
+    async fn listen(self: Arc<Self>, queue: Sender<Arc<Context>>) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
         let this = self.clone();
@@ -43,7 +43,7 @@ impl Listener for HttpListener {
     }
 }
 impl HttpListener {
-    async fn accept(self: Arc<Self>, listener: TcpListener, queue: Sender<Context>) {
+    async fn accept(self: Arc<Self>, listener: TcpListener, queue: Sender<Arc<Context>>) {
         loop {
             let name = self.name.to_owned();
             let queue = queue.clone();

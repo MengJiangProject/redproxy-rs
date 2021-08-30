@@ -19,7 +19,7 @@ mod tproxy;
 #[async_trait]
 pub trait Listener: std::fmt::Debug {
     async fn init(&mut self) -> Result<(), Error>;
-    async fn listen(self: Arc<Self>, queue: Sender<Context>) -> Result<(), Error>;
+    async fn listen(self: Arc<Self>, queue: Sender<Arc<Context>>) -> Result<(), Error>;
     fn name(&self) -> &str;
 }
 

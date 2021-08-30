@@ -7,11 +7,10 @@ use nix::sys::socket::getsockopt;
 use nix::sys::socket::sockopt::OriginalDst;
 use serde_yaml::Value;
 use std::net::Ipv4Addr;
-use tokio::io::BufStream;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 
-use crate::context::{Context, IOStream, TargetAddress};
+use crate::context::{make_buffered_stream, Context, TargetAddress};
 use serde::{Deserialize, Serialize};
 
 use super::Listener;
@@ -32,38 +31,16 @@ impl Listener for TProxyListener {
     async fn init(&mut self) -> Result<(), Error> {
         Ok(())
     }
-    async fn listen(self: Arc<Self>, queue: Sender<Context>) -> Result<(), Error> {
+    async fn listen(self: Arc<Self>, queue: Sender<Arc<Context>>) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
-        let self = self.clone();
         tokio::spawn(async move {
             loop {
-                if let Err(e) = async {
-                    let (socket, source) = listener.accept().await.context("accept")?;
-                    debug!("connected from {:?}", source);
-                    let dst = getsockopt(socket.as_raw_fd(), OriginalDst).context("getsockopt")?;
-                    let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
-                    let port = ntohs(dst.sin_port);
-                    trace!("dst={:}:{:?}", addr, port);
-                    let socket: Box<dyn IOStream> = Box::new(socket);
-                    let socket = BufStream::new(socket);
-                    let target = TargetAddress::from((addr, port));
-                    queue
-                        .send(Context {
-                            socket,
-                            target,
-                            source,
-                            listener: self.name().into(),
-                            callback: None,
-                        })
-                        .await
-                        .context("enqueue")?;
-                    Ok::<(), Error>(())
-                }
-                .await
-                {
-                    warn!("{}: {:?}", e, e.cause);
-                }
+                self.clone()
+                    .accept(&listener, &queue)
+                    .await
+                    .map_err(|e| warn!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause))
+                    .unwrap_or(());
             }
         });
         Ok(())
@@ -71,6 +48,25 @@ impl Listener for TProxyListener {
 
     fn name(&self) -> &str {
         &self.name
+    }
+}
+
+impl TProxyListener {
+    async fn accept(
+        self: Arc<Self>,
+        listener: &TcpListener,
+        queue: &Sender<Arc<Context>>,
+    ) -> Result<(), Error> {
+        let (socket, source) = listener.accept().await.context("accept")?;
+        debug!("connected from {:?}", source);
+        let dst = getsockopt(socket.as_raw_fd(), OriginalDst).context("getsockopt")?;
+        let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
+        let port = ntohs(dst.sin_port);
+        trace!("{}: dst={}:{}", self.name, addr, port);
+        let mut ctx = Context::new(self.name.to_owned(), make_buffered_stream(socket), source);
+        ctx.target = TargetAddress::from((addr, port));
+        ctx.enqueue(queue).await?;
+        Ok(())
     }
 }
 

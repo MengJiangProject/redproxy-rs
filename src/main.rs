@@ -2,7 +2,7 @@ extern crate nom;
 
 use easy_error::{err_msg, Terminator};
 use log::{info, trace, warn};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, ops::DerefMut, sync::Arc};
 use tokio::sync::mpsc::channel;
 
 mod common;
@@ -102,7 +102,7 @@ async fn main() -> Result<(), Terminator> {
     }
 }
 
-async fn process_request(mut ctx: Context, cfg: Arc<Config>) {
+async fn process_request(ctx: Arc<Context>, cfg: Arc<Config>) {
     let connector = cfg.rules.iter().find_map(|x| {
         if x.evaluate(&ctx) {
             Some(x.target.clone())
@@ -129,12 +129,12 @@ async fn process_request(mut ctx: Context, cfg: Arc<Config>) {
         warn!("failed to connect to upstream: {} cause: {:?}", e, e.cause);
         return ctx.on_error(e).await;
     }
-    ctx.on_connect().await;
+    ctx.clone().on_connect().await;
     let mut server = server.unwrap();
-    let client = &mut ctx.socket;
-    if let Err(e) = copy_bidi(client, &mut server, ("client", "server")).await {
+    let mut client = ctx.lock_socket().await;
+    if let Err(e) = copy_bidi(client.deref_mut(), &mut server, ("client", "server")).await {
         warn!(
-            "error in io thread: {} \ncause: {:?} \nctx={:?}",
+            "error in io thread: {} \ncause: {:?} \nctx: {:?}",
             e, e.cause, ctx
         );
     }
