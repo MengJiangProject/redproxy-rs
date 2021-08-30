@@ -42,7 +42,7 @@ jobs:
       - name: "Artifact upload"
         uses: actions/upload-artifact@master
         with:
-          name: redproxy-rs_debug_{{ github.sha }}
+          name: redproxy-rs_debug_${{github.sha}}
           path: target/debug/redproxy-rs
 
   fmt:
