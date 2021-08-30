@@ -13,7 +13,7 @@ use crate::{
         quic::{create_quic_client, QuicStream},
         tls::TlsClientConfig,
     },
-    context::{make_buffered_stream, Context, IOBufStream},
+    context::{make_buffered_stream, ContextRef, IOBufStream},
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -55,7 +55,7 @@ impl super::Connector for QuicConnector {
         Ok(())
     }
 
-    async fn connect(self: Arc<Self>, ctx: &Context) -> Result<IOBufStream, Error> {
+    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<IOBufStream, Error> {
         let conn = self.clone().get_connection().await?;
         let ret = self.clone().handshake(conn, ctx).await;
         if ret.is_err() {
@@ -69,17 +69,18 @@ impl QuicConnector {
     async fn handshake(
         self: Arc<Self>,
         conn: Arc<Connection>,
-        ctx: &Context,
+        ctx: ContextRef,
     ) -> Result<IOBufStream, Error> {
         let server: QuicStream = conn
             .open_bi()
             .await
-            .map_err(|e| err_msg(format!("failed to open stream: {}", e)))?
+            .context("failed to open stream")?
             .into();
 
         let mut server = make_buffered_stream(server);
-        HttpRequest::new("CONNECT", &ctx.target)
-            .with_header("Host", &ctx.target)
+        let target = ctx.read().await.target();
+        HttpRequest::new("CONNECT", &target)
+            .with_header("Host", &target)
             .write_to(&mut server)
             .await?;
         let resp = HttpResponse::read_from(&mut server).await?;

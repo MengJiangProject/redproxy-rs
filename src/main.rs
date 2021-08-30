@@ -1,8 +1,9 @@
 extern crate nom;
 
+use context::ContextRef;
 use easy_error::{err_msg, Terminator};
 use log::{info, trace, warn};
-use std::{collections::HashMap, ops::DerefMut, sync::Arc};
+use std::{collections::HashMap, ops::DerefMut, sync::Arc, time::Duration};
 use tokio::sync::mpsc::channel;
 
 mod common;
@@ -13,7 +14,7 @@ mod listeners;
 mod rules;
 
 use crate::{
-    common::copy::copy_bidi, config::Config, connectors::Connector, context::Context,
+    common::copy::copy_bidi, config::Config, connectors::Connector, context::ContextRefOps,
     listeners::Listener,
 };
 
@@ -95,6 +96,14 @@ async fn main() -> Result<(), Terminator> {
         l.clone().listen(tx.clone()).await?;
     }
 
+    tokio::spawn(async {
+        loop {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            let len = context::CONTEXT_LIST.lock().unwrap().len();
+            info!("We have {} client alive now.", len);
+        }
+    });
+
     let cfg = Arc::new(cfg);
     loop {
         let ctx = rx.recv().await.unwrap();
@@ -102,14 +111,18 @@ async fn main() -> Result<(), Terminator> {
     }
 }
 
-async fn process_request(ctx: Arc<Context>, cfg: Arc<Config>) {
-    let connector = cfg.rules.iter().find_map(|x| {
-        if x.evaluate(&ctx) {
-            Some(x.target.clone())
-        } else {
-            None
-        }
-    });
+async fn process_request(ctx: ContextRef, cfg: Arc<Config>) {
+    let connector = {
+        let ctx = &ctx.clone().read_owned().await;
+        cfg.rules.iter().find_map(|x| {
+            if x.evaluate(ctx) {
+                Some(x.target.clone())
+            } else {
+                None
+            }
+        })
+    };
+
     // Outer Option is None means no filter matches request, thus implicitly denial
     if connector.is_none() {
         info!("implicitly denied: {:?}", ctx);
@@ -124,13 +137,14 @@ async fn process_request(ctx: Arc<Context>, cfg: Arc<Config>) {
     }
     let connector = connector.unwrap();
 
-    let server = connector.connect(&ctx).await;
+    let server = connector.connect(ctx.clone()).await;
     if let Err(e) = server {
         warn!("failed to connect to upstream: {} cause: {:?}", e, e.cause);
         return ctx.on_error(e).await;
     }
-    ctx.clone().on_connect().await;
+    ctx.on_connect().await;
     let mut server = server.unwrap();
+    let ctx = ctx.read().await;
     let mut client = ctx.lock_socket().await;
     if let Err(e) = copy_bidi(client.deref_mut(), &mut server, ("client", "server")).await {
         warn!(

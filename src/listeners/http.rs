@@ -8,7 +8,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::common::h11c::h11c_handshake;
 use crate::common::tls::TlsServerConfig;
-use crate::context::{make_buffered_stream, Context};
+use crate::context::{make_buffered_stream, ContextRef};
 use crate::listeners::Listener;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -34,7 +34,7 @@ impl Listener for HttpListener {
         }
         Ok(())
     }
-    async fn listen(self: Arc<Self>, queue: Sender<Arc<Context>>) -> Result<(), Error> {
+    async fn listen(self: Arc<Self>, queue: Sender<ContextRef>) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
         let this = self.clone();
@@ -43,7 +43,7 @@ impl Listener for HttpListener {
     }
 }
 impl HttpListener {
-    async fn accept(self: Arc<Self>, listener: TcpListener, queue: Sender<Arc<Context>>) {
+    async fn accept(self: Arc<Self>, listener: TcpListener, queue: Sender<ContextRef>) {
         loop {
             let name = self.name.to_owned();
             let queue = queue.clone();

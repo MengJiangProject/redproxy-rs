@@ -29,6 +29,7 @@ serde_yaml = "0.8"
 nom = "7"
 # nom_locate = "3.0.2"
 clap = "~2.33"
+lazy_static = "1.4.0"
 
 
 quinn = { version = "0.7.2", optional = true}

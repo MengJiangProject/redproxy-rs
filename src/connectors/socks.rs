@@ -12,7 +12,7 @@ use crate::{
         socks::{PasswordAuth, SocksRequest, SocksResponse},
         tls::TlsClientConfig,
     },
-    context::{make_buffered_stream, Context, IOBufStream},
+    context::{make_buffered_stream, ContextRef, IOBufStream},
 };
 
 use super::ConnectorRef;
@@ -59,7 +59,7 @@ impl super::Connector for SocksConnector {
         Ok(())
     }
 
-    async fn connect(self: Arc<Self>, ctx: &Context) -> Result<IOBufStream, Error> {
+    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<IOBufStream, Error> {
         let tls_insecure = self.tls.as_ref().map(|x| x.insecure).unwrap_or(false);
         let tls_connector = self.tls.as_ref().map(|options| options.connector());
         trace!(
@@ -98,7 +98,7 @@ impl super::Connector for SocksConnector {
         let req = SocksRequest {
             version: self.version,
             cmd: 1,
-            target: ctx.target.clone(),
+            target: ctx.read().await.target(),
             auth,
         };
         req.write_to(&mut server, PasswordAuth::optional()).await?;

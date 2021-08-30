@@ -12,7 +12,9 @@ use tokio::sync::mpsc::Sender;
 
 use crate::common::socks::{PasswordAuth, SocksRequest, SocksResponse};
 use crate::common::tls::TlsServerConfig;
-use crate::context::{make_buffered_stream, Context, ContextCallback, IOStream};
+use crate::context::{
+    make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps, IOStream,
+};
 use crate::listeners::Listener;
 use serde::{Deserialize, Serialize};
 
@@ -49,7 +51,7 @@ impl Listener for SocksListener {
         }
         Ok(())
     }
-    async fn listen(self: Arc<Self>, queue: Sender<Arc<Context>>) -> Result<(), Error> {
+    async fn listen(self: Arc<Self>, queue: Sender<ContextRef>) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
         let this = self.clone();
@@ -63,7 +65,7 @@ impl Listener for SocksListener {
 }
 
 impl SocksListener {
-    async fn accept(self: Arc<Self>, listener: TcpListener, queue: Sender<Arc<Context>>) {
+    async fn accept(self: Arc<Self>, listener: TcpListener, queue: Sender<ContextRef>) {
         loop {
             let this = self.clone();
             let queue = queue.clone();
@@ -88,7 +90,7 @@ impl SocksListener {
         self: Arc<Self>,
         socket: TcpStream,
         source: SocketAddr,
-        queue: Sender<Arc<Context>>,
+        queue: Sender<ContextRef>,
     ) -> Result<(), Error> {
         let tls_acceptor = self.tls.as_ref().map(|options| options.acceptor());
         let socket: Box<dyn IOStream> = if let Some(acceptor) = tls_acceptor {
@@ -97,7 +99,7 @@ impl SocksListener {
             Box::new(socket)
         };
         debug!("connected from {:?}", source);
-        let mut ctx = Context::new(self.name.to_owned(), make_buffered_stream(socket), source);
+        let ctx = Context::new(self.name.to_owned(), make_buffered_stream(socket), source);
         let auth_required = self
             .auth
             .as_ref()
@@ -105,6 +107,7 @@ impl SocksListener {
             .unwrap_or(false);
 
         let request = {
+            let ctx = ctx.read().await;
             let mut socket = ctx.lock_socket().await;
             let auth_server = PasswordAuth {
                 required: auth_required,
@@ -113,12 +116,14 @@ impl SocksListener {
         };
 
         trace!("request {:?}", request);
-        ctx.target = request.target;
-        ctx.set_callback(Callback {
-            version: request.version,
-        });
+        ctx.write()
+            .await
+            .set_target(request.target)
+            .set_callback(Callback {
+                version: request.version,
+            });
         if auth_required && !self.lookup_user(request.auth) {
-            Arc::new(ctx).on_error(err_msg("not authencated")).await;
+            ctx.on_error(err_msg("not authencated")).await;
             trace!("not authencated");
         } else {
             ctx.enqueue(&queue).await?;
@@ -140,11 +145,12 @@ struct Callback {
 }
 
 impl ContextCallback for Callback {
-    fn on_connect(&self, ctx: Arc<Context>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    fn on_connect(&self, ctx: ContextRef) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let version = self.version;
-        let target = ctx.target.clone();
         let cmd = 0;
         Box::pin(async move {
+            let ctx = ctx.read().await;
+            let target = ctx.target();
             let mut socket = ctx.lock_socket().await;
             let s = socket.deref_mut();
             let resp = SocksResponse {
@@ -157,15 +163,12 @@ impl ContextCallback for Callback {
             }
         })
     }
-    fn on_error(
-        &self,
-        ctx: Arc<Context>,
-        _error: Error,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    fn on_error(&self, ctx: ContextRef, _error: Error) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let version = self.version;
-        let target = ctx.target.clone();
         let cmd = 1;
         Box::pin(async move {
+            let ctx = ctx.read().await;
+            let target = ctx.target();
             let mut socket = ctx.lock_socket().await;
             let s = socket.deref_mut();
             let resp = SocksResponse {

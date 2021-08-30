@@ -1,6 +1,9 @@
+use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
+use lazy_static::lazy_static;
 use log::trace;
 use std::{
+    collections::HashMap,
     fmt::{Debug, Display},
     future::Future,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -8,14 +11,14 @@ use std::{
     str::FromStr,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, Weak,
     },
     time::SystemTime,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, BufStream},
     net::TcpStream,
-    sync::{mpsc::Sender, Mutex, MutexGuard},
+    sync::{mpsc::Sender, Mutex, MutexGuard, RwLock},
 };
 
 #[derive(Debug)]
@@ -109,68 +112,111 @@ pub fn make_buffered_stream<T: IOStream + 'static>(stream: T) -> IOBufStream {
 }
 
 pub trait ContextCallback {
-    fn on_connect(&self, ctx: Arc<Context>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
-    fn on_error(&self, ctx: Arc<Context>, error: Error)
-        -> Pin<Box<dyn Future<Output = ()> + Send>>;
+    fn on_connect(&self, ctx: ContextRef) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+    fn on_error(&self, ctx: ContextRef, error: Error) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 }
 
-static NEXT_CONTEXT_ID: AtomicU64 = AtomicU64::new(0);
-
+#[derive(Clone)]
 pub struct Context {
     pub id: u64,
     pub create_at: SystemTime,
     pub listener: String,
-    socket: Arc<Mutex<IOBufStream>>,
     pub source: SocketAddr,
-    pub target: TargetAddress,
+    target: TargetAddress,
+    socket: Arc<Mutex<IOBufStream>>,
     callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
 }
 
+pub type ContextRef = Arc<RwLock<Context>>;
+pub type ContextWeakRef = Weak<RwLock<Context>>;
+
+lazy_static! {
+    static ref NEXT_CONTEXT_ID: AtomicU64 = AtomicU64::new(0);
+    pub static ref CONTEXT_LIST: std::sync::Mutex<HashMap<u64, ContextWeakRef>> =
+        std::sync::Mutex::new(Default::default());
+}
+
 impl Context {
-    pub fn new(listener: String, socket: IOBufStream, source: SocketAddr) -> Self {
+    pub fn new(listener: String, socket: IOBufStream, source: SocketAddr) -> ContextRef {
         let socket = Arc::new(Mutex::new(socket));
-        Self {
-            id: NEXT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed),
+        let id = NEXT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let ret = Arc::new(RwLock::new(Self {
+            id,
             create_at: SystemTime::now(),
             listener,
             socket,
             source,
             target: Default::default(),
             callback: None,
-        }
-    }
-
-    pub async fn enqueue(self, queue: &Sender<Arc<Context>>) -> Result<(), Error> {
-        queue.send(Arc::new(self)).await.context("enqueue")
-    }
-
-    pub async fn on_connect(self: Arc<Context>) {
-        if self.callback.is_some() {
-            let cb = self.callback.clone().unwrap();
-            cb.on_connect(self).await
-        }
-    }
-    pub async fn on_error(self: Arc<Context>, error: Error) {
-        if self.callback.is_some() {
-            let cb = self.callback.clone().unwrap();
-            cb.on_error(self, error).await
-        }
+        }));
+        CONTEXT_LIST
+            .lock()
+            .unwrap()
+            .insert(id, Arc::downgrade(&ret));
+        ret
     }
 
     /// Set the context's callback.
-    pub fn set_callback<T: ContextCallback + Send + Sync + 'static>(&mut self, callback: T) {
+    pub fn set_callback<T: ContextCallback + Send + Sync + 'static>(
+        &mut self,
+        callback: T,
+    ) -> &mut Self {
         self.callback = Some(Arc::new(callback));
+        self
     }
 
     /// Get a reference to the context's socket.
     pub async fn lock_socket(&self) -> MutexGuard<'_, IOBufStream> {
         self.socket.lock().await
     }
+
+    /// Get a reference to the context's target.
+    pub fn target(&self) -> TargetAddress {
+        self.target.clone()
+    }
+
+    /// Set the context's target.
+    pub fn set_target(&mut self, target: TargetAddress) -> &mut Self {
+        self.target = target;
+        self
+    }
+}
+
+#[async_trait]
+pub trait ContextRefOps {
+    async fn target(&self) -> TargetAddress;
+    // async fn lock_socket(&self) -> MutexGuard<'_, IOBufStream>;
+    async fn enqueue(self, queue: &Sender<ContextRef>) -> Result<(), Error>;
+    async fn on_connect(&self);
+    async fn on_error(&self, error: Error);
+}
+
+#[async_trait]
+impl ContextRefOps for ContextRef {
+    async fn enqueue(self, queue: &Sender<ContextRef>) -> Result<(), Error> {
+        queue.send(self).await.context("enqueue")
+    }
+    async fn on_connect(&self) {
+        if let Some(cb) = self.read().await.callback.clone() {
+            cb.on_connect(self.clone()).await
+        }
+    }
+    async fn on_error(&self, error: Error) {
+        if let Some(cb) = self.read().await.callback.clone() {
+            cb.on_error(self.clone(), error).await
+        }
+    }
+
+    /// Get a reference to the context's target.
+    async fn target(&self) -> TargetAddress {
+        self.read().await.target()
+    }
 }
 
 impl Drop for Context {
     fn drop(&mut self) {
         trace!("Context dropped: {}", self);
+        CONTEXT_LIST.lock().unwrap().remove(&self.id);
     }
 }
 

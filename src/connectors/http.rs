@@ -12,7 +12,7 @@ use crate::{
         http::{HttpRequest, HttpResponse},
         tls::TlsClientConfig,
     },
-    context::{make_buffered_stream, Context, IOBufStream},
+    context::{make_buffered_stream, ContextRef, IOBufStream},
 };
 
 use super::ConnectorRef;
@@ -43,7 +43,7 @@ impl super::Connector for HttpConnector {
         Ok(())
     }
 
-    async fn connect(self: Arc<Self>, ctx: &Context) -> Result<IOBufStream, Error> {
+    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<IOBufStream, Error> {
         let tls_insecure = self.tls.as_ref().map(|x| x.insecure).unwrap_or(false);
         let tls_connector = self.tls.as_ref().map(|options| options.connector());
         trace!(
@@ -75,8 +75,9 @@ impl super::Connector for HttpConnector {
             make_buffered_stream(server)
         };
 
-        HttpRequest::new("CONNECT", &ctx.target)
-            .with_header("Host", &ctx.target)
+        let target = ctx.read().await.target();
+        HttpRequest::new("CONNECT", &target)
+            .with_header("Host", &target)
             .write_to(&mut server)
             .await?;
         let resp = HttpResponse::read_from(&mut server).await?;

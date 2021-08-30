@@ -5,7 +5,7 @@ use easy_error::{err_msg, Error};
 use serde_yaml::Value;
 use tokio::sync::mpsc::Sender;
 
-use crate::context::Context;
+use crate::context::ContextRef;
 
 mod http;
 mod socks;
@@ -19,7 +19,7 @@ mod tproxy;
 #[async_trait]
 pub trait Listener: std::fmt::Debug {
     async fn init(&mut self) -> Result<(), Error>;
-    async fn listen(self: Arc<Self>, queue: Sender<Arc<Context>>) -> Result<(), Error>;
+    async fn listen(self: Arc<Self>, queue: Sender<ContextRef>) -> Result<(), Error>;
     fn name(&self) -> &str;
 }
 

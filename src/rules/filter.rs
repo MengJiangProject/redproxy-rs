@@ -86,7 +86,7 @@ impl<'a> Accessible<'a> for ContextAdaptor<'a> {
     fn get(&self, name: &str) -> Result<Value<'a>, Error> {
         match name {
             "listener" => Ok(self.req.listener.clone().into()),
-            "target" => Ok(self.req.target.to_string().into()),
+            "target" => Ok(self.req.target().to_string().into()),
             "source" => Ok(self.req.source.to_string().into()),
             _ => bail!("property undefined: {}", name),
         }
