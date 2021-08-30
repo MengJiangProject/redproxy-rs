@@ -45,20 +45,38 @@ impl Listener for HttpListener {
 impl HttpListener {
     async fn accept(self: Arc<Self>, listener: TcpListener, queue: Sender<Context>) {
         loop {
-            let name = self.name.to_owned();
             let queue = queue.clone();
             match listener.accept().await.context("accept") {
                 Ok((socket, source)) => {
                     // we spawn a new thread here to avoid handshake to block accept thread
+                    let this = self.clone();
                     tokio::spawn(async move {
-                        let stream = make_buffered_stream(socket);
-                        if let Err(e) = h11c_handshake(name, stream, source, queue).await {
-                            warn!("{}: {:?}", e, e.cause);
+                        let name = this.name.to_owned();
+                        if let Err(e) = {
+                            let tls_acceptor = this.tls.as_ref().map(|options| options.acceptor());
+                            let stream = if let Some(acceptor) = tls_acceptor {
+                                acceptor
+                                    .accept(socket)
+                                    .await
+                                    .context("tls accept error")
+                                    .map(make_buffered_stream)
+                            } else {
+                                Ok(make_buffered_stream(socket))
+                            };
+                            match stream {
+                                Ok(stream) => h11c_handshake(name, stream, source, queue).await,
+                                Err(e) => Err(e),
+                            }
+                        } {
+                            warn!(
+                                "{}: handshake failed: {}\ncause: {:?}",
+                                this.name, e, e.cause
+                            );
                         }
                     });
                 }
                 Err(e) => {
-                    warn!("{}: {:?}", e, e.cause);
+                    warn!("{} accept error: {} \ncause: {:?}", self.name, e, e.cause);
                     return;
                 }
             }
