@@ -33,7 +33,7 @@ lazy_static = "1.4.0"
 
 
 quinn = { version = "0.7.2", optional = true}
-futures-util = { version = "0.3.16", optional = true}
+futures-util = { version = "0.3.17", optional = true}
 pin-project-lite = { version = "0.2.6", optional = true }
 
 [dev-dependencies]
