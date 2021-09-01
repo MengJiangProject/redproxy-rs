@@ -519,7 +519,7 @@ dependencies = [
 [[package]]
 name = "nom_locate"
 version = "4.0.0"
-source = "git+https://github.com/fflorent/nom_locate.git#f3e8955230aeb17d3657c79faffd0c362a191eb0"
+source = "git+https://github.com/fflorent/nom_locate.git#d44cd27e6a06e1f599a16e3d19976d8926a1bd07"
 dependencies = [
  "bytecount",
  "memchr",
