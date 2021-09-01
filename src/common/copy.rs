@@ -1,11 +1,12 @@
-use crate::context::IOBufStream;
+use crate::context::ContextRef;
 use easy_error::{Error, ResultExt};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 
 pub async fn copy_stream<T: AsyncRead + AsyncWrite>(
     mut r: ReadHalf<T>,
+    rn: &str,
     mut w: WriteHalf<T>,
-    (rn, wn): (&str, &str),
+    wn: &str,
 ) -> Result<(), Error> {
     let mut buf = [0u8; 65536];
     loop {
@@ -34,15 +35,14 @@ pub async fn copy_stream<T: AsyncRead + AsyncWrite>(
         .with_context(|| format!("shutdown {}", wn))?;
     Ok(())
 }
-pub async fn copy_bidi(
-    a: &mut IOBufStream,
-    b: &mut IOBufStream,
-    (an, bn): (&str, &str),
-) -> Result<(), Error> {
-    let (ra, wa) = tokio::io::split(a);
-    let (rb, wb) = tokio::io::split(b);
-    let copy_a_to_b = copy_stream(ra, wb, (an, bn));
-    let copy_b_to_a = copy_stream(rb, wa, (bn, an));
+pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
+    let ctx = ctx.read().await;
+    let mut client = ctx.get_client_stream().await;
+    let mut server = ctx.get_server_stream().await;
+    let (cread, cwrite) = tokio::io::split(client.get_mut());
+    let (sread, swrite) = tokio::io::split(server.get_mut());
+    let copy_a_to_b = copy_stream(cread, "client", swrite, "server");
+    let copy_b_to_a = copy_stream(sread, "server", cwrite, "client");
     tokio::try_join!(copy_a_to_b, copy_b_to_a)?;
     Ok(())
 }

@@ -10,7 +10,7 @@ use tokio::sync::mpsc::Sender;
 use crate::common::h11c::h11c_handshake;
 use crate::common::quic::{create_quic_server, QuicStream};
 use crate::common::tls::TlsServerConfig;
-use crate::context::{make_buffered_stream, ContextRef};
+use crate::context::{make_buffered_stream, Context, ContextRef};
 use crate::listeners::Listener;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -54,32 +54,32 @@ impl QuicListener {
         queue: Sender<ContextRef>,
     ) -> Result<(), Error> {
         while let Some(conn) = incoming.next().await {
-            let name = self.name().to_owned();
             let queue = queue.clone();
             let source = conn.remote_address();
-            debug!("{}: connected from {:?}", name, source);
+            debug!("{}: connected from {:?}", self.name, source);
             let NewConnection { mut bi_streams, .. } = conn.await.context("connection")?;
+            let this = self.clone();
             tokio::spawn(async move {
                 while let Some(stream) = bi_streams.next().await {
-                    let name = name.clone();
                     let stream = match stream {
                         Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                            info!("{}: connection closed", name);
+                            info!("{}: connection closed", this.name);
                             break;
                         }
                         Err(e) => {
-                            warn!("{}: connection error: {}", name, e);
+                            warn!("{}: connection error: {}", this.name, e);
                             break;
                         }
                         Ok(s) => s,
                     };
                     let stream: QuicStream = stream.into();
                     let stream = make_buffered_stream(stream);
-                    tokio::spawn(
-                        h11c_handshake(name.clone(), stream, source, queue.clone()).unwrap_or_else(
-                            move |e| warn!("{}: handshake error: {}: {:?}", name, e, e.cause),
-                        ),
-                    );
+                    let ctx = Context::new(this.name.to_owned(), source);
+                    ctx.write().await.set_client_stream(stream);
+                    let this = this.clone();
+                    tokio::spawn(h11c_handshake(ctx, queue.clone()).unwrap_or_else(move |e| {
+                        warn!("{}: handshake error: {}: {:?}", this.name, e, e.cause)
+                    }));
                 }
             });
         }

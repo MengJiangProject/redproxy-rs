@@ -63,10 +63,11 @@ impl TProxyListener {
         let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
         let port = ntohs(dst.sin_port);
         trace!("{}: dst={}:{}", self.name, addr, port);
-        let ctx = Context::new(self.name.to_owned(), make_buffered_stream(socket), source);
+        let ctx = Context::new(self.name.to_owned(), source);
         ctx.write()
             .await
-            .set_target(TargetAddress::from((addr, port)));
+            .set_target(TargetAddress::from((addr, port)))
+            .set_client_stream(make_buffered_stream(socket));
         ctx.enqueue(queue).await?;
         Ok(())
     }

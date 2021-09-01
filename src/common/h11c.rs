@@ -1,28 +1,21 @@
 use easy_error::{bail, Error, ResultExt};
-use log::{debug, warn};
-use std::{future::Future, net::SocketAddr, ops::DerefMut, pin::Pin};
+use log::warn;
+use std::{future::Future, ops::DerefMut, pin::Pin};
 use tokio::sync::mpsc::Sender;
 
 use crate::{
     common::http::HttpRequest,
-    context::{Context, ContextCallback, ContextRef, ContextRefOps, IOBufStream},
+    context::{ContextCallback, ContextRef, ContextRefOps},
 };
 
 use super::http::HttpResponse;
 
 // HTTP 1.1 CONNECT protocol handlers
 // used by http and quic listeners and connectors
-pub async fn h11c_handshake(
-    name: String,
-    socket: IOBufStream,
-    source: SocketAddr,
-    queue: Sender<ContextRef>,
-) -> Result<(), Error> {
-    debug!("connected from {:?}", source);
-    let ctx = Context::new(name, socket, source);
+pub async fn h11c_handshake(ctx: ContextRef, queue: Sender<ContextRef>) -> Result<(), Error> {
     let request = {
         let ctx = ctx.read().await;
-        let mut socket = ctx.lock_socket().await;
+        let mut socket = ctx.get_client_stream().await;
         let request = HttpRequest::read_from(socket.deref_mut()).await?;
         if !request.method.eq_ignore_ascii_case("CONNECT") {
             HttpResponse::new(400, "Bad Request")
@@ -50,7 +43,7 @@ impl ContextCallback for Callback {
     fn on_connect(&self, ctx: ContextRef) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
             let ctx = ctx.read().await;
-            let mut socket = ctx.lock_socket().await;
+            let mut socket = ctx.get_client_stream().await;
             let s = socket.deref_mut();
             if let Err(e) = HttpResponse::new(200, "Connection established")
                 .write_to(s)
@@ -63,7 +56,7 @@ impl ContextCallback for Callback {
     fn on_error(&self, ctx: ContextRef, error: Error) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
             let ctx = ctx.read().await;
-            let mut socket = ctx.lock_socket().await;
+            let mut socket = ctx.get_client_stream().await;
             let s = socket.deref_mut();
             let buf = format!("Error: {} Cause: {:?}", error, error.cause);
             if let Err(e) = HttpResponse::new(503, "Service unavailable")

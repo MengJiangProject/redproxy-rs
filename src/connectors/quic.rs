@@ -55,13 +55,19 @@ impl super::Connector for QuicConnector {
         Ok(())
     }
 
-    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<IOBufStream, Error> {
+    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<(), Error> {
         let conn = self.clone().get_connection().await?;
-        let ret = self.clone().handshake(conn, ctx).await;
-        if ret.is_err() {
-            self.clear_connection().await;
+        let ret = self.clone().handshake(conn, ctx.clone()).await;
+        match ret {
+            Ok(server) => {
+                ctx.write().await.set_server_stream(server);
+                Ok(())
+            }
+            Err(e) => {
+                self.clear_connection().await;
+                Err(e)
+            }
         }
-        ret
     }
 }
 

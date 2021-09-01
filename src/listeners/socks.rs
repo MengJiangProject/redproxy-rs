@@ -12,9 +12,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::common::socks::{PasswordAuth, SocksRequest, SocksResponse};
 use crate::common::tls::TlsServerConfig;
-use crate::context::{
-    make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps, IOStream,
-};
+use crate::context::{make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps};
 use crate::listeners::Listener;
 use serde::{Deserialize, Serialize};
 
@@ -93,48 +91,46 @@ impl SocksListener {
         queue: Sender<ContextRef>,
     ) -> Result<(), Error> {
         let tls_acceptor = self.tls.as_ref().map(|options| options.acceptor());
-        let socket: Box<dyn IOStream> = if let Some(acceptor) = tls_acceptor {
-            Box::new(acceptor.accept(socket).await.context("tls accept error")?)
+        let mut socket = if let Some(acceptor) = tls_acceptor {
+            make_buffered_stream(acceptor.accept(socket).await.context("tls accept error")?)
         } else {
-            Box::new(socket)
+            make_buffered_stream(socket)
         };
-        debug!("connected from {:?}", source);
-        let ctx = Context::new(self.name.to_owned(), make_buffered_stream(socket), source);
+        debug!("{}: connected from {:?}", self.name, source);
+        let ctx = Context::new(self.name.to_owned(), source);
         let auth_required = self
             .auth
             .as_ref()
             .map(|options| options.required)
             .unwrap_or(false);
 
-        let request = {
-            let ctx = ctx.read().await;
-            let mut socket = ctx.lock_socket().await;
-            let auth_server = PasswordAuth {
-                required: auth_required,
-            };
-            SocksRequest::read_from(socket.deref_mut(), auth_server).await?
+        let auth_server = PasswordAuth {
+            required: auth_required,
         };
-
+        let request = SocksRequest::read_from(&mut socket, auth_server).await?;
         trace!("request {:?}", request);
+
         ctx.write()
             .await
             .set_target(request.target)
             .set_callback(Callback {
                 version: request.version,
-            });
-        if auth_required && !self.lookup_user(request.auth) {
+            })
+            .set_client_stream(socket);
+        if auth_required && !self.lookup_user(&request.auth) {
             ctx.on_error(err_msg("not authencated")).await;
-            trace!("not authencated");
+            debug!("client not authencated: {:?}", request.auth);
         } else {
             ctx.enqueue(&queue).await?;
         }
         Ok(())
     }
 
-    fn lookup_user(&self, user: Option<(String, String)>) -> bool {
+    fn lookup_user(&self, user: &Option<(String, String)>) -> bool {
         if let Some((user, pass)) = user {
             let db = &self.auth.as_ref().unwrap().users;
-            db.iter().any(|e| e.username == user && e.password == pass)
+            db.iter()
+                .any(|e| &e.username == user && &e.password == pass)
         } else {
             false
         }
@@ -151,7 +147,7 @@ impl ContextCallback for Callback {
         Box::pin(async move {
             let ctx = ctx.read().await;
             let target = ctx.target();
-            let mut socket = ctx.lock_socket().await;
+            let mut socket = ctx.get_client_stream().await;
             let s = socket.deref_mut();
             let resp = SocksResponse {
                 version,
@@ -169,7 +165,7 @@ impl ContextCallback for Callback {
         Box::pin(async move {
             let ctx = ctx.read().await;
             let target = ctx.target();
-            let mut socket = ctx.lock_socket().await;
+            let mut socket = ctx.get_client_stream().await;
             let s = socket.deref_mut();
             let resp = SocksResponse {
                 version,

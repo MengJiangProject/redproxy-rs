@@ -1,9 +1,7 @@
-extern crate nom;
-
-use context::ContextRef;
+use context::{ContextRef, ContextStatus};
 use easy_error::{err_msg, Terminator};
 use log::{info, trace, warn};
-use std::{collections::HashMap, ops::DerefMut, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::mpsc::channel;
 
 mod common;
@@ -11,6 +9,7 @@ mod config;
 mod connectors;
 mod context;
 mod listeners;
+mod metrics;
 mod rules;
 
 use crate::{
@@ -137,19 +136,20 @@ async fn process_request(ctx: ContextRef, cfg: Arc<Config>) {
     }
     let connector = connector.unwrap();
 
-    let server = connector.connect(ctx.clone()).await;
-    if let Err(e) = server {
+    ctx.write()
+        .await
+        .set_status(ContextStatus::ServerConnecting);
+    if let Err(e) = connector.connect(ctx.clone()).await {
         warn!("failed to connect to upstream: {} cause: {:?}", e, e.cause);
         return ctx.on_error(e).await;
     }
+
     ctx.on_connect().await;
-    let mut server = server.unwrap();
-    let ctx = ctx.read().await;
-    let mut client = ctx.lock_socket().await;
-    if let Err(e) = copy_bidi(client.deref_mut(), &mut server, ("client", "server")).await {
+    if let Err(e) = copy_bidi(ctx.clone()).await {
         warn!(
             "error in io thread: {} \ncause: {:?} \nctx: {:?}",
             e, e.cause, ctx
         );
     }
+    ctx.write().await.set_status(ContextStatus::Terminated);
 }
