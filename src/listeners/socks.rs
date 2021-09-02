@@ -22,12 +22,14 @@ pub struct SocksListener {
     name: String,
     bind: String,
     tls: Option<TlsServerConfig>,
-    auth: Option<SocksAuthData>,
+    #[serde(default)]
+    auth: SocksAuthData,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SocksAuthData {
     required: bool,
+    #[serde(default)]
     users: Vec<UserEntry>,
 }
 
@@ -110,14 +112,9 @@ impl SocksListener {
         };
         debug!("{}: connected from {:?}", self.name, source);
         let ctx = state.contexts.create_context(self.name.to_owned(), source);
-        let auth_required = self
-            .auth
-            .as_ref()
-            .map(|options| options.required)
-            .unwrap_or(false);
 
         let auth_server = PasswordAuth {
-            required: auth_required,
+            required: self.auth.required,
         };
         let request = SocksRequest::read_from(&mut socket, auth_server).await?;
         trace!("request {:?}", request);
@@ -129,7 +126,7 @@ impl SocksListener {
                 version: request.version,
             })
             .set_client_stream(socket);
-        if auth_required && !self.lookup_user(&request.auth) {
+        if self.auth.required && !self.lookup_user(&request.auth) {
             ctx.on_error(err_msg("not authencated")).await;
             debug!("client not authencated: {:?}", request.auth);
         } else {
@@ -140,7 +137,7 @@ impl SocksListener {
 
     fn lookup_user(&self, user: &Option<(String, String)>) -> bool {
         if let Some((user, pass)) = user {
-            let db = &self.auth.as_ref().unwrap().users;
+            let db = &self.auth.users;
             db.iter()
                 .any(|e| &e.username == user && &e.password == pass)
         } else {
