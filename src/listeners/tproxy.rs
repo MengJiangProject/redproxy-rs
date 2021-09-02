@@ -6,7 +6,7 @@ use log::{debug, info, trace, warn};
 use nix::sys::socket::getsockopt;
 use nix::sys::socket::sockopt::OriginalDst;
 use serde_yaml::Value;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 
@@ -20,7 +20,7 @@ use super::Listener;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TProxyListener {
     name: String,
-    bind: String,
+    bind: SocketAddr,
 }
 
 pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {

@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SocksListener {
     name: String,
-    bind: String,
+    bind: SocketAddr,
     tls: Option<TlsServerConfig>,
     #[serde(default)]
     auth: SocksAuthData,

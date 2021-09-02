@@ -16,7 +16,7 @@ use crate::GlobalState;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HttpListener {
     name: String,
-    bind: String,
+    bind: SocketAddr,
     tls: Option<TlsServerConfig>,
 }
 

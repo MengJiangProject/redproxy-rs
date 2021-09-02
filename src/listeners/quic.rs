@@ -4,6 +4,7 @@ use futures_util::{StreamExt, TryFutureExt};
 use log::{debug, info, warn};
 use quinn::{Endpoint, Incoming, NewConnection};
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 
@@ -17,7 +18,7 @@ use crate::GlobalState;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct QuicListener {
     name: String,
-    bind: String,
+    bind: SocketAddr,
     tls: TlsServerConfig,
 }
 
@@ -42,8 +43,7 @@ impl Listener for QuicListener {
     ) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let epb = create_quic_server(&self.tls)?;
-        let bind_addr = self.bind.parse().context("parse bind")?;
-        let (endpoint, incoming) = epb.bind(&bind_addr).context("bind")?;
+        let (endpoint, incoming) = epb.bind(&self.bind).context("bind")?;
         tokio::spawn(
             self.accept(endpoint, incoming, state, queue)
                 .unwrap_or_else(|e| warn!("{}: {:?}", e, e.cause)),
