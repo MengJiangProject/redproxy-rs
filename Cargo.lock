@@ -748,7 +748,6 @@ dependencies = [
  "easy-error",
  "env_logger",
  "futures-util",
- "lazy_static",
  "log",
  "milu",
  "nix",

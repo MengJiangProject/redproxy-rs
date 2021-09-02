@@ -6,3 +6,4 @@
 - [ ] TODO: config reload
 - [ ] TODO: flow tap, dump data into pcap files.
 - [ ] TODO: access logging
+- [ ] TODO: IPv6 support on TProxy listener

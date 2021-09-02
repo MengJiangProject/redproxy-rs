@@ -10,7 +10,9 @@ use std::net::Ipv4Addr;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 
-use crate::context::{make_buffered_stream, Context, ContextRef, ContextRefOps, TargetAddress};
+use crate::context::ContextRefOps;
+use crate::context::{make_buffered_stream, ContextRef, TargetAddress};
+use crate::GlobalState;
 use serde::{Deserialize, Serialize};
 
 use super::Listener;
@@ -31,13 +33,17 @@ impl Listener for TProxyListener {
     async fn init(&mut self) -> Result<(), Error> {
         Ok(())
     }
-    async fn listen(self: Arc<Self>, queue: Sender<ContextRef>) -> Result<(), Error> {
+    async fn listen(
+        self: Arc<Self>,
+        state: Arc<GlobalState>,
+        queue: Sender<ContextRef>,
+    ) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
         tokio::spawn(async move {
             loop {
                 self.clone()
-                    .accept(&listener, &queue)
+                    .accept(&listener, &state, &queue)
                     .await
                     .map_err(|e| warn!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause))
                     .unwrap_or(());
@@ -55,6 +61,7 @@ impl TProxyListener {
     async fn accept(
         self: Arc<Self>,
         listener: &TcpListener,
+        state: &Arc<GlobalState>,
         queue: &Sender<ContextRef>,
     ) -> Result<(), Error> {
         let (socket, source) = listener.accept().await.context("accept")?;
@@ -63,7 +70,7 @@ impl TProxyListener {
         let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
         let port = ntohs(dst.sin_port);
         trace!("{}: dst={}:{}", self.name, addr, port);
-        let ctx = Context::new(self.name.to_owned(), source);
+        let ctx = state.contexts.create_context(self.name.to_owned(), source);
         ctx.write()
             .await
             .set_target(TargetAddress::from((addr, port)))

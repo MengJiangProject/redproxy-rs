@@ -1,6 +1,5 @@
 use crate::metrics::MetricsConfig;
 
-use super::rules::Rule;
 use easy_error::{Error, ResultExt};
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +10,7 @@ pub struct Config {
     pub kind: String,
     pub listeners: serde_yaml::Sequence,
     pub connectors: serde_yaml::Sequence,
-    pub rules: Vec<Rule>,
+    pub rules: serde_yaml::Sequence,
     pub metrics: Option<MetricsConfig>,
 }
 

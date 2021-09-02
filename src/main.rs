@@ -1,6 +1,7 @@
-use context::{ContextRef, ContextStatus};
+use context::{ContextRef, ContextStatus, GlobalState as ContextGlobalState};
 use easy_error::{err_msg, Terminator};
-use log::{info, trace, warn};
+use log::{info, warn};
+use rules::Rule;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::mpsc::channel;
 
@@ -13,11 +14,18 @@ mod metrics;
 mod rules;
 
 use crate::{
-    common::copy::copy_bidi, config::Config, connectors::Connector, context::ContextRefOps,
-    listeners::Listener,
+    common::copy::copy_bidi, connectors::Connector, context::ContextRefOps, listeners::Listener,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Default)]
+pub struct GlobalState {
+    rules: Vec<Rule>,
+    listeners: HashMap<String, Arc<dyn Listener>>,
+    connectors: HashMap<String, Arc<dyn Connector>>,
+    contexts: Arc<ContextGlobalState>,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Terminator> {
@@ -51,69 +59,71 @@ async fn main() -> Result<(), Terminator> {
     let log_level = args.value_of("log-level").unwrap_or("info");
     env_logger::init_from_env(env_logger::Env::default().default_filter_or(log_level));
 
-    let mut cfg = config::Config::load(config).await?;
-    let rules = &mut cfg.rules;
-    rules.iter_mut().try_for_each(rules::Rule::init)?;
+    let cfg = config::Config::load(config).await?;
+    let mut state: Arc<GlobalState> = Default::default();
+    {
+        let st_mut = Arc::get_mut(&mut state).unwrap();
 
-    trace!("rules={:?}", rules);
+        st_mut.rules = rules::from_config(&cfg.rules)?;
+        st_mut.listeners = listeners::from_config(&cfg.listeners)?;
+        st_mut.connectors = connectors::from_config(&cfg.connectors)?;
 
-    let (tx, mut rx) = channel(100);
-
-    let mut listeners = listeners::config(&cfg.listeners)?;
-    for l in listeners.iter_mut() {
-        l.init().await?;
-    }
-
-    let mut connectors = connectors::config(&cfg.connectors)?;
-    for c in connectors.iter_mut() {
-        c.init().await?;
-    }
-
-    let connectors: HashMap<String, Arc<dyn Connector + Send + Sync>> = connectors
-        .into_iter()
-        .map(|c| (c.name().into(), c.into()))
-        .collect();
-
-    rules.iter_mut().try_for_each(|r| {
-        if r.target_name() == "deny" {
-            Ok(())
-        } else if let Some(t) = connectors.get(r.target_name()) {
-            r.target = Some(t.clone());
-            Ok(())
-        } else {
-            Err(err_msg(format!("target not found: {}", r.target_name())))
+        for r in st_mut.rules.iter_mut() {
+            r.init()?;
         }
-    })?;
+
+        for (_name, l) in st_mut.listeners.iter_mut() {
+            Arc::get_mut(l).unwrap().init().await?;
+        }
+
+        for (_name, c) in st_mut.connectors.iter_mut() {
+            Arc::get_mut(c).unwrap().init().await?;
+        }
+
+        let connectors = &st_mut.connectors;
+        st_mut.rules.iter_mut().try_for_each(move |r| {
+            if r.target_name() == "deny" {
+                Ok(())
+            } else if let Some(t) = connectors.get(r.target_name()) {
+                r.target = Some(t.clone());
+                Ok(())
+            } else {
+                Err(err_msg(format!("target not found: {}", r.target_name())))
+            }
+        })?;
+    }
 
     if config_test {
         println!("redproxy: the configuration file {} is ok", config);
         return Ok(());
     }
 
-    let listeners: Vec<Arc<dyn Listener>> = listeners.into_iter().map(|x| x.into()).collect();
-    for l in listeners.iter() {
-        l.clone().listen(tx.clone()).await?;
+    let (tx, mut rx) = channel(100);
+    for (_name, l) in state.listeners.iter() {
+        l.clone().listen(state.clone(), tx.clone()).await?;
     }
 
-    tokio::spawn(async {
-        loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            let len = context::CONTEXT_LIST.lock().unwrap().len();
-            info!("We have {} client alive now.", len);
-        }
-    });
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                let len = state.contexts.alive.lock().unwrap().len();
+                info!("We have {} client alive now.", len);
+            }
+        });
+    }
 
-    let cfg = Arc::new(cfg);
     loop {
         let ctx = rx.recv().await.unwrap();
-        tokio::spawn(process_request(ctx, cfg.clone()));
+        tokio::spawn(process_request(ctx, state.clone()));
     }
 }
 
-async fn process_request(ctx: ContextRef, cfg: Arc<Config>) {
+async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
     let connector = {
         let ctx = &ctx.clone().read_owned().await;
-        cfg.rules.iter().find_map(|x| {
+        state.rules.iter().find_map(|x| {
             if x.evaluate(ctx) {
                 Some(x.target.clone())
             } else {

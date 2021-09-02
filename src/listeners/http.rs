@@ -9,8 +9,9 @@ use tokio::sync::mpsc::Sender;
 
 use crate::common::h11c::h11c_handshake;
 use crate::common::tls::TlsServerConfig;
-use crate::context::{make_buffered_stream, Context, ContextRef};
+use crate::context::{make_buffered_stream, ContextRef};
 use crate::listeners::Listener;
+use crate::GlobalState;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HttpListener {
@@ -35,24 +36,34 @@ impl Listener for HttpListener {
         }
         Ok(())
     }
-    async fn listen(self: Arc<Self>, queue: Sender<ContextRef>) -> Result<(), Error> {
+    async fn listen(
+        self: Arc<Self>,
+        state: Arc<GlobalState>,
+        queue: Sender<ContextRef>,
+    ) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
         let this = self.clone();
-        tokio::spawn(this.accept(listener, queue));
+        tokio::spawn(this.accept(listener, state, queue));
         Ok(())
     }
 }
 impl HttpListener {
-    async fn accept(self: Arc<Self>, listener: TcpListener, queue: Sender<ContextRef>) {
+    async fn accept(
+        self: Arc<Self>,
+        listener: TcpListener,
+        state: Arc<GlobalState>,
+        queue: Sender<ContextRef>,
+    ) {
         loop {
             match listener.accept().await.context("accept") {
                 Ok((socket, source)) => {
                     // we spawn a new thread here to avoid handshake to block accept thread
                     let this = self.clone();
                     let queue = queue.clone();
+                    let state = state.clone();
                     tokio::spawn(async move {
-                        let res = match this.create_context(source, socket).await {
+                        let res = match this.create_context(state, source, socket).await {
                             Ok(ctx) => h11c_handshake(ctx, queue).await,
                             Err(e) => Err(e),
                         };
@@ -73,6 +84,7 @@ impl HttpListener {
     }
     async fn create_context(
         &self,
+        state: Arc<GlobalState>,
         source: SocketAddr,
         socket: TcpStream,
     ) -> Result<ContextRef, Error> {
@@ -86,7 +98,7 @@ impl HttpListener {
         } else {
             make_buffered_stream(socket)
         };
-        let ctx = Context::new(self.name.to_owned(), source);
+        let ctx = state.contexts.create_context(self.name.to_owned(), source);
         ctx.write().await.set_client_stream(stream);
         Ok(ctx)
     }

@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use easy_error::{err_msg, Error};
+use easy_error::{bail, err_msg, Error};
 use serde_yaml::Value;
 use tokio::sync::mpsc::Sender;
 
-use crate::context::ContextRef;
+use crate::{context::ContextRef, GlobalState};
 
 mod http;
 mod socks;
@@ -17,17 +17,21 @@ mod quic;
 mod tproxy;
 
 #[async_trait]
-pub trait Listener: std::fmt::Debug {
+pub trait Listener: Send + Sync {
     async fn init(&mut self) -> Result<(), Error>;
-    async fn listen(self: Arc<Self>, queue: Sender<ContextRef>) -> Result<(), Error>;
+    async fn listen(
+        self: Arc<Self>,
+        state: Arc<GlobalState>,
+        queue: Sender<ContextRef>,
+    ) -> Result<(), Error>;
     fn name(&self) -> &str;
 }
 
-pub fn config(listeners: &[Value]) -> Result<Vec<Box<dyn Listener>>, Error> {
-    let mut ret = Vec::with_capacity(listeners.len());
-    for l in listeners {
-        let ll = from_value(l)?;
-        ret.push(ll);
+pub fn from_config(cfg: &[Value]) -> Result<HashMap<String, Arc<dyn Listener>>, Error> {
+    let mut ret: HashMap<String, Arc<dyn Listener>> = Default::default();
+    for val in cfg {
+        let r = from_value(val)?;
+        ret.insert(r.name().to_owned(), r.into());
     }
     Ok(ret)
 }
@@ -35,18 +39,23 @@ pub fn config(listeners: &[Value]) -> Result<Vec<Box<dyn Listener>>, Error> {
 pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
     let name = value
         .get("name")
+        .and_then(Value::as_str)
         .ok_or_else(|| err_msg("missing listener name"))?;
-    let tname = value.get("type").or(Some(name)).unwrap();
-    match tname.as_str() {
-        Some("http") => http::from_value(value),
-        Some("socks") => socks::from_value(value),
+    let tname = value
+        .get("type")
+        .and_then(Value::as_str)
+        .or(Some(name))
+        .unwrap();
+    match tname {
+        "http" => http::from_value(value),
+        "socks" => socks::from_value(value),
 
         #[cfg(feature = "quic")]
-        Some("quic") => quic::from_value(value),
+        "quic" => quic::from_value(value),
 
         #[cfg(any(target_os = "android", target_os = "linux"))]
-        Some("tproxy") => tproxy::from_value(value),
+        "tproxy" => tproxy::from_value(value),
 
-        _ => Err(err_msg("not implemented")),
+        name => bail!("unknown listener type: {:?}", name),
     }
 }

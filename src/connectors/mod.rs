@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::context::ContextRef;
 use async_trait::async_trait;
@@ -12,19 +12,19 @@ mod quic;
 mod socks;
 
 #[async_trait]
-pub trait Connector {
+pub trait Connector: Send + Sync {
     async fn init(&mut self) -> Result<(), Error>;
     // async fn connect(&self, ctx: Context) -> Result<(), Error>;
     async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<(), Error>;
     fn name(&self) -> &str;
 }
 
-pub type ConnectorRef = Box<dyn Connector + Send + Sync>;
-pub fn config(connectors: &[Value]) -> Result<Vec<ConnectorRef>, Error> {
-    let mut ret = Vec::with_capacity(connectors.len());
-    for c in connectors {
-        let c = from_value(c)?;
-        ret.push(c);
+pub type ConnectorRef = Box<dyn Connector>;
+pub fn from_config(cfg: &[Value]) -> Result<HashMap<String, Arc<dyn Connector>>, Error> {
+    let mut ret: HashMap<String, Arc<dyn Connector>> = Default::default();
+    for val in cfg {
+        let r = from_value(val)?;
+        ret.insert(r.name().to_owned(), r.into());
     }
     Ok(ret)
 }

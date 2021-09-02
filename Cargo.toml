@@ -17,7 +17,6 @@ quic = ["quinn","futures-util","pin-project-lite"]
 milu = { path = "milu" }
 tokio = { version = "1.11.0", features = ["full"] }
 tokio-rustls = { version="0.22.0", features = ["dangerous_configuration"] }
-# rustls = "0.19"
 nix = { version = "0.22.1"}
 async-trait = "0.1.51"
 easy-error = "1.0.0"
@@ -27,10 +26,7 @@ yaml-rust = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 nom = "7"
-# nom_locate = "3.0.2"
 clap = "~2.33"
-lazy_static = "1.4.0"
-
 
 quinn = { version = "0.7.2", optional = true}
 futures-util = { version = "0.3.17", optional = true}

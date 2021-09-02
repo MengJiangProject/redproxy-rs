@@ -12,8 +12,9 @@ use tokio::sync::mpsc::Sender;
 
 use crate::common::socks::{PasswordAuth, SocksRequest, SocksResponse};
 use crate::common::tls::TlsServerConfig;
-use crate::context::{make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps};
+use crate::context::{make_buffered_stream, ContextCallback, ContextRef, ContextRefOps};
 use crate::listeners::Listener;
+use crate::GlobalState;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -49,11 +50,15 @@ impl Listener for SocksListener {
         }
         Ok(())
     }
-    async fn listen(self: Arc<Self>, queue: Sender<ContextRef>) -> Result<(), Error> {
+    async fn listen(
+        self: Arc<Self>,
+        state: Arc<GlobalState>,
+        queue: Sender<ContextRef>,
+    ) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
         let this = self.clone();
-        tokio::spawn(this.accept(listener, queue));
+        tokio::spawn(this.accept(listener, state, queue));
         Ok(())
     }
 
@@ -63,15 +68,21 @@ impl Listener for SocksListener {
 }
 
 impl SocksListener {
-    async fn accept(self: Arc<Self>, listener: TcpListener, queue: Sender<ContextRef>) {
+    async fn accept(
+        self: Arc<Self>,
+        listener: TcpListener,
+        state: Arc<GlobalState>,
+        queue: Sender<ContextRef>,
+    ) {
         loop {
             let this = self.clone();
             let queue = queue.clone();
+            let state = state.clone();
             match listener.accept().await.context("accept") {
                 Ok((socket, source)) => {
                     // we spawn a new thread here to avoid handshake to block accept thread
                     tokio::spawn(async move {
-                        if let Err(e) = this.handshake(socket, source, queue).await {
+                        if let Err(e) = this.handshake(socket, source, state, queue).await {
                             warn!("{}: {:?}", e, e.cause);
                         }
                     });
@@ -88,6 +99,7 @@ impl SocksListener {
         self: Arc<Self>,
         socket: TcpStream,
         source: SocketAddr,
+        state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
     ) -> Result<(), Error> {
         let tls_acceptor = self.tls.as_ref().map(|options| options.acceptor());
@@ -97,7 +109,7 @@ impl SocksListener {
             make_buffered_stream(socket)
         };
         debug!("{}: connected from {:?}", self.name, source);
-        let ctx = Context::new(self.name.to_owned(), source);
+        let ctx = state.contexts.create_context(self.name.to_owned(), source);
         let auth_required = self
             .auth
             .as_ref()

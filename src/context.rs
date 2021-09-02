@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
-use lazy_static::lazy_static;
 use log::trace;
 use std::{
     collections::{HashMap, LinkedList},
@@ -143,29 +142,20 @@ impl Default for ContextProps {
     }
 }
 
-pub struct Context {
-    props: Box<ContextProps>,
-    client: Option<Arc<Mutex<IOBufStream>>>,
-    server: Option<Arc<Mutex<IOBufStream>>>,
-    callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
-}
-
-pub type ContextRef = Arc<RwLock<Context>>;
-pub type ContextWeakRef = Weak<RwLock<Context>>;
-
-lazy_static! {
-    static ref NEXT_CONTEXT_ID: AtomicU64 = AtomicU64::new(0);
-    pub static ref CONTEXT_LIST: std::sync::Mutex<HashMap<u64, ContextWeakRef>> =
-        std::sync::Mutex::new(Default::default());
-    pub static ref TERMINATED_CONTEXTS: std::sync::Mutex<LinkedList<ContextProps>> =
-        std::sync::Mutex::new(Default::default());
-}
 const CONTEXT_HISTORY_LENGTH: usize = 100;
 
-#[allow(dead_code)]
-impl Context {
-    pub fn new(listener: String, source: SocketAddr) -> ContextRef {
-        let id = NEXT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed);
+use std::sync::Mutex as StdMutex;
+
+#[derive(Default)]
+pub struct GlobalState {
+    next_id: AtomicU64,
+    // use std Mutex here because Drop is not async
+    pub alive: StdMutex<HashMap<u64, ContextWeakRef>>,
+    pub terminated: StdMutex<LinkedList<ContextProps>>,
+}
+impl GlobalState {
+    pub fn create_context(self: &Arc<Self>, listener: String, source: SocketAddr) -> ContextRef {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let props = Box::new(ContextProps {
             id,
             listener,
@@ -173,19 +163,41 @@ impl Context {
             status: vec![(ContextStatus::ClientConnected, SystemTime::now())],
             target: TargetAddress::Unknown,
         });
-        let ret = Arc::new(RwLock::new(Self {
+        let ret = Arc::new(RwLock::new(Context {
             props,
             client: None,
             server: None,
             callback: None,
+            state: self.clone(),
         }));
-        CONTEXT_LIST
-            .lock()
-            .unwrap()
-            .insert(id, Arc::downgrade(&ret));
+        self.alive.lock().unwrap().insert(id, Arc::downgrade(&ret));
         ret
     }
+    pub fn drop_context(&self, context: &mut Box<ContextProps>) {
+        self.alive.lock().unwrap().remove(&context.id);
+        let mut list = self.terminated.lock().unwrap();
+        let mut props = Box::default();
+        std::mem::swap(context, &mut props);
+        list.push_back(*props);
+        if list.len() > CONTEXT_HISTORY_LENGTH {
+            list.pop_front();
+        }
+    }
+}
 
+pub struct Context {
+    props: Box<ContextProps>,
+    client: Option<Arc<Mutex<IOBufStream>>>,
+    server: Option<Arc<Mutex<IOBufStream>>>,
+    callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
+    state: Arc<GlobalState>,
+}
+
+pub type ContextRef = Arc<RwLock<Context>>;
+pub type ContextWeakRef = Weak<RwLock<Context>>;
+
+#[allow(dead_code)]
+impl Context {
     /// Set the context's callback.
     pub fn set_callback<T: ContextCallback + Send + Sync + 'static>(
         &mut self,
@@ -245,9 +257,9 @@ impl Context {
     }
 }
 
+// a set of opreations that aquires write lock
 #[async_trait]
 pub trait ContextRefOps {
-    async fn target(&self) -> TargetAddress;
     async fn enqueue(self, queue: &Sender<ContextRef>) -> Result<(), Error>;
     async fn on_connect(&self);
     async fn on_error(&self, error: Error);
@@ -273,22 +285,12 @@ impl ContextRefOps for ContextRef {
             cb.on_error(self.clone(), error).await
         }
     }
-    async fn target(&self) -> TargetAddress {
-        self.read().await.target()
-    }
 }
 
 impl Drop for Context {
     fn drop(&mut self) {
         trace!("Context dropped: {}", self);
-        CONTEXT_LIST.lock().unwrap().remove(&self.props.id);
-        let mut list = TERMINATED_CONTEXTS.lock().unwrap();
-        let mut props = Box::default();
-        std::mem::swap(&mut self.props, &mut props);
-        list.push_back(*props);
-        if list.len() > CONTEXT_HISTORY_LENGTH {
-            list.pop_front();
-        }
+        self.state.drop_context(&mut self.props);
     }
 }
 

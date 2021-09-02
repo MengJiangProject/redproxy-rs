@@ -4,16 +4,25 @@ mod filter;
 use easy_error::{Error, ResultExt};
 use log::trace;
 use serde::{Deserialize, Serialize};
+use serde_yaml::Value;
 use std::sync::Arc;
 
 use crate::{connectors::Connector, context::Context};
+
+pub fn from_config(cfg: &[Value]) -> Result<Vec<Rule>, Error> {
+    let mut ret = Vec::with_capacity(cfg.len());
+    for val in cfg {
+        ret.push(serde_yaml::from_value(val.clone()).context("parse rule")?);
+    }
+    Ok(ret)
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct Rule {
     #[serde(rename = "target")]
     target_name: String,
     #[serde(skip)]
-    pub target: Option<Arc<dyn Connector + Send + Sync>>,
+    pub target: Option<Arc<dyn Connector>>,
     #[serde(rename = "filter")]
     filter_str: Option<String>,
     #[serde(skip)]
