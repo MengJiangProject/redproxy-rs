@@ -1,3 +1,5 @@
+use std::sync::{atomic::AtomicUsize, Arc};
+
 use crate::context::ContextRef;
 use easy_error::{Error, ResultExt};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
@@ -7,6 +9,7 @@ pub async fn copy_stream<T: AsyncRead + AsyncWrite>(
     rn: &str,
     mut w: WriteHalf<T>,
     wn: &str,
+    cnt: Arc<AtomicUsize>,
 ) -> Result<(), Error> {
     let mut buf = [0u8; 65536];
     loop {
@@ -26,6 +29,7 @@ pub async fn copy_stream<T: AsyncRead + AsyncWrite>(
             w.flush()
                 .await
                 .with_context(|| format!("flush {} buffer", wn))?;
+            cnt.fetch_add(len, std::sync::atomic::Ordering::Relaxed);
         } else {
             break;
         }
@@ -41,8 +45,20 @@ pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
     let mut server = ctx.get_server_stream().await;
     let (cread, cwrite) = tokio::io::split(client.get_mut());
     let (sread, swrite) = tokio::io::split(server.get_mut());
-    let copy_a_to_b = copy_stream(cread, "client", swrite, "server");
-    let copy_b_to_a = copy_stream(sread, "server", cwrite, "client");
+    let copy_a_to_b = copy_stream(
+        cread,
+        "client",
+        swrite,
+        "server",
+        ctx.props().client_sent.clone(),
+    );
+    let copy_b_to_a = copy_stream(
+        sread,
+        "server",
+        cwrite,
+        "client",
+        ctx.props().server_sent.clone(),
+    );
     tokio::try_join!(copy_a_to_b, copy_b_to_a)?;
     Ok(())
 }

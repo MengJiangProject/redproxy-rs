@@ -10,7 +10,7 @@ use std::{
     pin::Pin,
     str::FromStr,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Weak,
     },
     time::{Duration, SystemTime},
@@ -149,7 +149,7 @@ impl Serialize for ContextStatusLog {
                 .time
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
-                .as_secs(),
+                .as_millis(),
         )?;
         st.end()
     }
@@ -162,13 +162,27 @@ impl From<(ContextStatus, SystemTime)> for ContextStatusLog {
 }
 
 // this is the value object of Context, chould be used in filter evaluation or stored after Context is terminated, for statistics.
-#[derive(Debug, Hash, Eq, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ContextProps {
     pub id: u64,
     pub status: Vec<ContextStatusLog>,
     pub listener: String,
     pub source: SocketAddr,
     pub target: TargetAddress,
+    pub client_sent: Arc<AtomicUsize>,
+    pub server_sent: Arc<AtomicUsize>,
+}
+
+impl std::hash::Hash for ContextProps {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl PartialEq for ContextProps {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
 }
 
 impl Default for ContextProps {
@@ -179,6 +193,8 @@ impl Default for ContextProps {
             listener: Default::default(),
             source: ([0, 0, 0, 0], 0).into(),
             target: TargetAddress::Unknown,
+            client_sent: Default::default(),
+            server_sent: Default::default(),
         }
     }
 }
@@ -207,7 +223,7 @@ impl GlobalState {
             listener,
             source,
             status: vec![(ContextStatus::ClientConnected, SystemTime::now()).into()],
-            target: TargetAddress::Unknown,
+            ..Default::default()
         });
         let ret = Arc::new(RwLock::new(Context {
             props,
