@@ -70,7 +70,10 @@ impl TProxyListener {
         let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
         let port = ntohs(dst.sin_port);
         trace!("{}: dst={}:{}", self.name, addr, port);
-        let ctx = state.contexts.create_context(self.name.to_owned(), source);
+        let ctx = state
+            .contexts
+            .create_context(self.name.to_owned(), source)
+            .await;
         ctx.write()
             .await
             .set_target(TargetAddress::from((addr, port)))

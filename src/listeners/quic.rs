@@ -82,7 +82,10 @@ impl QuicListener {
                     debug!("{}: BiStream connected from {:?}", this.name, source);
                     let stream: QuicStream = stream.into();
                     let stream = make_buffered_stream(stream);
-                    let ctx = state.contexts.create_context(this.name.to_owned(), source);
+                    let ctx = state
+                        .contexts
+                        .create_context(this.name.to_owned(), source)
+                        .await;
                     ctx.write().await.set_client_stream(stream);
                     let this = this.clone();
                     tokio::spawn(h11c_handshake(ctx, queue.clone()).unwrap_or_else(move |e| {

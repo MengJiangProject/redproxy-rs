@@ -111,7 +111,10 @@ impl SocksListener {
             make_buffered_stream(socket)
         };
         debug!("{}: connected from {:?}", self.name, source);
-        let ctx = state.contexts.create_context(self.name.to_owned(), source);
+        let ctx = state
+            .contexts
+            .create_context(self.name.to_owned(), source)
+            .await;
 
         let auth_server = PasswordAuth {
             required: self.auth.required,

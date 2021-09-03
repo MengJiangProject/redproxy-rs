@@ -1,8 +1,9 @@
 use context::{ContextRef, ContextStatus, GlobalState as ContextGlobalState};
 use easy_error::{err_msg, Terminator};
 use log::{info, warn};
+use metrics::MetricsServer;
 use rules::Rule;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::mpsc::channel;
 
 mod common;
@@ -25,8 +26,9 @@ pub struct GlobalState {
     listeners: HashMap<String, Arc<dyn Listener>>,
     connectors: HashMap<String, Arc<dyn Connector>>,
     contexts: Arc<ContextGlobalState>,
+    #[cfg(feature = "metrics")]
+    metrics: Option<Arc<MetricsServer>>,
 }
-
 #[tokio::main]
 async fn main() -> Result<(), Terminator> {
     let args = clap::App::new(env!("CARGO_BIN_NAME"))
@@ -91,6 +93,12 @@ async fn main() -> Result<(), Terminator> {
                 Err(err_msg(format!("target not found: {}", r.target_name())))
             }
         })?;
+
+        #[cfg(feature = "metrics")]
+        if let Some(mut metrics) = cfg.metrics {
+            metrics.init();
+            st_mut.metrics = Some(Arc::new(metrics));
+        }
     }
 
     if config_test {
@@ -99,20 +107,15 @@ async fn main() -> Result<(), Terminator> {
     }
 
     let (tx, mut rx) = channel(100);
-    for (_name, l) in state.listeners.iter() {
-        l.clone().listen(state.clone(), tx.clone()).await?;
+    for l in state.listeners.values().cloned() {
+        l.listen(state.clone(), tx.clone()).await?;
     }
 
-    {
-        let state = state.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(10)).await;
-                let len = state.contexts.alive.lock().unwrap().len();
-                info!("We have {} client alive now.", len);
-            }
-        });
+    #[cfg(feature = "metrics")]
+    if let Some(metrics) = state.metrics.clone() {
+        metrics.listen(state.clone()).await?;
     }
+    state.contexts.clone().gc_thread();
 
     loop {
         let ctx = rx.recv().await.unwrap();
@@ -156,6 +159,7 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
 
     ctx.on_connect().await;
     if let Err(e) = copy_bidi(ctx.clone()).await {
+        let ctx = ctx.read().await; //for better debug prrint
         warn!(
             "error in io thread: {} \ncause: {:?} \nctx: {:?}",
             e, e.cause, ctx

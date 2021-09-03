@@ -98,7 +98,10 @@ impl HttpListener {
         } else {
             make_buffered_stream(socket)
         };
-        let ctx = state.contexts.create_context(self.name.to_owned(), source);
+        let ctx = state
+            .contexts
+            .create_context(self.name.to_owned(), source)
+            .await;
         ctx.write().await.set_client_stream(stream);
         Ok(ctx)
     }
