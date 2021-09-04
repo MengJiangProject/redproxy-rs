@@ -554,7 +554,7 @@ dependencies = [
 
 [[package]]
 name = "milu"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "easy-error",
@@ -879,7 +879,7 @@ dependencies = [
 
 [[package]]
 name = "redproxy-rs"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -891,7 +891,6 @@ dependencies = [
  "log",
  "milu",
  "nix",
- "nom",
  "pin-project-lite",
  "quinn",
  "serde",

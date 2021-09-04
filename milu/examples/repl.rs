@@ -174,11 +174,7 @@ fn repl() -> rustyline::Result<()> {
 fn eval(ctx: ScriptContextRef, str: &str) -> bool {
     let val = parser::parse(str);
     if let Err(e) = val {
-        let msg = match e {
-            nom::Err::Error(e) | nom::Err::Failure(e) => nom::error::convert_error(str, e),
-            _ => e.to_string(),
-        };
-        eprintln!("parser error: {}", msg);
+        eprintln!("parser error: {}", e);
         return false;
     }
     let val = val.unwrap();

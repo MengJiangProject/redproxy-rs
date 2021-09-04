@@ -1,5 +1,3 @@
-use std::{fmt, num::ParseIntError, sync::Arc};
-
 use nom::{
     branch::alt,
     bytes::complete::{is_not, tag, tag_no_case, take_until},
@@ -8,12 +6,13 @@ use nom::{
         one_of,
     },
     combinator::{all_consuming, cut, map, map_opt, map_res, opt, recognize},
-    error::{context, ContextError, FromExternalError, ParseError},
+    error::{context, convert_error, ContextError, FromExternalError, ParseError, VerboseError},
     multi::{many0, many1, separated_list0},
     sequence::{delimited, pair, preceded, separated_pair, terminated, tuple as nom_tuple},
     IResult, Parser,
 };
 use nom_locate::LocatedSpan;
+use std::{fmt, num::ParseIntError, sync::Arc};
 
 mod string;
 use super::script::stdlib::*;
@@ -459,21 +458,46 @@ rule!(root(i)->Value<'static>, {
     all_consuming(terminated(op_0,delimited(multispace0,opt(tag(";;")),multispace0)))
 });
 
-use nom::error::VerboseError;
-use nom::Err;
-pub fn parse(input: &str) -> Result<Value<'static>, Err<VerboseError<&str>>> {
+pub fn parse(input: &str) -> Result<Value<'static>, SyntaxError> {
     root::<VerboseError<Span>>(Span::new(input))
         .map(|x| x.1)
-        .map_err(|e| match e {
-            Err::Error(ve) | Err::Failure(ve) => Err::Error(VerboseError {
-                errors: ve
-                    .errors
-                    .into_iter()
-                    .map(|(span, e)| (*span, e))
-                    .collect::<Vec<_>>(),
-            }),
-            Err::Incomplete(ic) => Err::Incomplete(ic),
-        })
+        .map_err(|err| SyntaxError::new(err, input))
+}
+
+pub struct SyntaxError {
+    msg: String,
+}
+
+impl SyntaxError {
+    fn new(e: nom::Err<VerboseError<Span>>, input: &str) -> Self {
+        let msg = match e {
+            nom::Err::Error(e) | nom::Err::Failure(e) => convert_error(
+                input,
+                VerboseError {
+                    errors: e
+                        .errors
+                        .into_iter()
+                        .map(|(span, e)| (*span, e))
+                        .collect::<Vec<_>>(),
+                },
+            ),
+            _ => e.to_string(),
+        };
+        SyntaxError { msg }
+    }
+}
+
+impl std::error::Error for SyntaxError {}
+impl fmt::Display for SyntaxError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SyntaxError: {}", self.msg)
+    }
+}
+
+impl fmt::Debug for SyntaxError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SyntaxError: {}", self.msg)
+    }
 }
 
 #[cfg(test)]

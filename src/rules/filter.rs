@@ -1,16 +1,13 @@
-use std::convert::TryInto;
-use std::{fmt, str::FromStr};
-
 use easy_error::{bail, Error};
 use log::trace;
-use nom::error::{convert_error, VerboseError};
-
-use crate::context::{Context, ContextProps};
-
-use milu::parser::parse;
+use milu::parser::{parse, SyntaxError};
 use milu::script::{
     Accessible, Evaluatable, NativeObject, ScriptContext, ScriptContextRef, Type, Value,
 };
+use std::convert::TryInto;
+use std::str::FromStr;
+
+use crate::context::{Context, ContextProps};
 
 #[derive(Debug)]
 pub struct Filter {
@@ -34,39 +31,12 @@ impl FromStr for Filter {
     type Err = SyntaxError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        parse(s)
-            .map(|root| Filter { root })
-            .map_err(|e| SyntaxError::new(e, s))
+        parse(s).map(|root| Filter { root })
     }
 }
 
 // #[derive(Debug)]
-pub struct SyntaxError {
-    msg: String,
-}
 
-impl SyntaxError {
-    fn new(e: nom::Err<VerboseError<&str>>, input: &str) -> Self {
-        let msg = match e {
-            nom::Err::Error(e) | nom::Err::Failure(e) => convert_error(input, e),
-            _ => e.to_string(),
-        };
-        SyntaxError { msg }
-    }
-}
-
-impl std::error::Error for SyntaxError {}
-impl fmt::Display for SyntaxError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SyntaxError: {}", self.msg)
-    }
-}
-
-impl fmt::Debug for SyntaxError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SyntaxError: {}", self.msg)
-    }
-}
 #[derive(Clone, Hash, Debug)]
 struct ContextAdaptor<'a> {
     req: &'a ContextProps,
