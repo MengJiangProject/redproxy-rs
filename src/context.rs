@@ -7,6 +7,7 @@ use std::{
     fmt::{Debug, Display},
     future::Future,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    ops::DerefMut,
     pin::Pin,
     str::FromStr,
     sync::{
@@ -106,6 +107,18 @@ impl Serialize for TargetAddress {
     }
 }
 
+trait UnixTimestamp {
+    fn unix_timestamp(&self) -> u64;
+}
+
+impl UnixTimestamp for SystemTime {
+    fn unix_timestamp(&self) -> u64 {
+        self.duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    }
+}
+
 pub trait IOStream: AsyncRead + AsyncWrite + Send + Sync + Unpin {}
 impl<T> IOStream for T where T: AsyncRead + AsyncWrite + Send + Sync + Unpin {}
 pub type IOBufStream = BufStream<Box<dyn IOStream>>;
@@ -143,14 +156,7 @@ impl Serialize for ContextStateLog {
     {
         let mut st = serializer.serialize_struct("ContextStateLog", 2)?;
         st.serialize_field("state", &self.state)?;
-        st.serialize_field(
-            "time",
-            &self
-                .time
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_millis(),
-        )?;
+        st.serialize_field("time", &self.time.unix_timestamp())?;
         st.end()
     }
 }
@@ -171,6 +177,8 @@ pub struct ContextProps {
     pub source: SocketAddr,
     pub target: TargetAddress,
     pub error: String,
+    pub client_stat: Arc<ContextStatistics>,
+    pub server_stat: Arc<ContextStatistics>,
 }
 
 impl std::hash::Hash for ContextProps {
@@ -195,11 +203,25 @@ impl Default for ContextProps {
             source: ([0, 0, 0, 0], 0).into(),
             target: TargetAddress::Unknown,
             error: Default::default(),
+            client_stat: Default::default(),
+            server_stat: Default::default(),
         }
     }
 }
 
-const CONTEXT_HISTORY_LENGTH: usize = 100;
+#[derive(Default, Serialize, Debug)]
+pub struct ContextStatistics {
+    read_bytes: AtomicUsize,
+    last_read: AtomicU64,
+}
+
+impl ContextStatistics {
+    pub fn incr_sent_bytes(&self, cnt: usize) {
+        self.read_bytes.fetch_add(cnt, Ordering::Relaxed);
+        self.last_read
+            .store(SystemTime::now().unix_timestamp(), Ordering::Relaxed)
+    }
+}
 
 use std::sync::Mutex as StdMutex;
 
