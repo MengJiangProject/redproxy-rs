@@ -1,4 +1,4 @@
-use easy_error::{bail, Error};
+use easy_error::{bail, ensure, Error};
 use log::trace;
 use milu::parser::{parse, SyntaxError};
 use milu::script::{
@@ -15,12 +15,25 @@ pub struct Filter {
 }
 
 impl Filter {
+    fn create_context(props: &ContextProps) -> ScriptContext {
+        let mut ctx = ScriptContext::new(Some(Default::default()));
+        let adapter = ContextAdaptor::new(props);
+        ctx.set("request".to_string(), adapter.into());
+        ctx
+    }
+    pub fn validate(&self) -> Result<(), Error> {
+        let request = Default::default();
+        let ctx = Self::create_context(&request);
+        let rtype = self.root.type_of(ctx.into())?;
+        ensure!(
+            rtype == Type::Boolean,
+            "filter return type mismatch: required boolean, got {}",
+            rtype
+        );
+        Ok(())
+    }
     pub fn evaluate(&self, request: &Context) -> Result<bool, Error> {
-        let ctx = Default::default();
-        let mut ctx = ScriptContext::new(Some(ctx));
-        let adapter = ContextAdaptor::new(request.props());
-        let value = adapter.into();
-        ctx.set("request".to_string(), value);
+        let ctx = Self::create_context(request.props());
         let ret = self.root.value_of(ctx.into())?.try_into()?;
         trace!("filter eval: {:?} => {}", request, ret);
         Ok(ret)

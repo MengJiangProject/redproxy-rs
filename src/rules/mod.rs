@@ -33,7 +33,9 @@ impl Rule {
     pub fn init(&mut self) -> Result<(), Error> {
         if let Some(s) = &self.filter_str {
             trace!("compiling filter: {:?}", s);
-            self.filter = Some(s.parse().context("parse filter")?);
+            let filter: filter::Filter = s.parse().context("parse filter")?;
+            filter.validate()?;
+            self.filter = Some(filter);
         }
         Ok(())
     }
