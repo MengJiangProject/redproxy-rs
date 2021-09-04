@@ -1,4 +1,3 @@
-pub mod copy;
 pub mod h11c;
 pub mod http;
 #[cfg(feature = "quic")]

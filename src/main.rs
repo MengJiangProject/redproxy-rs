@@ -10,13 +10,12 @@ mod common;
 mod config;
 mod connectors;
 mod context;
+mod copy;
 mod listeners;
 mod metrics;
 mod rules;
 
-use crate::{
-    common::copy::copy_bidi, connectors::Connector, context::ContextRefOps, listeners::Listener,
-};
+use crate::{connectors::Connector, context::ContextRefOps, copy::copy_bidi, listeners::Listener};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
