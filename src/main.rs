@@ -160,11 +160,13 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
 
     ctx.on_connect().await;
     if let Err(e) = copy_bidi(ctx.clone()).await {
-        let ctx = ctx.read().await; //for better debug prrint
+        let ctx_str = ctx.to_string().await;
         warn!(
             "error in io thread: {} \ncause: {:?} \nctx: {:?}",
-            e, e.cause, ctx
+            e, e.cause, ctx_str
         );
+        ctx.on_error(e).await;
+    } else {
+        ctx.write().await.set_state(ContextState::Terminated);
     }
-    ctx.write().await.set_state(ContextState::Terminated);
 }

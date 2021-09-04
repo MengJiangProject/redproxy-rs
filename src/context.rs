@@ -173,10 +173,10 @@ pub struct ContextProps {
     pub id: u64,
     pub state: Vec<ContextStateLog>,
     pub listener: String,
-    pub connector: String,
+    pub connector: Option<String>,
     pub source: SocketAddr,
     pub target: TargetAddress,
-    pub error: String,
+    pub error: Option<String>,
     pub client_stat: Arc<ContextStatistics>,
     pub server_stat: Arc<ContextStatistics>,
 }
@@ -305,6 +305,10 @@ impl Context {
         self
     }
 
+    fn clear_callback(&mut self) {
+        self.callback = None;
+    }
+
     /// Set the context's client stream.
     pub fn set_client_stream(&mut self, stream: IOBufStream) -> &mut Self {
         self.client = Some(Arc::new(Mutex::new(stream)));
@@ -340,13 +344,13 @@ impl Context {
 
     /// Set the connector name.
     pub fn set_connector(&mut self, connector: String) -> &mut Self {
-        Arc::make_mut(&mut self.props).connector = connector;
+        Arc::make_mut(&mut self.props).connector = Some(connector);
         self
     }
 
     /// Set the error message.
     pub fn set_error(&mut self, error: String) -> &mut Self {
-        Arc::make_mut(&mut self.props).error = error;
+        Arc::make_mut(&mut self.props).error = Some(error);
         self
     }
 
@@ -376,6 +380,7 @@ pub trait ContextRefOps {
     async fn enqueue(self, queue: &Sender<ContextRef>) -> Result<(), Error>;
     async fn on_connect(&self);
     async fn on_error(&self, error: Error);
+    async fn to_string(&self) -> String;
 }
 
 #[async_trait]
@@ -389,6 +394,7 @@ impl ContextRefOps for ContextRef {
         if let Some(cb) = self.read().await.callback.clone() {
             cb.on_connect(self.clone()).await
         }
+        self.write().await.clear_callback();
     }
     async fn on_error(&self, error: Error) {
         self.write()
@@ -398,6 +404,10 @@ impl ContextRefOps for ContextRef {
         if let Some(cb) = self.read().await.callback.clone() {
             cb.on_error(self.clone(), error).await
         }
+        self.write().await.clear_callback();
+    }
+    async fn to_string(&self) -> String {
+        self.read().await.to_string()
     }
 }
 
