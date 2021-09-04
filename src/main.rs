@@ -137,14 +137,14 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
 
     // Outer Option is None means no filter matches request, thus implicitly denial
     if connector.is_none() {
-        info!("implicitly denied: {:?}", ctx);
+        info!("implicitly denied: {}", ctx.to_string().await);
         return ctx.on_error(err_msg("access denied")).await;
     }
     let connector = connector.unwrap();
 
     // Inner Option is None means matching rule is explicitly denial
     if connector.is_none() {
-        info!("explicitly denied: {:?}", ctx);
+        info!("explicitly denied: {}", ctx.to_string().await);
         return ctx.on_error(err_msg("access denied")).await;
     }
     let connector = connector.unwrap();
@@ -154,7 +154,11 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
         .set_state(ContextState::ServerConnecting)
         .set_connector(connector.name().to_owned());
     if let Err(e) = connector.connect(ctx.clone()).await {
-        warn!("failed to connect to upstream: {} cause: {:?}", e, e.cause);
+        let ctx_str = ctx.to_string().await;
+        warn!(
+            "failed to connect to upstream: {} cause: {:?} \nctx: {}",
+            e, e.cause, ctx_str
+        );
         return ctx.on_error(e).await;
     }
 
@@ -162,7 +166,7 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
     if let Err(e) = copy_bidi(ctx.clone()).await {
         let ctx_str = ctx.to_string().await;
         warn!(
-            "error in io thread: {} \ncause: {:?} \nctx: {:?}",
+            "error in io thread: {} \ncause: {:?} \nctx: {}",
             e, e.cause, ctx_str
         );
         ctx.on_error(e).await;
