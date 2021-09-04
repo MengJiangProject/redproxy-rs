@@ -148,11 +148,7 @@ jobs:
       matrix:
         job:
           # - { os: ubuntu-20.04, target: arm-unknown-linux-gnueabihf , use-cross: true }
-          - {
-              os: ubuntu-20.04,
-              target: arm-unknown-linux-musleabihf,
-              use-cross: true,
-            }
+          # - { os: ubuntu-20.04, target: arm-unknown-linux-musleabihf, use-cross: true }
           - {
               os: ubuntu-20.04,
               target: aarch64-unknown-linux-gnu,
