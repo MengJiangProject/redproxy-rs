@@ -150,7 +150,7 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
 
     ctx.write()
         .await
-        .set_status(ContextStatus::ServerConnecting);
+        .set_state(ContextState::ServerConnecting)
     if let Err(e) = connector.connect(ctx.clone()).await {
         warn!("failed to connect to upstream: {} cause: {:?}", e, e.cause);
         return ctx.on_error(e).await;
@@ -164,5 +164,5 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
             e, e.cause, ctx
         );
     }
-    ctx.write().await.set_status(ContextStatus::Terminated);
+    ctx.write().await.set_state(ContextState::Terminated);
 }

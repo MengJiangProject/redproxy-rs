@@ -120,7 +120,7 @@ pub trait ContextCallback {
 }
 
 #[derive(Debug, Hash, Copy, Clone, Eq, PartialEq, Serialize)]
-pub enum ContextStatus {
+pub enum ContextState {
     ClientConnected,
     ClientRequested,
     ServerConnecting,
@@ -131,18 +131,18 @@ pub enum ContextStatus {
 }
 
 #[derive(Debug, Hash, Copy, Clone, Eq, PartialEq)]
-pub struct ContextStatusLog {
-    status: ContextStatus,
+pub struct ContextStateLog {
+    state: ContextState,
     time: SystemTime,
 }
 
-impl Serialize for ContextStatusLog {
+impl Serialize for ContextStateLog {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let mut st = serializer.serialize_struct("ContextStatusLog", 2)?;
-        st.serialize_field("status", &self.status)?;
+        let mut st = serializer.serialize_struct("ContextStateLog", 2)?;
+        st.serialize_field("state", &self.state)?;
         st.serialize_field(
             "time",
             &self
@@ -155,9 +155,9 @@ impl Serialize for ContextStatusLog {
     }
 }
 
-impl From<(ContextStatus, SystemTime)> for ContextStatusLog {
-    fn from((status, time): (ContextStatus, SystemTime)) -> Self {
-        Self { status, time }
+impl From<(ContextState, SystemTime)> for ContextStateLog {
+    fn from((state, time): (ContextState, SystemTime)) -> Self {
+        Self { state, time }
     }
 }
 
@@ -165,7 +165,7 @@ impl From<(ContextStatus, SystemTime)> for ContextStatusLog {
 #[derive(Debug, Clone, Serialize)]
 pub struct ContextProps {
     pub id: u64,
-    pub status: Vec<ContextStatusLog>,
+    pub state: Vec<ContextStateLog>,
     pub listener: String,
     pub source: SocketAddr,
     pub target: TargetAddress,
@@ -189,7 +189,7 @@ impl Default for ContextProps {
     fn default() -> Self {
         Self {
             id: Default::default(),
-            status: Default::default(),
+            state: Default::default(),
             listener: Default::default(),
             source: ([0, 0, 0, 0], 0).into(),
             target: TargetAddress::Unknown,
@@ -222,7 +222,7 @@ impl GlobalState {
             id,
             listener,
             source,
-            status: vec![(ContextStatus::ClientConnected, SystemTime::now()).into()],
+            state: vec![(ContextState::ClientConnected, SystemTime::now()).into()],
             ..Default::default()
         });
         let ret = Arc::new(RwLock::new(Context {
@@ -321,12 +321,17 @@ impl Context {
         self.props.status.last().unwrap().status
     }
 
-    /// Set the context's status.
-    pub fn set_status(&mut self, status: ContextStatus) -> &mut Self {
+    // Get state of the context.
+    pub fn state(&self) -> ContextState {
+        self.props.state.last().unwrap().state
+    }
+
+    /// Set the context's state.
+    pub fn set_state(&mut self, state: ContextState) -> &mut Self {
         Arc::make_mut(&mut self.props)
-            .status
-            .push((status, SystemTime::now()).into());
-        // trace!("set_status: {:?}", self.props.status);
+            .state
+            .push((state, SystemTime::now()).into());
+        // trace!("set_state: {:?}", self.props.state);
         self
     }
 
@@ -347,19 +352,19 @@ pub trait ContextRefOps {
 #[async_trait]
 impl ContextRefOps for ContextRef {
     async fn enqueue(self, queue: &Sender<ContextRef>) -> Result<(), Error> {
-        self.write()
-            .await
-            .set_status(ContextStatus::ClientRequested);
+        self.write().await.set_state(ContextState::ClientRequested);
         queue.send(self).await.context("enqueue")
     }
     async fn on_connect(&self) {
-        self.write().await.set_status(ContextStatus::Connected);
+        self.write().await.set_state(ContextState::Connected);
         if let Some(cb) = self.read().await.callback.clone() {
             cb.on_connect(self.clone()).await
         }
     }
     async fn on_error(&self, error: Error) {
-        self.write().await.set_status(ContextStatus::ErrorOccured);
+        self.write()
+            .await
+            .set_state(ContextState::ErrorOccured)
         if let Some(cb) = self.read().await.callback.clone() {
             cb.on_error(self.clone(), error).await
         }
