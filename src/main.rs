@@ -71,7 +71,7 @@ async fn main() -> Result<(), Terminator> {
 
         #[cfg(feature = "metrics")]
         if let Some(mut metrics) = cfg.metrics {
-            metrics.init();
+            metrics.init()?;
             Arc::get_mut(&mut st_mut.contexts).unwrap().history_size = metrics.history_size;
             st_mut.metrics = Some(Arc::new(metrics));
         }

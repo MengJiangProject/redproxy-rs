@@ -1,20 +1,23 @@
 use axum::{
     body::Body,
     extract::Extension,
-    handler::get,
+    handler::{get, Handler},
     http::{Response, StatusCode},
     response::IntoResponse,
+    routing::BoxRoute,
     Json, Router,
 };
-use easy_error::Error;
+use easy_error::{ensure, Error};
 use futures::StreamExt;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::{
+    convert::Infallible,
     net::SocketAddr,
     sync::{Arc, Weak},
 };
 use tower_http::add_extension::AddExtensionLayer;
+use tower_http::services::ServeDir;
 
 use crate::GlobalState;
 
@@ -26,8 +29,8 @@ pub struct MetricsServer {
     #[serde(default = "default_prefix")]
     prefix: String,
 
-    // location of static files to serve
-    static_resource: Option<String>,
+    #[serde(default = "default_ui_source")]
+    ui: Option<String>,
 
     #[serde(default = "default_history_size")]
     pub history_size: usize,
@@ -37,20 +40,48 @@ fn default_prefix() -> String {
     "/".into()
 }
 
+#[cfg(feature = "embedded-ui")]
+fn default_ui_source() -> Option<String> {
+    Some("<embedded>".into())
+}
+#[cfg(not(feature = "embedded-ui"))]
+fn default_ui_source() -> Option<String> {
+    None
+}
+
 fn default_history_size() -> usize {
     100
 }
 
 impl MetricsServer {
-    pub fn init(&mut self) {}
+    pub fn init(&mut self) -> Result<(), Error> {
+        if let Some(ui) = &self.ui {
+            #[cfg(feature = "embedded-ui")]
+            if ui == "<embedded>" {
+                return Ok(());
+            }
+            let path = std::path::Path::new(ui);
+            ensure!(path.is_dir(), "not an accessible directory: {}", ui);
+        }
+        Ok(())
+    }
+
     pub async fn listen(self: Arc<Self>, state: Arc<GlobalState>) -> Result<(), Error> {
+        let api = Router::new()
+            .route("/contexts", get(get_alive))
+            .route("/history", get(get_history))
+            .layer(AddExtensionLayer::new(state))
+            .check_infallible();
+
+        let root = Router::new().nest(&self.prefix, api);
+        let root = if let Some(ui) = &self.ui {
+            root.nest("/", ui_service(ui)?).boxed()
+        } else {
+            root.boxed()
+        };
+        let root = root.or(not_found.into_service());
+
         tokio::spawn(async move {
-            let api = Router::new()
-                .route("/contexts", get(get_alive))
-                .route("/history", get(get_history))
-                .layer(AddExtensionLayer::new(state))
-                .check_infallible();
-            let root = Router::new().nest(&self.prefix, api);
             info!("metrics server listening on {}", self.bind);
             axum::Server::bind(&self.bind)
                 .serve(root.into_make_service())
@@ -67,6 +98,24 @@ impl MetricsServer {
         // });
         Ok(())
     }
+}
+
+fn ui_service(ui_source: &str) -> Result<Router<BoxRoute>, Error> {
+    #[cfg(feature = "embedded-ui")]
+    if ui_source == "<embedded>" {
+        return Ok(embedded_ui::app());
+    }
+    Ok(Router::new()
+        .nest(
+            "/",
+            axum::service::get(ServeDir::new(ui_source)).handle_error(|error: std::io::Error| {
+                Ok::<_, Infallible>((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Unhandled internal error: {}", error),
+                ))
+            }),
+        )
+        .boxed())
 }
 
 async fn get_alive(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
@@ -99,6 +148,10 @@ async fn get_history(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
     )
 }
 
+async fn not_found() -> impl IntoResponse {
+    (StatusCode::NOT_FOUND, "not found")
+}
+
 struct MyError(Error);
 
 impl IntoResponse for MyError {
@@ -113,4 +166,9 @@ impl IntoResponse for MyError {
             .body(body)
             .unwrap()
     }
+}
+
+#[cfg(feature = "embedded-ui")]
+mod embedded_ui {
+    include!(concat!(env!("OUT_DIR"), "/embedded-ui.rs"));
 }

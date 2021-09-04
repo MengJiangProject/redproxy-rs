@@ -2,8 +2,11 @@ apiVersion: v1alpha
 kind: ProxyDefinition
 
 metrics:
+  # api prefix, defaults to "/"
   prefix: /api
-  bind: 0.0.0.0:8888
+  # static files to serve, set to null to disable, set "<embedded>" to use embedded ui (if feature enabled)
+  ui: null
+  bind: "[::]:8888"
 
 listeners:
   # if type is omited, it trys the name field for type,

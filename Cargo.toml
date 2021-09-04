@@ -13,6 +13,7 @@ path = "src/main.rs"
 default = ["quic","metrics"]
 quic = ["quinn","futures-util","pin-project-lite"]
 metrics = ["axum","tower","tower-http"]
+embedded-ui = ["metrics"]
 
 [dependencies]
 milu = { path = "milu" }
@@ -33,9 +34,10 @@ quinn = { version = "0.7.2", optional = true}
 futures-util = { version = "0.3.17", optional = true}
 pin-project-lite = { version = "0.2.6", optional = true }
 
-axum = { version = "0.2.3", optional = true}
+axum = { version = "0.2.3", optional = true }
 tower = { version = "0.4", optional = true }
-tower-http = { version = "0.1", optional = true, features = ["add-extension"] }
+tower-http = { version = "0.1", optional = true, features = ["add-extension","fs"] }
+mime_guess = {version = "2.0.3", optional = true}
 
 [dev-dependencies]
 tokio-test = "0.4.2"
