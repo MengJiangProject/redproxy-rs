@@ -28,10 +28,17 @@ pub struct MetricsServer {
 
     // location of static files to serve
     static_resource: Option<String>,
+
+    #[serde(default = "default_history_size")]
+    pub history_size: usize,
 }
 
 fn default_prefix() -> String {
     "/".into()
+}
+
+fn default_history_size() -> usize {
+    100
 }
 
 impl MetricsServer {
@@ -68,25 +75,33 @@ async fn root() -> &'static str {
 }
 
 async fn get_alive(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
-    let ret = futures::stream::iter(
-        state
-            .contexts
-            .alive
-            .lock()
-            .await
-            .values()
-            .filter_map(Weak::upgrade),
+    Json(
+        futures::stream::iter(
+            state
+                .contexts
+                .alive
+                .lock()
+                .await
+                .values()
+                .filter_map(Weak::upgrade),
+        )
+        .then(|x| async move { x.read().await.props().clone() })
+        .collect::<Vec<_>>()
+        .await,
     )
-    .then(|x| async move { x.read().await.props().clone() })
-    .collect::<Vec<_>>()
-    .await;
-    Json(ret)
 }
 
 async fn get_history(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
-    let ctxs = state.contexts.terminated.lock().await;
-    let ret = ctxs.iter().cloned().collect::<Vec<_>>();
-    Json(ret)
+    Json(
+        state
+            .contexts
+            .terminated
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+    )
 }
 
 struct MyError(Error);

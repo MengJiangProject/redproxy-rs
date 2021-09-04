@@ -167,10 +167,10 @@ pub struct ContextProps {
     pub id: u64,
     pub state: Vec<ContextStateLog>,
     pub listener: String,
+    pub connector: String,
     pub source: SocketAddr,
     pub target: TargetAddress,
-    pub client_sent: Arc<AtomicUsize>,
-    pub server_sent: Arc<AtomicUsize>,
+    pub error: String,
 }
 
 impl std::hash::Hash for ContextProps {
@@ -191,10 +191,10 @@ impl Default for ContextProps {
             id: Default::default(),
             state: Default::default(),
             listener: Default::default(),
+            connector: Default::default(),
             source: ([0, 0, 0, 0], 0).into(),
             target: TargetAddress::Unknown,
-            client_sent: Default::default(),
-            server_sent: Default::default(),
+            error: Default::default(),
         }
     }
 }
@@ -205,12 +205,14 @@ use std::sync::Mutex as StdMutex;
 
 #[derive(Default)]
 pub struct GlobalState {
+    pub history_size: usize,
     next_id: AtomicU64,
     pub alive: Mutex<HashMap<u64, ContextWeakRef>>,
     pub terminated: Mutex<LinkedList<Arc<ContextProps>>>,
     // use std Mutex here because Drop is not async
     pub gc_list: StdMutex<Vec<Arc<ContextProps>>>,
 }
+
 impl GlobalState {
     pub async fn create_context(
         self: &Arc<Self>,
@@ -236,24 +238,22 @@ impl GlobalState {
         ret
     }
 
-    pub async fn drop_context(&self, props: Arc<ContextProps>) {
-        self.alive.lock().await.remove(&props.id).unwrap();
-        let mut list = self.terminated.lock().await;
-        list.push_back(props);
-        if list.len() > CONTEXT_HISTORY_LENGTH {
-            list.pop_front();
-        }
-    }
-
     pub fn gc_thread(self: Arc<Self>) {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                let list: Vec<_> = self.gc_list.lock().unwrap().drain(..).collect();
+                let mut list = Default::default();
+                std::mem::swap(self.gc_list.lock().unwrap().deref_mut(), &mut list);
                 if !list.is_empty() {
                     trace!("context gc: {}", list.len());
-                    for x in list {
-                        self.drop_context(x).await;
+                    let mut terminated = self.terminated.lock().await;
+                    let mut alive = self.alive.lock().await;
+                    for props in list {
+                        alive.remove(&props.id).unwrap();
+                        terminated.push_back(props);
+                    }
+                    while terminated.len() > self.history_size {
+                        terminated.pop_front();
                     }
                 }
             }
@@ -316,9 +316,16 @@ impl Context {
         self
     }
 
-    // Get status of the context.
-    pub fn status(&self) -> ContextStatus {
-        self.props.status.last().unwrap().status
+    /// Set the connector name.
+    pub fn set_connector(&mut self, connector: String) -> &mut Self {
+        Arc::make_mut(&mut self.props).connector = connector;
+        self
+    }
+
+    /// Set the error message.
+    pub fn set_error(&mut self, error: String) -> &mut Self {
+        Arc::make_mut(&mut self.props).error = error;
+        self
     }
 
     // Get state of the context.
@@ -365,6 +372,7 @@ impl ContextRefOps for ContextRef {
         self.write()
             .await
             .set_state(ContextState::ErrorOccured)
+            .set_error(format!("{} cause: {:?}", error, error.cause));
         if let Some(cb) = self.read().await.callback.clone() {
             cb.on_error(self.clone(), error).await
         }

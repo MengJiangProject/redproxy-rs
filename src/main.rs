@@ -1,4 +1,4 @@
-use context::{ContextRef, ContextStatus, GlobalState as ContextGlobalState};
+use context::{ContextRef, ContextState, GlobalState as ContextGlobalState};
 use easy_error::{err_msg, Terminator};
 use log::{info, warn};
 use metrics::MetricsServer;
@@ -69,6 +69,13 @@ async fn main() -> Result<(), Terminator> {
         st_mut.listeners = listeners::from_config(&cfg.listeners)?;
         st_mut.connectors = connectors::from_config(&cfg.connectors)?;
 
+        #[cfg(feature = "metrics")]
+        if let Some(mut metrics) = cfg.metrics {
+            metrics.init();
+            Arc::get_mut(&mut st_mut.contexts).unwrap().history_size = metrics.history_size;
+            st_mut.metrics = Some(Arc::new(metrics));
+        }
+
         for r in st_mut.rules.iter_mut() {
             r.init()?;
         }
@@ -92,12 +99,6 @@ async fn main() -> Result<(), Terminator> {
                 Err(err_msg(format!("target not found: {}", r.target_name())))
             }
         })?;
-
-        #[cfg(feature = "metrics")]
-        if let Some(mut metrics) = cfg.metrics {
-            metrics.init();
-            st_mut.metrics = Some(Arc::new(metrics));
-        }
     }
 
     if config_test {
@@ -151,6 +152,7 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
     ctx.write()
         .await
         .set_state(ContextState::ServerConnecting)
+        .set_connector(connector.name().to_owned());
     if let Err(e) = connector.connect(ctx.clone()).await {
         warn!("failed to connect to upstream: {} cause: {:?}", e, e.cause);
         return ctx.on_error(e).await;
