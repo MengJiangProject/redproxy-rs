@@ -137,7 +137,7 @@ impl Callable for Access {
         fn accessible<'a: 'b, 'b>(
             ctx: ScriptContextRef<'b>,
             obj: &dyn Accessible<'a>,
-            index: &Value<'a>,
+            index: &Value<'_>,
         ) -> Result<Type, Error> {
             let index = if let Value::Identifier(index) = index {
                 index
@@ -147,11 +147,7 @@ impl Callable for Access {
             obj.type_of(index, ctx)
         }
 
-        fn tuple<'a: 'b, 'b>(
-            _ctx: ScriptContextRef<'b>,
-            obj: Type,
-            index: &Value<'a>,
-        ) -> Result<Type, Error> {
+        fn tuple(_ctx: ScriptContextRef, obj: Type, index: &Value) -> Result<Type, Error> {
             let index = if let Value::Integer(index) = index {
                 index
             } else {
@@ -165,7 +161,14 @@ impl Callable for Access {
         }
 
         let obj = &args[0];
-        let index = &args[1]; // index is always a literal value, either identifier or integer
+        // if obj is an identifier, we need to resolve it from context
+        let obj = if let Value::Identifier(id) = obj {
+            ctx.lookup(id)?
+        } else {
+            obj.unsafe_clone()
+        };
+        // index is always a literal value, either identifier or integer
+        let index = &args[1];
         if let Value::NativeObject(obj) = obj {
             if let Some(obj) = obj.as_accessible() {
                 accessible(ctx, obj, index)
