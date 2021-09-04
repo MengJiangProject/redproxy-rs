@@ -2,6 +2,7 @@ apiVersion: v1alpha
 kind: ProxyDefinition
 
 metrics:
+  prefix: /api
   bind: 0.0.0.0:8888
 
 listeners:
@@ -69,6 +70,8 @@ connectors:
       insecure: true
 
 rules:
+  - filter: request.target =~ "127.0.0.1" || request.target =~ "localhost"
+    target: deny
   - filter: request.listener == "quic"
     target: direct
   # available varibles are request: { source: string, target: string, listener: string }

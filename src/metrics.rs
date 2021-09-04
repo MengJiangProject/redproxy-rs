@@ -45,16 +45,15 @@ impl MetricsServer {
     pub fn init(&mut self) {}
     pub async fn listen(self: Arc<Self>, state: Arc<GlobalState>) -> Result<(), Error> {
         tokio::spawn(async move {
-            let app = Router::new()
-                .route("/", get(root))
+            let api = Router::new()
                 .route("/contexts", get(get_alive))
                 .route("/history", get(get_history))
                 .layer(AddExtensionLayer::new(state))
                 .check_infallible();
-
+            let root = Router::new().nest(&self.prefix, api);
             info!("metrics server listening on {}", self.bind);
             axum::Server::bind(&self.bind)
-                .serve(app.into_make_service())
+                .serve(root.into_make_service())
                 .await
                 .unwrap();
         });
@@ -68,10 +67,6 @@ impl MetricsServer {
         // });
         Ok(())
     }
-}
-
-async fn root() -> &'static str {
-    "Hello, World!"
 }
 
 async fn get_alive(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
