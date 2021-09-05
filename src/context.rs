@@ -48,6 +48,33 @@ impl TargetAddress {
             _ => unreachable!(),
         }
     }
+    pub fn host(&self) -> String {
+        match self {
+            Self::DomainPort(x, _) => x.to_owned(),
+            Self::SocketAddr(x) => x.ip().to_string(),
+            Self::Unknown => "unknown".to_owned(),
+        }
+    }
+    pub fn port(&self) -> u16 {
+        match self {
+            Self::DomainPort(_, x) => *x,
+            Self::SocketAddr(x) => x.port(),
+            Self::Unknown => 0,
+        }
+    }
+    pub fn r#type(&self) -> &str {
+        match self {
+            Self::DomainPort(_, _) => "domain",
+            Self::SocketAddr(x) => {
+                if x.is_ipv4() {
+                    "ipv4"
+                } else {
+                    "ipv6"
+                }
+            }
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 impl From<(Ipv4Addr, u16)> for TargetAddress {
@@ -179,6 +206,7 @@ pub struct ContextProps {
     pub error: Option<String>,
     pub client_stat: Arc<ContextStatistics>,
     pub server_stat: Arc<ContextStatistics>,
+    pub extra: HashMap<String, String>,
 }
 
 impl std::hash::Hash for ContextProps {
@@ -205,6 +233,7 @@ impl Default for ContextProps {
             error: Default::default(),
             client_stat: Default::default(),
             server_stat: Default::default(),
+            extra: Default::default(),
         }
     }
 }
