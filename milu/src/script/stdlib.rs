@@ -603,7 +603,7 @@ mod tests {
 
     macro_rules! int_op_test {
         ($name:ident, $fn:ident, $op:tt) => {
-            op_test!($name, $fn, [1234.into(),45.into()], (1234 $op 45).into());
+            op_test!($name, $fn, [1234.into(),4.into()], (1234 $op 4).into());
         };
     }
 

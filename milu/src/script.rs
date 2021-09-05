@@ -385,6 +385,10 @@ macro_rules! cast_value {
         cast_value_from!($ty, $name, 'a, |v| v);
         cast_value_to!($ty, $name, 'a, |v| v);
     };
+    ($ty:ty as $tx:ty, $name:ident) => {
+        cast_value_from!($ty, $name, 'a, |v| v as $tx);
+        cast_value_to!($ty, $name, 'a, |v| v as $ty);
+    };
     ($ty:ty, $name:ident <$a:lifetime> , boxed) => {
         cast_value_from!($ty, $name, $a, |v| Box::new(v));
         cast_value_to!($ty, $name, $a, |v| *v);
@@ -420,6 +424,12 @@ macro_rules! cast_value_from {
 
 cast_value!(String, String);
 cast_value!(i64, Integer);
+cast_value!(i32 as i64, Integer);
+cast_value!(i16 as i64, Integer);
+cast_value!(i8 as i64, Integer);
+cast_value!(u32 as i64, Integer);
+cast_value!(u16 as i64, Integer);
+cast_value!(u8 as i64, Integer);
 cast_value!(bool, Boolean);
 cast_value!(Vec<Value<'a>>, Array<'a>, arc);
 cast_value!(Call<'a>, OpCall<'a>, arc);
