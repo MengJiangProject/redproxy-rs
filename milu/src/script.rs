@@ -14,7 +14,7 @@ pub enum Type {
     Boolean,
     Array(Box<Type>),
     Tuple(Vec<Type>),
-    NativeObject,
+    NativeObject(Arc<NativeObjectRef>),
     Null,
     Any, //native only
 }
@@ -39,7 +39,7 @@ impl PartialEq for Type {
             (Boolean, Boolean) => true,
             (Array(a), Array(b)) => a == b,
             (Tuple(a), Tuple(b)) => a == b,
-            (NativeObject, NativeObject) => true,
+            (NativeObject(a), NativeObject(b)) => a == b,
             (Null, Null) => true,
             _ => false,
         }
@@ -49,9 +49,9 @@ impl PartialEq for Type {
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            &Self::String => write!(f, "string"),
-            &Self::Integer => write!(f, "integer"),
-            &Self::Boolean => write!(f, "boolean"),
+            Self::String => write!(f, "string"),
+            Self::Integer => write!(f, "integer"),
+            Self::Boolean => write!(f, "boolean"),
             Self::Array(a) => write!(f, "[{}]", a),
             Self::Tuple(t) => write!(
                 f,
@@ -61,9 +61,9 @@ impl Display for Type {
                     .collect::<Vec<_>>()
                     .join(",")
             ),
-            &Self::NativeObject => write!(f, "native"),
-            &Self::Null => write!(f, "null"),
-            &Self::Any => write!(f, "any"),
+            Self::NativeObject(x) => write!(f, "native@{:x}", x.gen_hash()),
+            Self::Null => write!(f, "null"),
+            Self::Any => write!(f, "any"),
         }
     }
 }
@@ -129,7 +129,7 @@ impl Indexable for Vec<Value> {
         if i >= self.len() {
             bail!("index out of bounds: {}", i)
         }
-        Ok(self[i].unsafe_clone())
+        Ok(self[i].clone())
     }
 }
 
@@ -241,9 +241,9 @@ pub enum Value {
 }
 
 impl Value {
-    fn unsafe_clone(&self) -> Value {
-        unsafe { std::mem::transmute(self.clone()) }
-    }
+    // fn unsafe_clone(&self) -> Value {
+    //     unsafe { std::mem::transmute(self.clone()) }
+    // }
     fn as_vec(&self) -> &Vec<Value> {
         match self {
             Self::Array(a) => a,
@@ -319,9 +319,7 @@ impl Evaluatable for Value {
                 }
                 Ok(Type::Tuple(ret))
             }
-            NativeObject(o) => o
-                .as_evaluatable()
-                .map_or_else(|| Ok(Type::NativeObject), |x| x.type_of(ctx)),
+            NativeObject(o) => Ok(Type::NativeObject(o.clone())),
         }
     }
 
@@ -335,10 +333,10 @@ impl Evaluatable for Value {
                 if let Some(e) = e {
                     e.value_of(ctx)
                 } else {
-                    Ok(self.unsafe_clone())
+                    Ok(self.clone())
                 }
             }
-            _ => Ok(self.unsafe_clone()),
+            _ => Ok(self.clone()),
         }
     }
 }
@@ -483,7 +481,7 @@ impl Call {
         let func = if let Value::Identifier(_) = &self.func {
             self.func.value_of(ctx)?
         } else {
-            self.func.unsafe_clone()
+            self.func.clone()
         };
         if let Value::NativeObject(x) = func {
             if x.as_callable().is_some() {

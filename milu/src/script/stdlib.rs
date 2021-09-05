@@ -1,6 +1,7 @@
 use std::convert::TryInto;
 
 use easy_error::bail;
+use log::trace;
 
 use super::*;
 
@@ -57,7 +58,17 @@ macro_rules! function {
             {
                 let mut targs : Vec<Type> = Vec::with_capacity(args.len());
                 for x in args {
-                    targs.push(x.type_of(ctx.clone())?);
+                    let t = x.type_of(ctx.clone())?;
+                    let t = if let Type::NativeObject(o) = t {
+                        if let Some(e) = o.as_evaluatable() {
+                            e.type_of(ctx.clone())?
+                        }else{
+                            Type::NativeObject(o)
+                        }
+                    }else{
+                        t
+                    };
+                    targs.push(t);
                 }
                 args!(targs, $($aname),+);
                 use Type::*;
@@ -150,14 +161,11 @@ impl Callable for Access {
 
         let obj = &args[0];
         // if obj is an identifier, we need to resolve it from context
-        let obj = if let Value::Identifier(id) = obj {
-            ctx.lookup(id)?
-        } else {
-            obj.unsafe_clone()
-        };
+        let objt = obj.type_of(ctx.clone())?;
+        trace!("obj={:?} objt={:?}", obj, objt);
         // index is always a literal value, either identifier or integer
         let index = &args[1];
-        if let Value::NativeObject(obj) = obj {
+        if let Type::NativeObject(obj) = objt {
             if let Some(obj) = obj.as_accessible() {
                 accessible(ctx, obj, index)
             } else if let Some(obj) = obj.as_evaluatable() {
@@ -166,9 +174,8 @@ impl Callable for Access {
             } else {
                 bail!("NativeObject not accessible or tuple")
             }
-        } else if let Value::Tuple(_) = obj {
-            let obj = obj.type_of(ctx.clone())?;
-            tuple(ctx, obj, index)
+        } else if let Type::Tuple(_) = objt {
+            tuple(ctx, objt, index)
         } else {
             bail!("Object {:?} is not Tuple nor Accessible", obj)
         }
@@ -293,7 +300,7 @@ impl Scope {
         for v in vars.iter() {
             let t = v.as_vec();
             let id: String = t[0].as_str().to_owned();
-            let value = t[1].unsafe_clone();
+            let value = t[1].clone();
             let value = ScopeBinding {
                 ctx: ctx.clone(),
                 value,
