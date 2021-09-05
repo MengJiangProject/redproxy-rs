@@ -589,4 +589,84 @@ mod tests {
         type_test("(1,\"2\",false).1", Type::String);
         eval_test!("(1,\"2\",false).1", "2".into());
     }
+
+    #[test]
+    fn native_objects() {
+        let mut ctx = ScriptContext::new(Some(Default::default()));
+        ctx.set("a".into(), ("xx".to_owned(), 1).into());
+        let ctx: ScriptContextRef = ctx.into();
+        let value = parse("a.length+1+a.x")
+            .unwrap()
+            .value_of(ctx.clone())
+            .unwrap();
+        assert_eq!(value, 4.into());
+        // this test if "a" could be used as Indexable, Accessible, Evaluatable at sametime
+        let value = parse("a[a.x] > 200 ? a : \"yy\"")
+            .unwrap()
+            .value_of(ctx)
+            .unwrap();
+        assert_eq!(value, "yy".into());
+    }
+
+    impl NativeObject for (String, u32) {
+        fn as_accessible(&self) -> Option<&dyn Accessible> {
+            Some(self)
+        }
+        fn as_evaluatable(&self) -> Option<&dyn Evaluatable> {
+            Some(self)
+        }
+        fn as_indexable(&self) -> Option<&dyn Indexable> {
+            Some(self)
+        }
+    }
+
+    impl Accessible for (String, u32) {
+        fn names(&self) -> Vec<&str> {
+            vec!["length", "x"]
+        }
+
+        fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
+            match name {
+                "length" | "x" => Ok(Type::Integer),
+                _ => bail!("no such property"),
+            }
+        }
+
+        fn get(&self, name: &str) -> Result<Value, Error> {
+            match name {
+                "length" => Ok((self.0.len() as i64).into()),
+                "x" => Ok(self.1.into()),
+                _ => bail!("no such property"),
+            }
+        }
+    }
+
+    impl Indexable for (String, u32) {
+        fn length(&self) -> usize {
+            self.0.len()
+        }
+
+        fn type_of_member(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
+            Ok(Type::Integer)
+        }
+
+        fn get(&self, index: i64) -> Result<Value, Error> {
+            let n = self
+                .0
+                .chars()
+                .nth(index as usize)
+                .ok_or_else(|| err_msg("index out of range"))? as i64;
+            Ok(n.into())
+        }
+    }
+
+    impl Evaluatable for (String, u32) {
+        fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
+            Ok(Type::String)
+        }
+
+        fn value_of(&self, _ctx: ScriptContextRef) -> Result<Value, Error> {
+            Ok(self.0.to_owned().into())
+        }
+    }
 }

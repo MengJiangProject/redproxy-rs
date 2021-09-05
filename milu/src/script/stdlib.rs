@@ -40,11 +40,24 @@ macro_rules! function_head {
 macro_rules! args {
     ($args:ident, $($aname:ident),+) => {
         let mut iter = $args.into_iter();
-        $(let $aname: Type = iter.next().unwrap();)+
+        $(let $aname = iter.next().unwrap();)+
     };
     ($args:ident, ctx=$ctx:ident, $($aname:ident),+) => {
         let mut iter = $args.into_iter();
-        $(let $aname = iter.next().unwrap().value_of($ctx.clone())?;)+
+        $(
+            let $aname = {
+                let x = iter.next().unwrap().value_of($ctx.clone())?;
+                if let Value::NativeObject(o) = x {
+                    if let Some(e) = o.as_evaluatable() {
+                        e.value_of($ctx.clone())?
+                    }else{
+                        Value::NativeObject(o)
+                    }
+                }else{
+                    x
+                }
+            };
+        )+
     }
 }
 
@@ -119,8 +132,9 @@ impl Callable for Index {
         }
     }
     fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
-        args!(args, ctx = ctx, obj, index);
-        let index: i64 = index.try_into()?;
+        args!(args, obj, index);
+        let index: i64 = index.value_of(ctx.clone())?.try_into()?;
+        let obj = obj.value_of(ctx.clone())?;
         let obj: &dyn Indexable = match &obj {
             Value::Array(a) => a.as_ref(),
             Value::NativeObject(a) => a
