@@ -76,7 +76,7 @@ fn parse2(op: Span, p1: Value, p2: Value) -> Value {
         "!=" => NotEqual::make_call(p1, p2).into(),
         "=~" => Like::make_call(p1, p2).into(),
         "!~" => NotLike::make_call(p1, p2).into(),
-        "_:" => MemberOf::make_call(p1, p2).into(),
+        "_:" => IsMemberOf::make_call(p1, p2).into(),
         //prioity 2.x
         "&" => BitAnd::make_call(p1, p2).into(),
         "^" => BitXor::make_call(p1, p2).into(),
@@ -538,7 +538,7 @@ mod tests {
     expr!(mul, Multiply);
     expr!(div, Divide);
     expr!(equal, Equal);
-    expr!(member_of, MemberOf);
+    expr!(member_of, IsMemberOf);
     expr!(call, Call, new);
     expr!(scope, Scope);
     expr!(index, Index);

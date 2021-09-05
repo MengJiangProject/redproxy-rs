@@ -342,8 +342,8 @@ impl Callable for Scope {
     }
 }
 
-function_head!(MemberOf(a: Any, ary: Array) => Boolean);
-impl Callable for MemberOf {
+function_head!(IsMemberOf(a: Any, ary: Array) => Boolean);
+impl Callable for IsMemberOf {
     fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
@@ -605,8 +605,8 @@ mod tests {
     op_test!(not_like, NotLike, ["abc".into(), "a".into()], false.into());
 
     op_test!(
-        member_of,
-        MemberOf,
+        is_member_of,
+        IsMemberOf,
         [1.into(), vec![1.into()].into()],
         true.into()
     );
