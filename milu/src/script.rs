@@ -328,14 +328,14 @@ impl Evaluatable for Value {
         match self {
             Self::Identifier(id) => ctx.lookup(id).and_then(|x| x.value_of(ctx)),
             Self::OpCall(f) => f.call(ctx),
-            Self::NativeObject(f) => {
-                let e = f.as_evaluatable();
-                if let Some(e) = e {
-                    e.value_of(ctx)
-                } else {
-                    Ok(self.clone())
-                }
-            }
+            // Self::NativeObject(f) => {
+            //     let e = f.as_evaluatable();
+            //     if let Some(e) = e {
+            //         e.value_of(ctx)
+            //     } else {
+            //         Ok(self.clone())
+            //     }
+            // }
             _ => Ok(self.clone()),
         }
     }
