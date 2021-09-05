@@ -68,80 +68,58 @@ impl Display for Type {
     }
 }
 
-pub trait Evaluatable<'a> {
-    fn type_of<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Type, Error>
-    where
-        'a: 'b;
-    fn value_of<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Value<'b>, Error>
-    where
-        'a: 'b;
+pub trait Evaluatable {
+    fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error>;
+    fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error>;
 }
 
-pub trait Indexable<'a> {
+pub trait Indexable {
     fn length(&self) -> usize;
-    fn type_of<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Type, Error>
-    where
-        'a: 'b;
-    fn get(&self, index: i64) -> Result<Value<'a>, Error>;
+    fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error>;
+    fn get(&self, index: i64) -> Result<Value, Error>;
 }
 
-pub trait Accessible<'a> {
+pub trait Accessible {
     fn names(&self) -> Vec<&str>;
-    fn type_of<'b>(&self, name: &str, ctx: ScriptContextRef<'b>) -> Result<Type, Error>
-    where
-        'a: 'b;
-    fn get(&self, name: &str) -> Result<Value<'a>, Error>;
+    fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error>;
+    fn get(&self, name: &str) -> Result<Value, Error>;
 }
 
 pub trait Callable {
     // should not return Any
-    fn signature<'a: 'b, 'b>(
-        &self,
-        ctx: ScriptContextRef<'b>,
-        args: &[Value<'a>],
-    ) -> Result<Type, Error>;
-    fn call<'a: 'b, 'b>(
-        &self,
-        ctx: ScriptContextRef<'b>,
-        args: &[Value<'a>],
-    ) -> Result<Value<'b>, Error>;
-    fn unresovled_ids<'a, 'b>(&self, args: &'a [Value<'b>], ids: &mut HashSet<&'a Value<'b>>) {
+    fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error>;
+    fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error>;
+    fn unresovled_ids<'s: 'o, 'o>(&self, args: &'s [Value], ids: &mut HashSet<&'o Value>) {
         args.iter().for_each(|v| v.unresovled_ids(ids))
     }
 }
 
-impl<'a> Accessible<'a> for HashMap<String, Value<'a>> {
+impl Accessible for HashMap<String, Value> {
     fn names(&self) -> Vec<&str> {
         self.keys().map(String::as_str).collect()
     }
 
-    fn type_of<'b>(&self, name: &str, ctx: ScriptContextRef<'b>) -> Result<Type, Error>
-    where
-        'a: 'b,
-    {
+    fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error> {
         Accessible::get(self, name).and_then(|x| x.type_of(ctx))
     }
 
-    fn get(&self, name: &str) -> Result<Value<'a>, Error> {
+    fn get(&self, name: &str) -> Result<Value, Error> {
         self.get(name)
             .cloned()
             .ok_or_else(|| err_msg(format!("undefined: {}", name)))
     }
 }
 
-impl<'a> Indexable<'a> for Vec<Value<'a>> {
+impl Indexable for Vec<Value> {
     fn length(&self) -> usize {
         self.len()
     }
 
-    fn type_of<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Type, Error>
-    where
-        'a: 'b,
-    {
+    fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
         Indexable::get(self, 0).and_then(|x| x.type_of(ctx))
     }
 
-    fn get(&self, index: i64) -> Result<Value<'a>, Error> {
+    fn get(&self, index: i64) -> Result<Value, Error> {
         let index: Result<usize, std::num::TryFromIntError> = if index >= 0 {
             index.try_into()
         } else {
@@ -160,9 +138,9 @@ pub trait NativeObjectHash {
     fn hash_with_state(&self, st: &mut dyn std::hash::Hasher);
 }
 
-impl<'a, T> NativeObjectHash for T
+impl<T> NativeObjectHash for T
 where
-    T: std::hash::Hash + ?Sized + NativeObject<'a>,
+    T: std::hash::Hash + ?Sized + NativeObject,
 {
     fn gen_hash(&self) -> u64 {
         use std::hash::Hasher;
@@ -175,14 +153,14 @@ where
     }
 }
 
-pub trait NativeObject<'a>: std::fmt::Debug + NativeObjectHash {
-    fn as_evaluatable(&self) -> Option<&dyn Evaluatable<'a>> {
+pub trait NativeObject: std::fmt::Debug + NativeObjectHash {
+    fn as_evaluatable(&self) -> Option<&dyn Evaluatable> {
         None
     }
-    fn as_accessible(&self) -> Option<&dyn Accessible<'a>> {
+    fn as_accessible(&self) -> Option<&dyn Accessible> {
         None
     }
-    fn as_indexable(&self) -> Option<&dyn Indexable<'a>> {
+    fn as_indexable(&self) -> Option<&dyn Indexable> {
         None
     }
     fn as_callable(&self) -> Option<&dyn Callable> {
@@ -190,41 +168,38 @@ pub trait NativeObject<'a>: std::fmt::Debug + NativeObjectHash {
     }
 }
 
-type NativeObjectRef<'a> = Box<dyn NativeObject<'a> + Send + Sync + 'a>;
-impl<'a> Eq for NativeObjectRef<'a> {}
-impl<'a> PartialEq for NativeObjectRef<'a> {
-    fn eq(&self, other: &NativeObjectRef<'a>) -> bool {
+type NativeObjectRef = Box<dyn NativeObject + Send + Sync>;
+impl Eq for NativeObjectRef {}
+impl PartialEq for NativeObjectRef {
+    fn eq(&self, other: &NativeObjectRef) -> bool {
         // println!("self={:?} hash={}", self, self.hash());
         // println!("other={:?} hash={}", other, other.hash());
         self.gen_hash() == other.gen_hash()
     }
 }
 
-impl<'a> std::hash::Hash for NativeObjectRef<'a> {
+impl std::hash::Hash for NativeObjectRef {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.hash_with_state(state)
     }
 }
 
-pub struct ScriptContext<'a> {
-    parent: Option<ScriptContextRef<'a>>,
-    varibles: HashMap<String, Value<'a>>,
+pub struct ScriptContext {
+    parent: Option<ScriptContextRef>,
+    varibles: HashMap<String, Value>,
 }
 
-pub type ScriptContextRef<'a> = Arc<ScriptContext<'a>>;
+pub type ScriptContextRef = Arc<ScriptContext>;
 
-impl<'a> ScriptContext<'a> {
-    pub fn new<'b>(parent: Option<ScriptContextRef<'b>>) -> Self
-    where
-        'b: 'a,
-    {
+impl ScriptContext {
+    pub fn new(parent: Option<ScriptContextRef>) -> Self {
         let parent = unsafe { std::mem::transmute(parent) };
         Self {
             parent,
             varibles: Default::default(),
         }
     }
-    pub fn lookup(&self, id: &str) -> Result<Value<'a>, Error> {
+    pub fn lookup(&self, id: &str) -> Result<Value, Error> {
         if let Some(r) = self.varibles.get(id) {
             log::trace!("lookup({})={}", id, r);
             Ok(r.clone())
@@ -234,12 +209,12 @@ impl<'a> ScriptContext<'a> {
             bail!("\"{}\" is undefined", id)
         }
     }
-    pub fn set(&mut self, id: String, value: Value<'a>) {
+    pub fn set(&mut self, id: String, value: Value) {
         self.varibles.insert(id, value);
     }
 }
 
-impl Default for ScriptContext<'_> {
+impl Default for ScriptContext {
     fn default() -> Self {
         let mut varibles = HashMap::default();
         varibles.insert("to_string".to_string(), stdlib::ToString::stub().into());
@@ -253,26 +228,23 @@ impl Default for ScriptContext<'_> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum Value<'a> {
+pub enum Value {
     Null,
     Integer(i64),
     Boolean(bool),
     String(String),
     Identifier(String),
-    Array(Arc<Vec<Value<'a>>>),
-    Tuple(Arc<Vec<Value<'a>>>),
-    OpCall(Arc<Call<'a>>),
-    NativeObject(Arc<NativeObjectRef<'a>>),
+    Array(Arc<Vec<Value>>),
+    Tuple(Arc<Vec<Value>>),
+    OpCall(Arc<Call>),
+    NativeObject(Arc<NativeObjectRef>),
 }
 
-impl<'a> Value<'a> {
-    fn unsafe_clone<'b>(&self) -> Value<'b>
-    where
-        'a: 'b,
-    {
+impl Value {
+    fn unsafe_clone(&self) -> Value {
         unsafe { std::mem::transmute(self.clone()) }
     }
-    fn as_vec(&self) -> &Vec<Value<'a>> {
+    fn as_vec(&self) -> &Vec<Value> {
         match self {
             Self::Array(a) => a,
             Self::Tuple(a) => a,
@@ -293,10 +265,7 @@ impl<'a> Value<'a> {
             _ => panic!("as_i64: type mismatch, possible bug in parse"),
         }
     }
-    fn unresovled_ids<'b>(&'b self, ids: &mut HashSet<&'b Value<'a>>)
-    where
-        'a: 'b,
-    {
+    fn unresovled_ids<'s: 'o, 'o>(&'s self, ids: &mut HashSet<&'o Value>) {
         match self {
             Self::Identifier(_) => {
                 ids.insert(self);
@@ -316,11 +285,8 @@ impl<'a> Value<'a> {
     }
 }
 
-impl<'a> Evaluatable<'a> for Value<'a> {
-    fn type_of<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Type, Error>
-    where
-        'a: 'b,
-    {
+impl Evaluatable for Value {
+    fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
         log::trace!("type_of={}", self);
         use Value::*;
         match self {
@@ -359,10 +325,7 @@ impl<'a> Evaluatable<'a> for Value<'a> {
         }
     }
 
-    fn value_of<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Value<'b>, Error>
-    where
-        'a: 'b,
-    {
+    fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
         log::trace!("value_of={}", self);
         match self {
             Self::Identifier(id) => ctx.lookup(id).and_then(|x| x.value_of(ctx)),
@@ -382,27 +345,27 @@ impl<'a> Evaluatable<'a> for Value<'a> {
 
 macro_rules! cast_value {
     ($ty:ty, $name:ident) => {
-        cast_value_from!($ty, $name, 'a, |v| v);
-        cast_value_to!($ty, $name, 'a, |v| v);
+        cast_value_from!($ty, $name, |v| v);
+        cast_value_to!($ty, $name, |v| v);
     };
     ($ty:ty as $tx:ty, $name:ident) => {
-        cast_value_from!($ty, $name, 'a, |v| v as $tx);
-        cast_value_to!($ty, $name, 'a, |v| v as $ty);
+        cast_value_from!($ty, $name, |v| v as $tx);
+        cast_value_to!($ty, $name, |v| v as $ty);
     };
-    ($ty:ty, $name:ident <$a:lifetime> , boxed) => {
-        cast_value_from!($ty, $name, $a, |v| Box::new(v));
-        cast_value_to!($ty, $name, $a, |v| *v);
+    ($ty:ty, $name:ident, boxed) => {
+        cast_value_from!($ty, $name, |v| Box::new(v));
+        cast_value_to!($ty, $name, |v| *v);
     };
-    ($ty:ty, $name:ident <$a:lifetime> , arc) => {
-        cast_value_from!($ty, $name, $a, |v| Arc::new(v));
-        cast_value_to!(Arc<$ty>, $name, $a, |v| v);
+    ($ty:ty, $name:ident, arc) => {
+        cast_value_from!($ty, $name, |v| Arc::new(v));
+        cast_value_to!(Arc<$ty>, $name, |v| v);
     };
 }
 macro_rules! cast_value_to {
-    ($ty:ty, $name:ident, $a:lifetime, | $v: ident | $transfrom:expr) => {
-        impl<$a> TryFrom<Value<$a>> for $ty {
+    ($ty:ty, $name:ident, | $v: ident | $transfrom:expr) => {
+        impl TryFrom<Value> for $ty {
             type Error = easy_error::Error;
-            fn try_from(x: Value<$a>) -> Result<$ty, Self::Error> {
+            fn try_from(x: Value) -> Result<$ty, Self::Error> {
                 if let Value::$name($v) = x {
                     Ok($transfrom)
                 } else {
@@ -413,8 +376,8 @@ macro_rules! cast_value_to {
     };
 }
 macro_rules! cast_value_from {
-    ($ty:ty, $name:ident, $a:lifetime, | $v: ident | $transfrom:expr) => {
-        impl<$a> From<$ty> for Value<$a> {
+    ($ty:ty, $name:ident, | $v: ident | $transfrom:expr) => {
+        impl From<$ty> for Value {
             fn from($v: $ty) -> Self {
                 Self::$name($transfrom)
             }
@@ -431,25 +394,25 @@ cast_value!(u32 as i64, Integer);
 cast_value!(u16 as i64, Integer);
 cast_value!(u8 as i64, Integer);
 cast_value!(bool, Boolean);
-cast_value!(Vec<Value<'a>>, Array<'a>, arc);
-cast_value!(Call<'a>, OpCall<'a>, arc);
+cast_value!(Vec<Value>, Array, arc);
+cast_value!(Call, OpCall, arc);
 
-impl From<&str> for Value<'_> {
+impl From<&str> for Value {
     fn from(x: &str) -> Self {
         Self::String(x.into())
     }
 }
 
-impl<'a, T> From<T> for Value<'a>
+impl<T> From<T> for Value
 where
-    T: NativeObject<'a> + Send + Sync + 'a,
+    T: NativeObject + Send + Sync + 'static,
 {
     fn from(x: T) -> Self {
         Value::NativeObject(Arc::new(Box::new(x)))
     }
 }
 
-impl std::fmt::Display for Value<'_> {
+impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use Value::*;
         match self {
@@ -482,11 +445,11 @@ impl std::fmt::Display for Value<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Call<'a> {
-    func: Value<'a>,
-    args: Vec<Value<'a>>,
+pub struct Call {
+    func: Value,
+    args: Vec<Value>,
 }
-impl std::fmt::Display for Call<'_> {
+impl std::fmt::Display for Call {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -501,31 +464,22 @@ impl std::fmt::Display for Call<'_> {
     }
 }
 
-impl<'a> Call<'a> {
-    pub fn new(mut args: Vec<Value<'a>>) -> Self {
+impl Call {
+    pub fn new(mut args: Vec<Value>) -> Self {
         let func = args.remove(0);
         Self { func, args }
     }
-    fn signature<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Type, Error>
-    where
-        'a: 'b,
-    {
+    fn signature(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
         let func = self.func(ctx.clone())?;
         let func = func.as_callable().unwrap();
         func.signature(ctx, &self.args)
     }
-    fn call<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Value<'b>, Error>
-    where
-        'a: 'b,
-    {
+    fn call(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
         let func = self.func(ctx.clone())?;
         let func = func.as_callable().unwrap();
         func.call(ctx, &self.args)
     }
-    fn func<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Arc<NativeObjectRef<'b>>, Error>
-    where
-        'a: 'b,
-    {
+    fn func(&self, ctx: ScriptContextRef) -> Result<Arc<NativeObjectRef>, Error> {
         let func = if let Value::Identifier(_) = &self.func {
             self.func.value_of(ctx)?
         } else {
@@ -541,7 +495,7 @@ impl<'a> Call<'a> {
             bail!("func does not implement Callable: {:?}", func)
         }
     }
-    fn unresovled_ids<'b>(&'b self, list: &mut HashSet<&'b Value<'a>>) {
+    fn unresovled_ids<'s: 'o, 'o>(&'s self, list: &mut HashSet<&'o Value>) {
         if self.func.is_identifier() {
             list.insert(&self.func);
         } else if let Value::NativeObject(x) = &self.func {

@@ -12,13 +12,13 @@ macro_rules! function_head {
         pub struct $name(String);
 
         #[allow(dead_code)]
-        impl<'a> $name {
+        impl $name {
             pub fn stub() -> $name {$name(stringify!($name).into())}
-            pub fn make_call($($aname : Value<'a>),+) -> Call<'a> {
+            pub fn make_call($($aname : Value),+) -> Call {
                 Call::new(vec![$name(stringify!($name).into()).into(), $($aname),+ ])
             }
         }
-        impl<'a> NativeObject<'a> for $name {
+        impl NativeObject for $name {
             fn as_callable(&self) -> Option<&dyn Callable>{Some(self)}
         }
         impl std::fmt::Display for $name {
@@ -49,10 +49,10 @@ macro_rules! function {
     ($name:ident ($($aname:ident : $atype:ident),+) => $rtype:expr, $self:ident, $body:tt) => {
         function_head!($name ($($aname : $atype),+) => $rtype);
         impl Callable for $name {
-            fn signature<'a:'b,'b>(
+            fn signature(
                 &self,
-                ctx: ScriptContextRef<'b>,
-                args: &[Value<'a>],
+                ctx: ScriptContextRef,
+                args: &[Value],
             ) -> Result<Type, Error>
             {
                 let mut targs : Vec<Type> = Vec::with_capacity(args.len());
@@ -70,11 +70,11 @@ macro_rules! function {
                 })+
                 Ok($rtype)
             }
-            fn call<'a:'b,'b>(
+            fn call(
                 &self,
-                ctx: ScriptContextRef<'b>,
-                args: &[Value<'a>],
-            ) -> Result<Value<'b>, Error>
+                ctx: ScriptContextRef,
+                args: &[Value],
+            ) -> Result<Value, Error>
             {
                 args!(args, ctx=ctx, $($aname),+);
                 $body
@@ -87,11 +87,7 @@ macro_rules! function {
 // Can not access a tuple dynamically because it's not able to do type inference statically.
 function_head!(Index(obj: Any, index: Any) => Any);
 impl Callable for Index {
-    fn signature<'a: 'b, 'b>(
-        &self,
-        ctx: ScriptContextRef<'b>,
-        args: &[Value<'a>],
-    ) -> Result<Type, Error> {
+    fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
         let obj = &args[0];
         let index = &args[1];
         if index.type_of(ctx.clone())? != Type::Integer {
@@ -108,11 +104,7 @@ impl Callable for Index {
             bail!("Object does not implement Indexable: {:?}", obj)
         }
     }
-    fn call<'a: 'b, 'b>(
-        &self,
-        ctx: ScriptContextRef<'b>,
-        args: &[Value<'a>],
-    ) -> Result<Value<'b>, Error> {
+    fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
         args!(args, ctx = ctx, obj, index);
         let index: i64 = index.try_into()?;
         let obj: &dyn Indexable = match &obj {
@@ -129,15 +121,11 @@ impl Callable for Index {
 // Access a nativeobject or a tuple
 function_head!(Access(obj: Any, index: Any) => Any);
 impl Callable for Access {
-    fn signature<'a: 'b, 'b>(
-        &self,
-        ctx: ScriptContextRef<'b>,
-        args: &[Value<'a>],
-    ) -> Result<Type, Error> {
-        fn accessible<'a: 'b, 'b>(
-            ctx: ScriptContextRef<'b>,
-            obj: &dyn Accessible<'a>,
-            index: &Value<'_>,
+    fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+        fn accessible(
+            ctx: ScriptContextRef,
+            obj: &dyn Accessible,
+            index: &Value,
         ) -> Result<Type, Error> {
             let index = if let Value::Identifier(index) = index {
                 index
@@ -186,16 +174,12 @@ impl Callable for Access {
         }
     }
 
-    fn call<'a: 'b, 'b>(
-        &self,
-        ctx: ScriptContextRef<'b>,
-        args: &[Value<'a>],
-    ) -> Result<Value<'b>, Error> {
-        fn accessible<'a: 'b, 'b>(
-            ctx: ScriptContextRef<'b>,
-            obj: &dyn Accessible<'b>,
-            index: &Value<'a>,
-        ) -> Result<Value<'b>, Error> {
+    fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
+        fn accessible(
+            ctx: ScriptContextRef,
+            obj: &dyn Accessible,
+            index: &Value,
+        ) -> Result<Value, Error> {
             let index = if let Value::Identifier(index) = index {
                 index
             } else {
@@ -205,11 +189,7 @@ impl Callable for Access {
             ret.value_of(ctx)
         }
 
-        fn tuple<'a: 'b, 'b>(
-            ctx: ScriptContextRef<'b>,
-            obj: Value<'b>,
-            index: &Value<'a>,
-        ) -> Result<Value<'b>, Error> {
+        fn tuple(ctx: ScriptContextRef, obj: Value, index: &Value) -> Result<Value, Error> {
             let index = if let Value::Integer(index) = index {
                 index
             } else {
@@ -240,18 +220,14 @@ impl Callable for Access {
         }
     }
 
-    fn unresovled_ids<'a, 'b>(&self, args: &'a [Value<'b>], ids: &mut HashSet<&'a Value<'b>>) {
+    fn unresovled_ids<'s: 'o, 'o>(&self, args: &'s [Value], ids: &mut HashSet<&'o Value>) {
         args[0].unresovled_ids(ids) // args[1] is always literal identifier or integer, thus not unresolved
     }
 }
 
 function_head!(If(cond: Boolean, yes: Any, no: Any) => Any);
 impl Callable for If {
-    fn signature<'a: 'b, 'b>(
-        &self,
-        ctx: ScriptContextRef<'b>,
-        args: &[Value<'a>],
-    ) -> Result<Type, Error> {
+    fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
             targs.push(x.type_of(ctx.clone())?);
@@ -265,11 +241,7 @@ impl Callable for If {
         }
         Ok(yes)
     }
-    fn call<'a: 'b, 'b>(
-        &self,
-        ctx: ScriptContextRef<'b>,
-        args: &[Value<'a>],
-    ) -> Result<Value<'b>, Error> {
+    fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
         let cond: bool = args[0].value_of(ctx.clone())?.try_into()?;
         if cond {
             args[1].value_of(ctx)
@@ -279,12 +251,12 @@ impl Callable for If {
     }
 }
 
-struct ScopeBinding<'a> {
-    ctx: ScriptContextRef<'a>,
-    value: Value<'a>,
+struct ScopeBinding {
+    ctx: ScriptContextRef,
+    value: Value,
 }
 
-impl std::fmt::Debug for ScopeBinding<'_> {
+impl std::fmt::Debug for ScopeBinding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ScopeBinding")
             .field("value", &self.value)
@@ -292,43 +264,31 @@ impl std::fmt::Debug for ScopeBinding<'_> {
     }
 }
 
-impl std::hash::Hash for ScopeBinding<'_> {
+impl std::hash::Hash for ScopeBinding {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.value.hash(state);
     }
 }
 
-impl<'a> Evaluatable<'a> for ScopeBinding<'a> {
-    fn type_of<'b>(&self, _ctx: ScriptContextRef<'b>) -> Result<Type, Error>
-    where
-        'a: 'b,
-    {
+impl Evaluatable for ScopeBinding {
+    fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
         self.value.type_of(self.ctx.clone())
     }
 
-    fn value_of<'b>(&self, ctx: ScriptContextRef<'b>) -> Result<Value<'b>, Error>
-    where
-        'a: 'b,
-    {
+    fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
         self.value.value_of(self.ctx.clone())?.value_of(ctx)
     }
 }
 
-impl<'a> NativeObject<'a> for ScopeBinding<'a> {
-    fn as_evaluatable(&self) -> Option<&dyn Evaluatable<'a>> {
+impl NativeObject for ScopeBinding {
+    fn as_evaluatable(&self) -> Option<&dyn Evaluatable> {
         Some(self)
     }
 }
 
 function_head!(Scope(vars: Array, expr: Any) => Any);
 impl Scope {
-    fn make_context<'value, 'ctx>(
-        vars: &[Value<'value>],
-        ctx: ScriptContextRef<'ctx>,
-    ) -> Result<ScriptContextRef<'ctx>, Error>
-    where
-        'value: 'ctx,
-    {
+    fn make_context(vars: &[Value], ctx: ScriptContextRef) -> Result<ScriptContextRef, Error> {
         let mut nctx = ScriptContext::new(Some(ctx.clone()));
         for v in vars.iter() {
             let t = v.as_vec();
@@ -344,25 +304,17 @@ impl Scope {
     }
 }
 impl Callable for Scope {
-    fn signature<'a: 'b, 'b>(
-        &self,
-        ctx: ScriptContextRef<'b>,
-        args: &[Value<'a>],
-    ) -> Result<Type, Error> {
+    fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
         let ctx = Self::make_context(args[0].as_vec(), ctx)?;
         let expr = args[1].type_of(ctx)?;
         Ok(expr)
     }
-    fn call<'a: 'b, 'b>(
-        &self,
-        ctx: ScriptContextRef<'b>,
-        args: &[Value<'a>],
-    ) -> Result<Value<'b>, Error> {
+    fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
         let ctx = Self::make_context(args[0].as_vec(), ctx)?;
         args[1].value_of(ctx)
     }
 
-    fn unresovled_ids<'a, 'b>(&self, args: &'a [Value<'b>], ids: &mut HashSet<&'a Value<'b>>) {
+    fn unresovled_ids<'s: 'o, 'o>(&self, args: &'s [Value], ids: &mut HashSet<&'o Value>) {
         let mut unresolved = HashSet::new();
         args[1].unresovled_ids(&mut unresolved); // first get all unresolved ids in expr
 
@@ -382,11 +334,7 @@ impl Callable for Scope {
 
 function_head!(MemberOf(a: Any, ary: Array) => Boolean);
 impl Callable for MemberOf {
-    fn signature<'a: 'b, 'b>(
-        &self,
-        ctx: ScriptContextRef<'b>,
-        args: &[Value<'a>],
-    ) -> Result<Type, Error> {
+    fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
             targs.push(x.type_of(ctx.clone())?);
@@ -406,11 +354,7 @@ impl Callable for MemberOf {
         }
         Ok(Type::Boolean)
     }
-    fn call<'a: 'b, 'b>(
-        &self,
-        ctx: ScriptContextRef<'b>,
-        args: &[Value<'a>],
-    ) -> Result<Value<'b>, Error> {
+    fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
         args!(args, ctx = ctx, a, ary);
         let vec: Arc<Vec<Value>> = ary.try_into()?;
         let iter = vec.iter().map(|v| v.value_of(ctx.clone()));
@@ -558,32 +502,32 @@ mod tests {
     );
 
     #[derive(Debug)]
-    struct Test<'a> {
-        map: HashMap<String, Value<'a>>,
-        array: Vec<Value<'a>>,
+    struct Test {
+        map: HashMap<String, Value>,
+        array: Vec<Value>,
     }
 
-    impl<'a> Test<'a> {
+    impl Test {
         fn new() -> Self {
-            let mut map: HashMap<String, Value<'a>> = Default::default();
+            let mut map: HashMap<String, Value> = Default::default();
             map.insert("test".into(), 1.into());
             let array = vec![1.into(), 2.into(), 3.into()];
             Self { map, array }
         }
     }
 
-    impl std::hash::Hash for Test<'_> {
+    impl std::hash::Hash for Test {
         fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
             std::hash::Hash::hash(&self.map.keys().collect::<Vec<_>>(), state);
         }
     }
 
-    impl<'a> NativeObject<'a> for Test<'a> {
-        fn as_accessible(&self) -> Option<&dyn Accessible<'a>> {
+    impl NativeObject for Test {
+        fn as_accessible(&self) -> Option<&dyn Accessible> {
             Some(&self.map)
         }
 
-        fn as_indexable(&self) -> Option<&dyn Indexable<'a>> {
+        fn as_indexable(&self) -> Option<&dyn Indexable> {
             Some(&self.array)
         }
     }

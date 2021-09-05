@@ -20,7 +20,7 @@ use super::script::{Call, Value};
 
 pub type Span<'s> = LocatedSpan<&'s str>;
 
-fn parse_many<'v>(op: Span, mut args: Vec<Value<'v>>) -> Value<'v> {
+fn parse_many(op: Span, mut args: Vec<Value>) -> Value {
     let op = op.to_ascii_lowercase();
     match op.as_str() {
         //prioity 7
@@ -41,7 +41,7 @@ fn parse_many<'v>(op: Span, mut args: Vec<Value<'v>>) -> Value<'v> {
         _ => panic!("not implemented"),
     }
 }
-fn parse1<'v>(op: Span, p1: Value<'v>) -> Value<'v> {
+fn parse1(op: Span, p1: Value) -> Value {
     let op = op.to_ascii_lowercase();
     match op.as_str() {
         //prioity 7
@@ -51,7 +51,7 @@ fn parse1<'v>(op: Span, p1: Value<'v>) -> Value<'v> {
         _ => panic!("not implemented"),
     }
 }
-fn parse2<'v>(op: Span, p1: Value<'v>, p2: Value<'v>) -> Value<'v> {
+fn parse2(op: Span, p1: Value, p2: Value) -> Value {
     let op = op.to_ascii_lowercase();
 
     match op.as_str() {
@@ -201,17 +201,17 @@ where
     preceded(blank, f)
 }
 
-rule!(string -> Value<'static>, {
+rule!(string -> Value, {
     map(string::parse_string,Into::into)
 });
 
-rule!(boolean -> Value<'static>, {
+rule!(boolean -> Value, {
     let parse_true = nom::combinator::value(true, tag("true"));
     let parse_false = nom::combinator::value(false, tag("false"));
     map(alt((parse_true, parse_false)),Into::into)
 });
 
-rule!(null -> Value<'static>, {
+rule!(null -> Value, {
     nom::combinator::value(Value::Null, tag("null"))
 });
 
@@ -240,8 +240,8 @@ rule!(decimal, {
     recognize(many1(terminated(digit1, many0(char('_')))))
 });
 
-rule!(integer -> Value<'static>, {
-    fn atoi<'a>(n: u32) -> impl Fn(Span<'a>) -> Result<Value<'static>, ParseIntError> {
+rule!(integer -> Value, {
+    fn atoi<'a>(n: u32) -> impl Fn(Span<'a>) -> Result<Value, ParseIntError> {
         move |x| i64::from_str_radix(*x, n).map(Into::into)
     }
     alt((
@@ -252,7 +252,7 @@ rule!(integer -> Value<'static>, {
     ))
 });
 
-rule!(identifier -> Value<'static>, {
+rule!(identifier -> Value, {
     map(
         recognize(pair(
             alt((alpha1, tag("_"))),
@@ -262,7 +262,7 @@ rule!(identifier -> Value<'static>, {
     )
 });
 
-rule!(array -> Value<'static>, {
+rule!(array -> Value, {
     let body = terminated(
         separated_list0(ws(char(',')), op_0),
         opt(ws(char(',')))
@@ -270,7 +270,7 @@ rule!(array -> Value<'static>, {
     map(delimited(char('['), cut(body),ws(char(']'))), Into::into)
 });
 
-rule!(tuple -> Value<'static>, {
+rule!(tuple -> Value, {
     let body = map_opt(
         pair(many0(terminated(
             op_0,
@@ -289,7 +289,7 @@ rule!(tuple -> Value<'static>, {
     map(map(delimited(char('('), body,ws(char(')'))), Arc::new), Value::Tuple)
 });
 
-rule!(value -> Value<'static>, {
+rule!(value -> Value, {
     // println!("value: i={}", i);
     alt((
         string,
@@ -301,7 +301,7 @@ rule!(value -> Value<'static>, {
     ))
 });
 
-rule!(op_value -> Value<'static>, {
+rule!(op_value -> Value, {
     alt((
         delimited(char('('), ws(op_0), ws(char(')'))),
         delimited(char('('), ws(value), ws(char(')'))),
@@ -309,21 +309,21 @@ rule!(op_value -> Value<'static>, {
     ))
 });
 
-rule!(op_index -> (Span<'a>,Vec<Value<'static>>), {
+rule!(op_index -> (Span<'a>,Vec<Value>), {
     map(
         delimited(tag("["), op_0, ws(char(']'))),
         |idx| (Span::new("index"), vec![idx])
     )
 });
 
-rule!(op_access -> (Span<'a>,Vec<Value<'static>>), {
+rule!(op_access -> (Span<'a>,Vec<Value>), {
     map(
         preceded(tag("."), alt((identifier,integer))),
         |id| (Span::new("access"), vec![id])
     )
 });
 
-rule!(op_call -> (Span<'a>,Vec<Value<'static>>), {
+rule!(op_call -> (Span<'a>,Vec<Value>), {
     map(
         delimited(
             char('('),
@@ -334,7 +334,7 @@ rule!(op_call -> (Span<'a>,Vec<Value<'static>>), {
     )
 });
 
-rule!(op_8(i) -> Value<'static>, {
+rule!(op_8(i) -> Value, {
     map(
         nom_tuple((
             op_value,
@@ -355,7 +355,7 @@ rule!(op_8(i) -> Value<'static>, {
 });
 
 //unary opreator
-rule!(op_7(i) -> Value<'static>, {
+rule!(op_7(i) -> Value, {
     alt((
         map(nom_tuple((alt((tag("!"), tag("~"), tag("-"))), op_7)),
             |(op,p1)|parse1(op, p1)
@@ -366,7 +366,7 @@ rule!(op_7(i) -> Value<'static>, {
 
 macro_rules! op_rule {
     ($name:ident, $next:ident, $tags:expr ) => {
-        rule!($name(i) -> Value<'static>, {
+        rule!($name(i) -> Value, {
             map(
                 nom_tuple((
                     $next,
@@ -404,7 +404,7 @@ op_rule!(op_2_3, op_2_4, tag("|"));
 op_rule!(op_2, op_2_3, alt((tag("&&"), tag_no_case("and"))));
 op_rule!(op_1, op_2, alt((tag("||"), tag_no_case("or"))));
 
-rule!(op_if(i) -> Value<'static>, {
+rule!(op_if(i) -> Value, {
     map(
         alt((
             nom_tuple((
@@ -424,14 +424,14 @@ rule!(op_if(i) -> Value<'static>, {
     )
 });
 
-rule!(op_assign -> Value<'static>, {
+rule!(op_assign -> Value, {
     map(
         separated_pair(identifier,ws(tag("=")),op_0),
         |(name,value)| Value::Tuple(Arc::new(vec![name,value]))
     )
 });
 
-rule!(op_let -> Value<'static>, {
+rule!(op_let -> Value, {
     map(
         nom_tuple((
             preceded(tag("let"),
@@ -446,7 +446,7 @@ rule!(op_let -> Value<'static>, {
     )
 });
 
-rule!(op_0 -> Value<'static>, {
+rule!(op_0 -> Value, {
     alt((
         op_if,
         op_let,
@@ -454,11 +454,11 @@ rule!(op_0 -> Value<'static>, {
     ))
 });
 
-rule!(root(i)->Value<'static>, {
+rule!(root(i)->Value, {
     all_consuming(terminated(op_0,delimited(multispace0,opt(tag(";;")),multispace0)))
 });
 
-pub fn parse(input: &str) -> Result<Value<'static>, SyntaxError> {
+pub fn parse(input: &str) -> Result<Value, SyntaxError> {
     root::<VerboseError<Span>>(Span::new(input))
         .map(|x| x.1)
         .map_err(|err| SyntaxError::new(err, input))
@@ -592,7 +592,7 @@ mod tests {
     }
 
     #[inline]
-    fn assert_ast(input: &str, value: Value<'static>) {
+    fn assert_ast(input: &str, value: Value) {
         let output = parse(input);
         println!("input={}\noutput={:?}", input, output);
         assert_eq!(output.unwrap(), value);

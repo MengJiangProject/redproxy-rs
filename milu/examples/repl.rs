@@ -183,7 +183,7 @@ fn eval(ctx: ScriptContextRef, str: &str) -> bool {
         eprintln!("type inference error: {}", e);
         return false;
     }
-    let val = val.value_of(ctx.clone());
+    let val = val.value_of(ctx);
     if let Err(e) = val {
         eprintln!("eval error: {}", e);
         return false;
