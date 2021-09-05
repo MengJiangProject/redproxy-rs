@@ -5,6 +5,7 @@ use log::trace;
 
 use super::*;
 
+#[macro_export]
 macro_rules! function_head {
     ($name:ident ($($aname:ident : $atype:ident),+) => $rtype:expr) => {
 
@@ -35,6 +36,7 @@ macro_rules! function_head {
     };
 }
 
+#[macro_export]
 macro_rules! args {
     ($args:ident, $($aname:ident),+) => {
         let mut iter = $args.into_iter();
@@ -46,9 +48,10 @@ macro_rules! args {
     }
 }
 
+#[macro_export]
 macro_rules! function {
     ($name:ident ($($aname:ident : $atype:ident),+) => $rtype:expr, $self:ident, $body:tt) => {
-        function_head!($name ($($aname : $atype),+) => $rtype);
+        $crate::function_head!($name ($($aname : $atype),+) => $rtype);
         impl Callable for $name {
             fn signature(
                 &self,
@@ -70,7 +73,7 @@ macro_rules! function {
                     };
                     targs.push(t);
                 }
-                args!(targs, $($aname),+);
+                $crate::args!(targs, $($aname),+);
                 use Type::*;
                 $(if $aname != $atype {
                     bail!("argument {} type mismatch, required: {} provided: {:?}",
@@ -87,7 +90,7 @@ macro_rules! function {
                 args: &[Value],
             ) -> Result<Value, Error>
             {
-                args!(args, ctx=ctx, $($aname),+);
+                $crate::args!(args, ctx=ctx, $($aname),+);
                 $body
             }
         }
