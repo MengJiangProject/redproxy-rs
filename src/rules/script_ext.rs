@@ -1,5 +1,6 @@
 use cidr::AnyIpCidr;
 use easy_error::{bail, Error};
+use log::warn;
 use milu::script::{Call, ScriptContext};
 use milu::{
     function,
@@ -112,11 +113,18 @@ impl Accessible for TargetAddress {
 }
 
 function!(CidrMatch(ip: String, cidr: String)=>Type::Boolean, self, {
-    let ip:String = ip.try_into()?;
-    let cidr:String = cidr.try_into()?;
-    let ip = ip.parse();
-    let cidr = cidr.parse();
-    if ip.is_err() || cidr.is_err() { return Ok(false.into())}
+    let s_ip:String = ip.try_into()?;
+    let s_cidr:String = cidr.try_into()?;
+    let ip = s_ip.parse();
+    if ip.is_err() {
+        warn!("can not parse ip: {}", s_ip);
+        return Ok(false.into())
+    }
+    let cidr = s_cidr.parse();
+    if cidr.is_err() {
+        warn!("can not parse cidr: {}", s_cidr);
+        return Ok(false.into())
+    }
     let ip: IpAddr = ip.unwrap();
     let cidr: AnyIpCidr = cidr.unwrap();
     Ok(cidr.contains(&ip).into())
