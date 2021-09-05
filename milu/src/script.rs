@@ -75,7 +75,7 @@ pub trait Evaluatable {
 
 pub trait Indexable {
     fn length(&self) -> usize;
-    fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error>;
+    fn type_of_member(&self, ctx: ScriptContextRef) -> Result<Type, Error>;
     fn get(&self, index: i64) -> Result<Value, Error>;
 }
 
@@ -115,7 +115,7 @@ impl Indexable for Vec<Value> {
         self.len()
     }
 
-    fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
+    fn type_of_member(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
         Indexable::get(self, 0).and_then(|x| x.type_of(ctx))
     }
 

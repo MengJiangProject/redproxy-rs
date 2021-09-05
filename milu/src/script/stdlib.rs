@@ -108,7 +108,7 @@ impl Callable for Index {
             bail!("Index not a integer type")
         } else if let Value::NativeObject(nobj) = obj {
             if let Some(idx) = nobj.as_indexable() {
-                idx.type_of(ctx)
+                idx.type_of_member(ctx)
             } else {
                 bail!("NativeObject not in indexable")
             }
