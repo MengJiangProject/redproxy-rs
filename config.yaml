@@ -73,13 +73,13 @@ connectors:
       insecure: true
 
 rules:
-  - filter: request.target.host == "127.0.0.1" || request.target.host == "localhost"
+  - filter: cidr_match(request.target.host,"127.0.0.0/8") || request.target.host == "localhost"
     target: deny
   - filter: request.target.type == "domain"
     target: socks
-  - filter: request.listener == "quic"
+  - filter: request.listener == "quic" && request.target.port == 443
     target: direct
-  # available varibles are request: { source: string, target: string, listener: string }
+  # available varibles are request: { source: string, target: {port:int, host:string, type:string }, listener: string }
   # available functions: split(str,str)->[str] to_string(any)->str to_integer(str)->int
   - filter: request.source =~ "127.0.0.1" and request.target =~ "google.com"
     target: direct

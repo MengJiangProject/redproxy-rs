@@ -1,6 +1,7 @@
 // Any sufficiently complicated C or Fortran program contains an ad hoc, informally-specified, bug-ridden, slow implementation of half of Common Lisp.  --Greenspun's tenth rule
 
 mod filter;
+mod script_ext;
 use easy_error::{Error, ResultExt};
 use log::trace;
 use serde::{Deserialize, Serialize};
