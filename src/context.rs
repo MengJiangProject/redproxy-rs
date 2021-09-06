@@ -301,10 +301,10 @@ impl GlobalState {
                     let mut alive = self.alive.lock().await;
                     for props in list {
                         alive.remove(&props.id).unwrap();
-                        terminated.push_back(props);
+                        terminated.push_front(props);
                     }
                     while terminated.len() > self.history_size {
-                        terminated.pop_front();
+                        terminated.pop_back();
                     }
                 }
             }
