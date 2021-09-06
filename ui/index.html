@@ -2,22 +2,30 @@
 
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <script src="https://unpkg.com/vue@next"></script>
-    <script src="app.js"></script>
     <link rel="stylesheet" href="style.css" type="text/css" media="screen" />
+    <link rel="stylesheet" href="lib/bootstrap.min.css" type="text/css" media="screen" />
     <link rel="apple-touch-icon" sizes="180x180" href="images/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="images/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="images/favicon-16x16.png">
+    <script src="lib/vue.global.prod.js"></script>
+    <script src="app.js"></script>
 </head>
 
 <body>
-    <div id="dynamic-component-demo" class="demo">
-        <button v-for="tab in tabs" :key="tab" :class="['tab-button', { active: currentTab === tab }]"
-            @click="currentTab = tab">
-            {{ tab }}
-        </button>
-
-        <component :is="currentTabComponent" class="tab"></component>
+    <div id="root-component" class="root container">
+        <div id="nav" class="row">
+            <div class="col-10">
+                <button v-for="tab in tabs" :key="tab" :class="['tab-button', { active: currentTab === tab }]"
+                    @click="currentTab = tab">
+                    {{ tab }}
+                </button>
+            </div>
+            <div class="col-2 form-check form-switch">
+                <input class="form-check-input" type="checkbox" v-model="autoRefresh">
+                <label class="form-check-label" for="auto_refresh">Auto Refresh</label>
+            </div>
+        </div>
+        <component :is="currentTabComponent" class="tab" ref="current"></component>
     </div>
 </body>
 

@@ -3,7 +3,10 @@ use axum::{
     body::Body,
     extract::Extension,
     handler::{get, Handler},
-    http::{header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue, Response, StatusCode},
+    http::{
+        header::{ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL},
+        HeaderValue, Response, StatusCode,
+    },
     response::IntoResponse,
     routing::BoxRoute,
     Json, Router,
@@ -77,6 +80,10 @@ impl MetricsServer {
             .route("/live", get(get_alive))
             .route("/history", get(get_history))
             .layer(AddExtensionLayer::new(state))
+            .layer(SetResponseHeaderLayer::<_, Body>::if_not_present(
+                CACHE_CONTROL,
+                HeaderValue::from_static("no-store"),
+            ))
             .check_infallible();
 
         let root = if let Some(ui) = &self.ui {
@@ -87,11 +94,15 @@ impl MetricsServer {
 
         let root = root
             .nest(&self.api_prefix, api)
-            .or(not_found.into_service())
             .layer(SetResponseHeaderLayer::<_, Body>::if_not_present(
                 ACCESS_CONTROL_ALLOW_ORIGIN,
                 HeaderValue::from_str(&self.cors).unwrap(),
-            ));
+            ))
+            .layer(SetResponseHeaderLayer::<_, Body>::if_not_present(
+                CACHE_CONTROL,
+                HeaderValue::from_static("public, max-age=3600"),
+            ))
+            .or(not_found.into_service());
 
         tokio::spawn(async move {
             info!("metrics server listening on {}", self.bind);
