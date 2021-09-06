@@ -5,7 +5,7 @@ metrics:
   # api prefix, defaults to "/"
   prefix: /api
   # static files to serve, set to null to disable, set "<embedded>" to use embedded ui (if feature enabled)
-  ui: null
+  # ui: null
   bind: "[::]:8888"
 
 listeners:

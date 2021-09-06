@@ -22,9 +22,9 @@ fn gen_embedded_ui(base: &str) {
             r#"
 #[allow(dead_code)]
 async fn get_{id}() -> impl IntoResponse {{ 
-    let bytes: &'static [u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/{base}/{name}"));
+    const BYTES: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/{base}/{name}"));
     let header = Headers(vec![("content-type", mime_guess::from_path("{name}").first_or_text_plain().to_string())]);
-    (header,bytes) 
+    (header,BYTES) 
 }}"#,
             id = escape_name(name),
             base = base,
@@ -36,7 +36,7 @@ async fn get_{id}() -> impl IntoResponse {{
         .iter()
         .map(|f| {
             format!(
-                r#".route("/{}", get(get_{}))"#,
+                r#".route("/{}", get(get_{})).boxed()"#,
                 escape_path(f),
                 escape_name(f)
             )
@@ -65,7 +65,7 @@ use axum::{{
 pub fn app() -> Router<BoxRoute> {{
     Router::new()
     {routes}
-    .boxed()
+    // .boxed()
 }}
 {resources}
 "#,
