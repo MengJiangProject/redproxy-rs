@@ -1,2 +1,24 @@
-<a href="contexts">Live View</a>
-<a href="history">History</a>
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <script src="https://unpkg.com/vue@next"></script>
+    <script src="app.js"></script>
+    <link rel="stylesheet" href="style.css" type="text/css" media="screen" />
+    <link rel="apple-touch-icon" sizes="180x180" href="images/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="images/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="images/favicon-16x16.png">
+</head>
+
+<body>
+    <div id="dynamic-component-demo" class="demo">
+        <button v-for="tab in tabs" :key="tab" :class="['tab-button', { active: currentTab === tab }]"
+            @click="currentTab = tab">
+            {{ tab }}
+        </button>
+
+        <component :is="currentTabComponent" class="tab"></component>
+    </div>
+</body>
+
+</html>
