@@ -13,7 +13,8 @@ fn main() {
 
 fn gen_embedded_ui(base: &str) {
     let mut ui_resource = vec![];
-    list_files(Path::new(base), Path::new(base), &mut ui_resource);
+    let base = Path::new(base);
+    list_files(base, base, &mut ui_resource);
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("embedded-ui.rs");
 
@@ -22,13 +23,13 @@ fn gen_embedded_ui(base: &str) {
             r#"
 #[allow(dead_code)]
 async fn get_{id}() -> impl IntoResponse {{ 
-    const BYTES: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/{base}/{name}"));
-    let header = Headers(vec![("content-type", mime_guess::from_path("{name}").first_or_text_plain().to_string())]);
+    const BYTES: &[u8] = include_bytes!(r"{fname}");
+    let header = Headers(vec![("content-type", mime_guess::from_path(r"{name}").first_or_text_plain().to_string())]);
     (header,BYTES) 
 }}"#,
             id = escape_name(name),
-            base = base,
-            name = name,
+            name = Path::new(name).file_name().unwrap().to_str().unwrap(),
+            fname = std::fs::canonicalize(base.join(name)).unwrap().display(),
         )
     };
 
@@ -76,8 +77,10 @@ pub fn app() -> Router<BoxRoute> {{
     .unwrap();
 }
 
-fn escape_path(s: &str) -> &str {
-    s.strip_suffix("index.html").unwrap_or(s)
+fn escape_path(s: &str) -> String {
+    s.strip_suffix("index.html")
+        .unwrap_or(s)
+        .replace(std::path::is_separator, "/")
 }
 
 fn escape_name(s: &str) -> String {
