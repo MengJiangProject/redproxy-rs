@@ -15,8 +15,7 @@ pub struct Filter {
 
 impl Filter {
     pub fn validate(&self) -> Result<(), Error> {
-        let request = Default::default();
-        let ctx = create_context(request);
+        let ctx = create_context(Default::default());
         let rtype = self.root.type_of(ctx.into())?;
         ensure!(
             rtype == Type::Boolean,
