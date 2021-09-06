@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -15,6 +16,7 @@ fn gen_embedded_ui(base: &str) {
     let mut ui_resource = vec![];
     let base = Path::new(base);
     list_files(base, base, &mut ui_resource);
+    ui_resource.sort_by_key(|b| Reverse(escape_path(b)));
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("embedded-ui.rs");
 
@@ -24,12 +26,15 @@ fn gen_embedded_ui(base: &str) {
 #[allow(dead_code)]
 async fn get_{id}() -> impl IntoResponse {{ 
     const BYTES: &[u8] = include_bytes!(r"{fname}");
-    let header = Headers(vec![("content-type", mime_guess::from_path(r"{name}").first_or_text_plain().to_string())]);
+    let header = Headers(vec![("content-type", "{mime}")]);
     (header,BYTES) 
 }}"#,
             id = escape_name(name),
-            name = Path::new(name).file_name().unwrap().to_str().unwrap(),
+            //name = Path::new(name).file_name().unwrap().to_str().unwrap(),
             fname = std::fs::canonicalize(base.join(name)).unwrap().display(),
+            mime = mime_guess::from_path(name)
+                .first_or_text_plain()
+                .to_string(),
         )
     };
 
