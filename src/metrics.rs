@@ -1,8 +1,9 @@
+use crate::GlobalState;
 use axum::{
     body::Body,
     extract::Extension,
     handler::{get, Handler},
-    http::{Response, StatusCode},
+    http::{header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue, Response, StatusCode},
     response::IntoResponse,
     routing::BoxRoute,
     Json, Router,
@@ -16,10 +17,8 @@ use std::{
     net::SocketAddr,
     sync::{Arc, Weak},
 };
-use tower_http::add_extension::AddExtensionLayer;
 use tower_http::services::ServeDir;
-
-use crate::GlobalState;
+use tower_http::{add_extension::AddExtensionLayer, set_header::SetResponseHeaderLayer};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -27,17 +26,24 @@ pub struct MetricsServer {
     bind: SocketAddr,
 
     #[serde(default = "default_prefix")]
-    prefix: String,
+    api_prefix: String,
 
     #[serde(default = "default_ui_source")]
     ui: Option<String>,
 
     #[serde(default = "default_history_size")]
     pub history_size: usize,
+
+    #[serde(default = "default_cors")]
+    cors: String,
 }
 
 fn default_prefix() -> String {
-    "/".into()
+    "/api".into()
+}
+
+fn default_cors() -> String {
+    "*".into()
 }
 
 #[cfg(feature = "embedded-ui")]
@@ -68,18 +74,24 @@ impl MetricsServer {
 
     pub async fn listen(self: Arc<Self>, state: Arc<GlobalState>) -> Result<(), Error> {
         let api = Router::new()
-            .route("/contexts", get(get_alive))
+            .route("/live", get(get_alive))
             .route("/history", get(get_history))
             .layer(AddExtensionLayer::new(state))
             .check_infallible();
 
-        let root = Router::new().nest(&self.prefix, api);
         let root = if let Some(ui) = &self.ui {
-            root.nest("/", ui_service(ui)?).boxed()
+            ui_service(ui)?
         } else {
-            root.boxed()
+            Router::new().boxed()
         };
-        let root = root.or(not_found.into_service());
+
+        let root = root
+            .nest(&self.api_prefix, api)
+            .or(not_found.into_service())
+            .layer(SetResponseHeaderLayer::<_, Body>::if_not_present(
+                ACCESS_CONTROL_ALLOW_ORIGIN,
+                HeaderValue::from_str(&self.cors).unwrap(),
+            ));
 
         tokio::spawn(async move {
             info!("metrics server listening on {}", self.bind);
