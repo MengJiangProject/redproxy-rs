@@ -44,7 +44,7 @@ const app = Vue.createApp({
       }, 5000)
     },
     loadData() {
-      console.info(this.autoRefresh);
+      // console.info(this.autoRefresh);
       if (this.autoRefresh) {
         try {
           this.$refs.current.loadData()
