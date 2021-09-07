@@ -8,6 +8,7 @@ use tokio::sync::mpsc::Sender;
 use crate::{context::ContextRef, GlobalState};
 
 mod http;
+mod reverse;
 mod socks;
 
 #[cfg(feature = "quic")]
@@ -49,6 +50,7 @@ pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
     match tname {
         "http" => http::from_value(value),
         "socks" => socks::from_value(value),
+        "reverse" => reverse::from_value(value),
 
         #[cfg(feature = "quic")]
         "quic" => quic::from_value(value),

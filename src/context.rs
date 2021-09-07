@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
 use log::trace;
-use serde::{ser::SerializeStruct, Serialize};
+use serde::{de::Visitor, ser::SerializeStruct, Deserialize, Serialize};
 use std::{
     collections::{HashMap, LinkedList},
     fmt::{Debug, Display},
@@ -131,6 +131,32 @@ impl Serialize for TargetAddress {
         S: serde::Serializer,
     {
         serializer.serialize_str(&self.to_string())
+    }
+}
+
+struct TargetAddressVisitor;
+impl<'de> Visitor<'de> for TargetAddressVisitor {
+    type Value = TargetAddress;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("ip:port or domain:port")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        v.parse()
+            .map_err(|e: InvalidAddress| serde::de::Error::custom(e.to_string()))
+    }
+}
+
+impl<'de> Deserialize<'de> for TargetAddress {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(TargetAddressVisitor)
     }
 }
 
