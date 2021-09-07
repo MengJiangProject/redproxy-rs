@@ -1,21 +1,23 @@
-use std::future::Future;
-use std::net::SocketAddr;
-use std::ops::DerefMut;
-use std::pin::Pin;
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use easy_error::{err_msg, Error, ResultExt};
+use futures::TryFutureExt;
 use log::{debug, info, trace, warn};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc::Sender;
-
-use crate::common::socks::{PasswordAuth, SocksRequest, SocksResponse};
-use crate::common::tls::TlsServerConfig;
-use crate::context::{make_buffered_stream, ContextCallback, ContextRef, ContextRefOps};
-use crate::listeners::Listener;
-use crate::GlobalState;
 use serde::{Deserialize, Serialize};
+use std::{future::Future, net::SocketAddr, ops::DerefMut, pin::Pin, sync::Arc};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::mpsc::Sender,
+};
+
+use crate::{
+    common::{
+        socks::{PasswordAuth, SocksRequest, SocksResponse},
+        tls::TlsServerConfig,
+    },
+    context::{make_buffered_stream, ContextCallback, ContextRef, ContextRefOps},
+    listeners::Listener,
+    GlobalState,
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SocksListener {
@@ -77,20 +79,26 @@ impl SocksListener {
         queue: Sender<ContextRef>,
     ) {
         loop {
-            let this = self.clone();
-            let queue = queue.clone();
-            let state = state.clone();
             match listener.accept().await.context("accept") {
                 Ok((socket, source)) => {
+                    let this = self.clone();
+                    let queue = queue.clone();
+                    let state = state.clone();
+                    debug!("{}: connected from {:?}", self.name, source);
                     // we spawn a new thread here to avoid handshake to block accept thread
-                    tokio::spawn(async move {
-                        if let Err(e) = this.handshake(socket, source, state, queue).await {
-                            warn!("{}: {:?}", e, e.cause);
-                        }
-                    });
+                    tokio::spawn(
+                        this.clone()
+                            .handshake(socket, source, state, queue)
+                            .unwrap_or_else(move |e| {
+                                warn!(
+                                    "{}: handshake error: {}: cause: {:?}",
+                                    this.name, e, e.cause
+                                );
+                            }),
+                    );
                 }
                 Err(e) => {
-                    warn!("{}: {:?}", e, e.cause);
+                    warn!("{}, Accept error: {}: cause: {:?}", self.name, e, e.cause);
                     return;
                 }
             }
@@ -110,7 +118,6 @@ impl SocksListener {
         } else {
             make_buffered_stream(socket)
         };
-        debug!("{}: connected from {:?}", self.name, source);
         let ctx = state
             .contexts
             .create_context(self.name.to_owned(), source)
