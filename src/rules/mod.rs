@@ -48,6 +48,30 @@ pub struct RuleStatistics {
     hits: AtomicU64,
 }
 
+#[cfg(feature = "metrics")]
+lazy_static::lazy_static! {
+    static ref RULES_EXECUTE_COUNT: prometheus::IntCounter = prometheus::register_int_counter!(
+        "rules_exec_count",
+        "Number of all rules executions."
+    )
+    .unwrap();
+    static ref RULES_HIT_COUNT: prometheus::IntCounter = prometheus::register_int_counter!(
+        "rules_hit_count",
+        "Number of rules executions hits."
+    )
+    .unwrap();
+    static ref RULES_EXECUTE_TIME: prometheus::Histogram = prometheus::register_histogram!(
+        "rules_exec_time",
+        "Rules execution time in seconds.",
+        vec![
+            0.000_001, 0.000_002, 0.000_005, 0.000_007,
+            0.000_010, 0.000_025, 0.000_050, 0.000_075,
+            0.000_100, 0.000_250, 0.000_500, 0.001_000
+        ]
+    )
+    .unwrap();
+}
+
 impl Rule {
     pub fn init(&mut self) -> Result<(), Error> {
         if let Some(s) = &self.filter_str {
@@ -66,6 +90,11 @@ impl Rule {
             self.target_name
         );
         self.stats.exec.fetch_add(1, Ordering::Relaxed);
+        #[cfg(feature = "metrics")]
+        let timer = {
+            RULES_EXECUTE_COUNT.inc();
+            RULES_EXECUTE_TIME.start_timer()
+        };
         let t = Instant::now();
         let ret = if self.filter.is_none() {
             true
@@ -79,8 +108,12 @@ impl Rule {
             }
         };
         let t = t.elapsed().as_nanos() as u64;
+        #[cfg(feature = "metrics")]
+        timer.stop_and_record();
         self.stats.time.fetch_add(t, Ordering::Relaxed);
         if ret {
+            #[cfg(feature = "metrics")]
+            RULES_EXECUTE_COUNT.inc();
             self.stats.hits.fetch_add(1, Ordering::Relaxed);
         }
         trace!("evaluation finished in {} ns", t);

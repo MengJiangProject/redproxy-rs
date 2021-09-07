@@ -4,7 +4,7 @@ use axum::{
     extract::Extension,
     handler::{get, Handler},
     http::{
-        header::{ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL},
+        header::{ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_TYPE},
         HeaderValue, Response, StatusCode,
     },
     response::IntoResponse,
@@ -14,6 +14,10 @@ use axum::{
 use easy_error::{ensure, Error};
 use futures::StreamExt;
 use log::info;
+use prometheus::{
+    register_histogram_vec, register_int_counter_vec, Encoder, HistogramVec, IntCounterVec,
+    TextEncoder,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     convert::Infallible,
@@ -79,6 +83,7 @@ impl MetricsServer {
         let api = Router::new()
             .route("/live", get(get_alive))
             .route("/history", get(get_history))
+            .route("/metrics", get(get_metrics))
             .layer(AddExtensionLayer::new(state))
             .layer(SetResponseHeaderLayer::<_, Body>::if_not_present(
                 CACHE_CONTROL,
@@ -123,6 +128,26 @@ impl MetricsServer {
     }
 }
 
+lazy_static::lazy_static! {
+    static ref HTTP_COUNTER: IntCounterVec = register_int_counter_vec!(
+        "http_requests_total",
+        "Number of HTTP requests made.",
+        &["handler"]
+    )
+    .unwrap();
+    static ref HTTP_REQ_HISTOGRAM: HistogramVec = register_histogram_vec!(
+        "http_request_duration_seconds",
+        "The HTTP request latencies in seconds.",
+        &["handler"],
+        vec![
+            0.001, 0.0025, 0.005, 0.0075,
+            0.010, 0.025, 0.050, 0.075,
+            0.100, 0.250, 0.500, 0.750,
+        ]
+    )
+    .unwrap();
+}
+
 fn ui_service(ui_source: &str) -> Result<Router<BoxRoute>, Error> {
     #[cfg(feature = "embedded-ui")]
     if ui_source == "<embedded>" {
@@ -142,7 +167,11 @@ fn ui_service(ui_source: &str) -> Result<Router<BoxRoute>, Error> {
 }
 
 async fn get_alive(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
-    Json(
+    HTTP_COUNTER.with_label_values(&["get_alive"]).inc();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["get_alive"])
+        .start_timer();
+    let ret = Json(
         futures::stream::iter(
             state
                 .contexts
@@ -155,11 +184,17 @@ async fn get_alive(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
         .then(|x| async move { x.read().await.props().clone() })
         .collect::<Vec<_>>()
         .await,
-    )
+    );
+    timer.stop_and_record();
+    ret
 }
 
 async fn get_history(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
-    Json(
+    HTTP_COUNTER.with_label_values(&["get_history"]).inc();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["get_history"])
+        .start_timer();
+    let ret = Json(
         state
             .contexts
             .terminated
@@ -168,7 +203,27 @@ async fn get_history(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
             .iter()
             .cloned()
             .collect::<Vec<_>>(),
-    )
+    );
+    timer.stop_and_record();
+    ret
+}
+
+async fn get_metrics() -> impl IntoResponse {
+    HTTP_COUNTER.with_label_values(&["get_metrics"]).inc();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["get_metrics"])
+        .start_timer();
+    let encoder = TextEncoder::new();
+    let data = prometheus::gather();
+    let mut buffer = vec![];
+    encoder.encode(&data, &mut buffer).unwrap();
+    let ret = Response::builder()
+        .status(200)
+        .header(CONTENT_TYPE, encoder.format_type())
+        .body(Body::from(buffer))
+        .unwrap();
+    timer.stop_and_record();
+    ret
 }
 
 async fn not_found() -> impl IntoResponse {
