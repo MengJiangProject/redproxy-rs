@@ -104,6 +104,8 @@ pub struct TlsClientConfig {
     pub auth: Option<TlsClientAuthConfig>,
     #[serde(skip)]
     populated: Option<TlsClientConfigPopulated>,
+    #[serde(default)]
+    disable_early_data: bool,
 }
 
 impl TlsClientConfig {
@@ -137,6 +139,8 @@ impl TlsClientConfig {
 
     pub fn init(&mut self) -> Result<(), Error> {
         let mut config = ClientConfig::new();
+        config.enable_early_data = !self.disable_early_data;
+
         if self.ca.is_some() {
             config.root_store = self.root_store()?;
         }
