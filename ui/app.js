@@ -123,19 +123,50 @@ app.component('contexts', {
       <th scope="col" colspan="2">Stats</th>
   </thead>
   <tbody>
-    <tr v-for="item in list" scope="row">
-      <td>{{ item.id }}</td>
-      <td>{{ item.source }}</td>
-      <td>{{ item.target }}</td>
-      <td>{{ item.listener }}</td>
-      <td>{{ item.connector }}</td>
-      <td>{{ item.state.last().state }}</td>
-      <td> &#9650; {{ item.client_stat.read_bytes.fileSize() }} </td>
-      <td> &#9660; {{ item.server_stat.read_bytes.fileSize() }} </td>
-    </tr>
+    <context-row v-for="item in list" :item=item></context-row>
   </tbody>
   </table>`
 })
+
+app.component('context-row', {
+  props: { item: Object },
+  template: `
+<tr scope="row">
+  <td>{{ item.id }}</td>
+  <td>{{ item.source }}</td>
+  <td>{{ item.target }}</td>
+  <td>{{ item.listener }}</td>
+  <td>{{ item.connector }}</td>
+  <td><context-state :item=item></context-state></td>
+  <td>&#9650; {{ item.client_stat.read_bytes.fileSize() }}</td>
+  <td>&#9660; {{ item.server_stat.read_bytes.fileSize() }}</td>
+</tr>
+`
+})
+
+app.component('context-state', {
+  props: { item: Object },
+  template: `
+  <span class="my_tooltip">
+    {{ state }}
+    <span class="my_tooltiptext">
+      <span>{{ time }}</span><br/>
+      <span v-if=error>{{ error }}</span>
+    </span>
+  </span>`,
+  computed: {
+    state() {
+      return this.item.state.last().state;
+    },
+    time() {
+      return new Date(this.item.state.last().time).toLocaleString();
+    },
+    error() {
+      return this.item.error ? `Error: ${this.item.error}` : "";
+    }
+  }
+})
+
 
 window.onload = function () {
   console.info("onload");

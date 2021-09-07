@@ -31,3 +31,26 @@
   border: 1px solid #ccc;
   padding: 10px;
 }
+
+.my_tooltip {
+  position: relative;
+  display: inline-block;
+  border-bottom: 1px dotted black;
+}
+
+.my_tooltip .my_tooltiptext {
+  visibility: hidden;
+  background-color: black;
+  color: #fff;
+  text-align: center;
+  padding: 1em;
+  border-radius: 6px;
+  font-size: small;
+  /* Position the tooltip text - see examples below! */
+  position: absolute;
+  z-index: 1;
+}
+
+.my_tooltip:hover .my_tooltiptext {
+  visibility: visible;
+}
