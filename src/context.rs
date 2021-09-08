@@ -324,6 +324,8 @@ lazy_static::lazy_static! {
 
 use std::sync::Mutex as StdMutex;
 
+use crate::access_log::AccessLog;
+
 #[derive(Default)]
 pub struct GlobalState {
     pub history_size: usize,
@@ -332,6 +334,7 @@ pub struct GlobalState {
     pub terminated: Mutex<LinkedList<Arc<ContextProps>>>,
     // use std Mutex here because Drop is not async
     pub gc_list: StdMutex<Vec<Arc<ContextProps>>>,
+    pub access_log: Option<AccessLog>,
 }
 
 impl GlobalState {
@@ -372,6 +375,11 @@ impl GlobalState {
                         CONTEXT_GC_COUNT.inc_by(list.len() as u64);
                         CONTEXT_GC_TIME.start_timer()
                     };
+                    if let Some(log) = &self.access_log {
+                        for props in list.iter().cloned() {
+                            log.write(props).await.unwrap();
+                        }
+                    }
                     let mut terminated = self.terminated.lock().await;
                     let mut alive = self.alive.lock().await;
                     for props in list {

@@ -4,3 +4,4 @@
 .vscode
 history.txt
 *.yaml
+*.log

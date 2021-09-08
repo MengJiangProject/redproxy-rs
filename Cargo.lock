@@ -1006,6 +1006,7 @@ dependencies = [
  "prometheus",
  "quinn",
  "serde",
+ "serde_json",
  "serde_yaml",
  "test-env-log",
  "tokio",

@@ -91,3 +91,7 @@ rules:
   - target: direct
     # an empty filter means that all requests will be accepted.
     # if no rule matches the request, access will be denied.
+
+accessLog:
+  path: access.log
+  format: json

@@ -1,7 +1,7 @@
 use easy_error::{Error, ResultExt};
 use serde::{Deserialize, Serialize};
 
-use crate::metrics::MetricsServer;
+use crate::{access_log::AccessLog, metrics::MetricsServer};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -13,6 +13,7 @@ pub struct Config {
     pub rules: serde_yaml::Sequence,
     #[cfg(feature = "metrics")]
     pub metrics: Option<MetricsServer>,
+    pub access_log: Option<AccessLog>,
 }
 
 impl Config {

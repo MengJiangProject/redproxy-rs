@@ -6,6 +6,7 @@ use rules::Rule;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc::channel, RwLock, RwLockReadGuard};
 
+mod access_log;
 mod common;
 mod config;
 mod connectors;
@@ -95,9 +96,16 @@ async fn main() -> Result<(), Terminator> {
 
         #[cfg(feature = "metrics")]
         if let Some(mut metrics) = cfg.metrics {
+            let ctx_mut = Arc::get_mut(&mut st_mut.contexts).unwrap();
             metrics.init()?;
-            Arc::get_mut(&mut st_mut.contexts).unwrap().history_size = metrics.history_size;
+            ctx_mut.history_size = metrics.history_size;
             st_mut.metrics = Some(Arc::new(metrics));
+        }
+
+        if let Some(mut log) = cfg.access_log {
+            let ctx_mut = Arc::get_mut(&mut st_mut.contexts).unwrap();
+            log.init().await?;
+            ctx_mut.access_log = Some(log);
         }
 
         for (_name, l) in st_mut.listeners.iter_mut() {

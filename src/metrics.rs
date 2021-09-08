@@ -2,7 +2,7 @@ use crate::{rules::Rule, GlobalState};
 use axum::{
     body::Body,
     extract::Extension,
-    handler::{get, Handler},
+    handler::{get, post, Handler},
     http::{
         header::{ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_TYPE},
         HeaderValue, Response, StatusCode,
@@ -85,6 +85,7 @@ impl MetricsServer {
             .route("/history", get(get_history))
             .route("/rules", get(get_rules).post(post_rules))
             .route("/metrics", get(get_metrics))
+            .route("/logrotate", post(post_logrotate))
             .layer(AddExtensionLayer::new(state))
             .layer(SetResponseHeaderLayer::<_, Body>::if_not_present(
                 CACHE_CONTROL,
@@ -249,6 +250,14 @@ async fn get_metrics() -> impl IntoResponse {
         .unwrap();
     timer.stop_and_record();
     ret
+}
+
+async fn post_logrotate(state: Extension<Arc<GlobalState>>) -> Result<(), MyError> {
+    if let Some(log) = &state.contexts.access_log {
+        log.reopen().await.map_err(MyError)
+    } else {
+        Ok(())
+    }
 }
 
 async fn not_found() -> impl IntoResponse {
