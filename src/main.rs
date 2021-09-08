@@ -3,14 +3,8 @@ use easy_error::{err_msg, Error, Terminator};
 use log::{info, warn};
 use metrics::MetricsServer;
 use rules::Rule;
-use std::{
-    collections::HashMap,
-    sync::{
-        atomic::{AtomicPtr, Ordering},
-        Arc,
-    },
-};
-use tokio::sync::mpsc::channel;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::{mpsc::channel, Mutex, MutexGuard};
 
 mod common;
 mod config;
@@ -27,7 +21,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Default)]
 pub struct GlobalState {
-    rules: AtomicPtr<Vec<Arc<Rule>>>,
+    rules: Mutex<Vec<Arc<Rule>>>,
     listeners: HashMap<String, Arc<dyn Listener>>,
     connectors: HashMap<String, Arc<dyn Connector>>,
     contexts: Arc<ContextGlobalState>,
@@ -36,7 +30,7 @@ pub struct GlobalState {
 }
 
 impl GlobalState {
-    fn set_rules(&self, mut rules: Vec<Arc<Rule>>) -> Result<(), Error> {
+    async fn set_rules(&self, mut rules: Vec<Arc<Rule>>) -> Result<(), Error> {
         for r in rules.iter_mut() {
             Arc::get_mut(r).unwrap().init()?;
         }
@@ -52,20 +46,11 @@ impl GlobalState {
                 Err(err_msg(format!("target not found: {}", r.target_name())))
             }
         })?;
-        let old = self.rules.swap(
-            Box::into_raw(rules.into()),
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        unsafe {
-            if !old.is_null() {
-                let old = Box::from_raw(old);
-                drop(old);
-            }
-        }
+        *self.rules.lock().await = rules;
         Ok(())
     }
-    fn rules(&self) -> &Vec<Arc<Rule>> {
-        unsafe { self.rules.load(Ordering::Relaxed).as_ref().unwrap() }
+    async fn rules(&self) -> MutexGuard<'_, Vec<Arc<Rule>>> {
+        self.rules.lock().await
     }
 }
 #[tokio::main]
@@ -122,7 +107,7 @@ async fn main() -> Result<(), Terminator> {
         for (_name, c) in st_mut.connectors.iter_mut() {
             Arc::get_mut(c).unwrap().init().await?;
         }
-        st_mut.set_rules(rules::from_config(&cfg.rules)?)?;
+        st_mut.set_rules(rules::from_config(&cfg.rules)?).await?;
     }
 
     if config_test {
@@ -150,7 +135,7 @@ async fn main() -> Result<(), Terminator> {
 async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
     let connector = {
         let ctx = &ctx.clone().read_owned().await;
-        state.rules().iter().find_map(|x| {
+        state.rules().await.iter().find_map(|x| {
             if x.evaluate(ctx) {
                 Some(x.target.clone())
             } else {

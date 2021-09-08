@@ -214,7 +214,7 @@ async fn get_rules(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
     let timer = HTTP_REQ_HISTOGRAM
         .with_label_values(&["get_rules"])
         .start_timer();
-    let ret = Json(state.rules().clone());
+    let ret = Json(state.rules().await.clone());
     timer.stop_and_record();
     ret
 }
@@ -227,8 +227,8 @@ async fn post_rules(
     let timer = HTTP_REQ_HISTOGRAM
         .with_label_values(&["post_rules"])
         .start_timer();
-    state.set_rules(rules.0).map_err(MyError)?;
-    let ret = Json(state.rules().clone());
+    state.set_rules(rules.0).await.map_err(MyError)?;
+    let ret = Json(state.rules().await.clone());
     timer.stop_and_record();
     Ok(ret)
 }
