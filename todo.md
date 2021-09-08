@@ -3,7 +3,7 @@
 - [X] DONE: per-flow statics and prometheus intergration
 - [X] DONE: RESTful api to list active and recent activities
 - [ ] TODO: GraphQL integration perhaps
-- [ ] TODO: config reload
-- [ ] TODO: flow tap, dump data into pcap files.
+- [ ] TODO: full config reload, currently only rules are hot replacable.
+- [ ] TODO: flow tap, ~~dump data into pcap files.~~ (we are dealing L4 protocols here, it's not easy nor accurate to "generate" L3 packets from the stream)
 - [ ] TODO: access logging
 - [ ] TODO: IPv6 support on TProxy listener
