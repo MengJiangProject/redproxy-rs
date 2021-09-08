@@ -191,9 +191,21 @@ pub enum ContextState {
     ClientRequested,
     ServerConnecting,
     Connected,
-    // ShutdowningDown,
     Terminated,
     ErrorOccured,
+}
+
+impl ContextState {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::ClientConnected => "ClientConnected",
+            Self::ClientRequested => "ClientRequested",
+            Self::ServerConnecting => "ServerConnecting",
+            Self::Connected => "Connected",
+            Self::Terminated => "Terminated",
+            Self::ErrorOccured => "ErrorOccured",
+        }
+    }
 }
 
 #[derive(Debug, Hash, Copy, Clone, Eq, PartialEq)]
@@ -278,6 +290,38 @@ impl ContextStatistics {
     }
 }
 
+#[cfg(feature = "metrics")]
+lazy_static::lazy_static! {
+    static ref CONTEXT_STATUS: prometheus::HistogramVec = prometheus::register_histogram_vec!(
+        "context_state_time",
+        "Time of context in this state.",
+        &["state","listener","connector"],
+        vec![
+            0.001, 0.0025, 0.005, 0.0075,
+            0.010, 0.025, 0.050, 0.075,
+            0.100, 0.250, 0.500, 0.750,
+            1.0,   2.5,   5.0,   7.5,
+            10.0,  25.0,  50.0,  75.0,
+        ]
+    )
+    .unwrap();
+    static ref CONTEXT_GC_COUNT: prometheus::IntCounter = prometheus::register_int_counter!(
+        "context_gc_count",
+        "Number of garbbage collected contexts."
+    )
+    .unwrap();
+    static ref CONTEXT_GC_TIME: prometheus::Histogram = prometheus::register_histogram!(
+        "context_gc_time",
+        "Context GC time in seconds.",
+        vec![
+            0.000_001, 0.000_002, 0.000_005, 0.000_007,
+            0.000_010, 0.000_025, 0.000_050, 0.000_075,
+            0.000_100, 0.000_250, 0.000_500, 0.001_000
+        ]
+    )
+    .unwrap();
+}
+
 use std::sync::Mutex as StdMutex;
 
 #[derive(Default)]
@@ -323,6 +367,11 @@ impl GlobalState {
                 std::mem::swap(self.gc_list.lock().unwrap().deref_mut(), &mut list);
                 if !list.is_empty() {
                     trace!("context gc: {}", list.len());
+                    #[cfg(feature = "metrics")]
+                    let timer = {
+                        CONTEXT_GC_COUNT.inc_by(list.len() as u64);
+                        CONTEXT_GC_TIME.start_timer()
+                    };
                     let mut terminated = self.terminated.lock().await;
                     let mut alive = self.alive.lock().await;
                     for props in list {
@@ -332,6 +381,8 @@ impl GlobalState {
                     while terminated.len() > self.history_size {
                         terminated.pop_back();
                     }
+                    #[cfg(feature = "metrics")]
+                    timer.stop_and_record();
                 }
             }
         });
@@ -416,6 +467,16 @@ impl Context {
 
     /// Set the context's state.
     pub fn set_state(&mut self, state: ContextState) -> &mut Self {
+        if let Some(last) = self.props.state.last() {
+            let t = last.time.elapsed().unwrap().as_secs_f64();
+            CONTEXT_STATUS
+                .with_label_values(&[
+                    last.state.as_str(),
+                    self.props.listener.as_str(),
+                    self.props.connector.as_deref().unwrap_or("null"),
+                ])
+                .observe(t);
+        }
         Arc::make_mut(&mut self.props)
             .state
             .push((state, SystemTime::now()).into());
