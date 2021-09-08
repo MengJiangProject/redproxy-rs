@@ -16,7 +16,7 @@ use std::{
 
 use crate::{connectors::Connector, context::Context};
 
-pub fn from_config(cfg: &[Value]) -> Result<Vec<Rule>, Error> {
+pub fn from_config(cfg: &[Value]) -> Result<Vec<Arc<Rule>>, Error> {
     let mut ret = Vec::with_capacity(cfg.len());
     for val in cfg {
         ret.push(serde_yaml::from_value(val.clone()).context("parse rule")?);

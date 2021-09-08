@@ -1,4 +1,4 @@
-use crate::GlobalState;
+use crate::{rules::Rule, GlobalState};
 use axum::{
     body::Body,
     extract::Extension,
@@ -83,6 +83,7 @@ impl MetricsServer {
         let api = Router::new()
             .route("/live", get(get_alive))
             .route("/history", get(get_history))
+            .route("/rules", get(get_rules).post(post_rules))
             .route("/metrics", get(get_metrics))
             .layer(AddExtensionLayer::new(state))
             .layer(SetResponseHeaderLayer::<_, Body>::if_not_present(
@@ -206,6 +207,30 @@ async fn get_history(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
     );
     timer.stop_and_record();
     ret
+}
+
+async fn get_rules(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
+    HTTP_COUNTER.with_label_values(&["get_rules"]).inc();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["get_rules"])
+        .start_timer();
+    let ret = Json(state.rules().clone());
+    timer.stop_and_record();
+    ret
+}
+
+async fn post_rules(
+    state: Extension<Arc<GlobalState>>,
+    rules: Json<Vec<Arc<Rule>>>,
+) -> Result<impl IntoResponse, MyError> {
+    HTTP_COUNTER.with_label_values(&["post_rules"]).inc();
+    let timer = HTTP_REQ_HISTOGRAM
+        .with_label_values(&["post_rules"])
+        .start_timer();
+    state.set_rules(rules.0).map_err(MyError)?;
+    let ret = Json(state.rules().clone());
+    timer.stop_and_record();
+    Ok(ret)
 }
 
 async fn get_metrics() -> impl IntoResponse {

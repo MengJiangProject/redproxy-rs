@@ -27,7 +27,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Default)]
 pub struct GlobalState {
-    rules: AtomicPtr<Vec<Rule>>,
+    rules: AtomicPtr<Vec<Arc<Rule>>>,
     listeners: HashMap<String, Arc<dyn Listener>>,
     connectors: HashMap<String, Arc<dyn Connector>>,
     contexts: Arc<ContextGlobalState>,
@@ -36,9 +36,9 @@ pub struct GlobalState {
 }
 
 impl GlobalState {
-    fn set_rules(&self, mut rules: Vec<Rule>) -> Result<(), Error> {
+    fn set_rules(&self, mut rules: Vec<Arc<Rule>>) -> Result<(), Error> {
         for r in rules.iter_mut() {
-            r.init()?;
+            Arc::get_mut(r).unwrap().init()?;
         }
 
         let connectors = &self.connectors;
@@ -46,7 +46,7 @@ impl GlobalState {
             if r.target_name() == "deny" {
                 Ok(())
             } else if let Some(t) = connectors.get(r.target_name()) {
-                r.target = Some(t.clone());
+                Arc::get_mut(r).unwrap().target = Some(t.clone());
                 Ok(())
             } else {
                 Err(err_msg(format!("target not found: {}", r.target_name())))
@@ -64,7 +64,7 @@ impl GlobalState {
         }
         Ok(())
     }
-    fn rules(&self) -> &Vec<Rule> {
+    fn rules(&self) -> &Vec<Arc<Rule>> {
         unsafe { self.rules.load(Ordering::Relaxed).as_ref().unwrap() }
     }
 }
