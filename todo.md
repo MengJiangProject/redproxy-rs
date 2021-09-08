@@ -1,6 +1,6 @@
 - [ ] TODO: support BIND and UDP ASSOCIATE in socks protocol
 - [ ] TODO: support HTTP GET/POST in h11c parsers
-- [ ] TODO: per-flow statics and prometheus intergration
+- [X] DONE: per-flow statics and prometheus intergration
 - [X] DONE: RESTful api to list active and recent activities
 - [ ] TODO: GraphQL integration perhaps
 - [ ] TODO: config reload

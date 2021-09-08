@@ -12,7 +12,7 @@ path = "src/main.rs"
 [features]
 default = ["quic","metrics"]
 quic = ["quinn","futures-util","pin-project-lite"]
-metrics = ["axum","tower","tower-http","lazy_static"]
+metrics = ["axum","tower","tower-http","prometheus","lazy_static"]
 embedded-ui = ["metrics"]
 
 [dependencies]
