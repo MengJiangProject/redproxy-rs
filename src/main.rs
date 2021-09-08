@@ -4,7 +4,7 @@ use log::{info, warn};
 use metrics::MetricsServer;
 use rules::Rule;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc::channel, Mutex, MutexGuard};
+use tokio::sync::{mpsc::channel, RwLock, RwLockReadGuard};
 
 mod common;
 mod config;
@@ -21,7 +21,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Default)]
 pub struct GlobalState {
-    rules: Mutex<Vec<Arc<Rule>>>,
+    rules: RwLock<Vec<Arc<Rule>>>,
     listeners: HashMap<String, Arc<dyn Listener>>,
     connectors: HashMap<String, Arc<dyn Connector>>,
     contexts: Arc<ContextGlobalState>,
@@ -46,11 +46,11 @@ impl GlobalState {
                 Err(err_msg(format!("target not found: {}", r.target_name())))
             }
         })?;
-        *self.rules.lock().await = rules;
+        *self.rules.write().await = rules;
         Ok(())
     }
-    async fn rules(&self) -> MutexGuard<'_, Vec<Arc<Rule>>> {
-        self.rules.lock().await
+    async fn rules(&self) -> RwLockReadGuard<'_, Vec<Arc<Rule>>> {
+        self.rules.read().await
     }
 }
 #[tokio::main]
