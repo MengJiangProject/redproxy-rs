@@ -167,7 +167,7 @@ app.component('rule-stats', {
   computed: {
     time() {
       if (this.stats.exec) {
-        this.stats.time / this.stats.exec
+        return this.stats.time / this.stats.exec;
       } else {
         return 0;
       }
