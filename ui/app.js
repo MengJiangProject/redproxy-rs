@@ -164,12 +164,12 @@ app.component('rule-stats', {
   template: `
   <span class="badge bg-primary rounded-pill">E:{{stats.exec}}</span>&nbsp;
   <span class="badge bg-success rounded-pill">H:{{stats.hits}}</span>&nbsp;
-  <span class="badge bg-secondary rounded-pill">T:{{time}}ns</span>
+  <span class="badge bg-secondary rounded-pill">T:{{time}}us</span>
   `,
   computed: {
     time() {
       if (this.stats.exec) {
-        return this.stats.time / this.stats.exec;
+        return (this.stats.time / this.stats.exec / 1000).toFixed(2);
       } else {
         return 0;
       }
