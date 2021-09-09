@@ -93,13 +93,7 @@ impl MetricsServer {
             ))
             .check_infallible();
 
-        let root = if let Some(ui) = &self.ui {
-            ui_service(ui)?
-        } else {
-            Router::new().boxed()
-        };
-
-        let root = root
+        let root = ui_service(self.ui.as_deref())?
             .nest(&self.api_prefix, api)
             .layer(SetResponseHeaderLayer::<_, Body>::if_not_present(
                 ACCESS_CONTROL_ALLOW_ORIGIN,
@@ -119,14 +113,29 @@ impl MetricsServer {
                 .unwrap();
         });
 
-        // tokio::spawn(async move {
-        //     loop {
-        //         tokio::time::sleep(Duration::from_secs(10)).await;
-        //         let len = state.contexts.alive.lock().await.len();
-        //         info!("We have {} client alive now.", len);
-        //     }
-        // });
         Ok(())
+    }
+}
+
+fn ui_service(ui: Option<&str>) -> Result<Router<BoxRoute>, Error> {
+    if let Some(ui) = ui {
+        #[cfg(feature = "embedded-ui")]
+        if ui == "<embedded>" {
+            return Ok(embedded_ui::app());
+        }
+        Ok(Router::new()
+            .nest(
+                "/",
+                axum::service::get(ServeDir::new(ui)).handle_error(|error: std::io::Error| {
+                    Ok::<_, Infallible>((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Unhandled internal error: {}", error),
+                    ))
+                }),
+            )
+            .boxed())
+    } else {
+        Ok(Router::new().boxed())
     }
 }
 
@@ -150,30 +159,22 @@ lazy_static::lazy_static! {
     .unwrap();
 }
 
-fn ui_service(ui_source: &str) -> Result<Router<BoxRoute>, Error> {
-    #[cfg(feature = "embedded-ui")]
-    if ui_source == "<embedded>" {
-        return Ok(embedded_ui::app());
-    }
-    Ok(Router::new()
-        .nest(
-            "/",
-            axum::service::get(ServeDir::new(ui_source)).handle_error(|error: std::io::Error| {
-                Ok::<_, Infallible>((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Unhandled internal error: {}", error),
-                ))
-            }),
-        )
-        .boxed())
+macro_rules! handler {
+    ( $name:ident ( $($aname:ident : $atype:ty),* ) -> $rtype:ty $body:block ) => {
+        async fn $name ($($aname : $atype),*) -> $rtype {
+            HTTP_COUNTER.with_label_values(&[stringify!($name)]).inc();
+            let timer = HTTP_REQ_HISTOGRAM
+                .with_label_values(&[stringify!($name)])
+                .start_timer();
+            let ret = { $body };
+            timer.stop_and_record();
+            ret
+        }
+    };
 }
 
-async fn get_alive(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
-    HTTP_COUNTER.with_label_values(&["get_alive"]).inc();
-    let timer = HTTP_REQ_HISTOGRAM
-        .with_label_values(&["get_alive"])
-        .start_timer();
-    let ret = Json(
+handler!(get_alive(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
+    Json(
         futures::stream::iter(
             state
                 .contexts
@@ -186,17 +187,11 @@ async fn get_alive(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
         .then(|x| async move { x.read().await.props().clone() })
         .collect::<Vec<_>>()
         .await,
-    );
-    timer.stop_and_record();
-    ret
-}
+    )
+});
 
-async fn get_history(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
-    HTTP_COUNTER.with_label_values(&["get_history"]).inc();
-    let timer = HTTP_REQ_HISTOGRAM
-        .with_label_values(&["get_history"])
-        .start_timer();
-    let ret = Json(
+handler!(get_history(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
+    Json(
         state
             .contexts
             .terminated
@@ -205,60 +200,40 @@ async fn get_history(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
             .iter()
             .cloned()
             .collect::<Vec<_>>(),
-    );
-    timer.stop_and_record();
-    ret
-}
+    )
+});
 
-async fn get_rules(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
-    HTTP_COUNTER.with_label_values(&["get_rules"]).inc();
-    let timer = HTTP_REQ_HISTOGRAM
-        .with_label_values(&["get_rules"])
-        .start_timer();
-    let ret = Json(state.rules().await.clone());
-    timer.stop_and_record();
-    ret
-}
+handler!(get_rules(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
+    Json(state.rules().await.clone())
+});
 
-async fn post_rules(
+handler!(post_rules(
     state: Extension<Arc<GlobalState>>,
-    rules: Json<Vec<Arc<Rule>>>,
+    rules: Json<Vec<Arc<Rule>>>
 ) -> Result<impl IntoResponse, MyError> {
-    HTTP_COUNTER.with_label_values(&["post_rules"]).inc();
-    let timer = HTTP_REQ_HISTOGRAM
-        .with_label_values(&["post_rules"])
-        .start_timer();
     state.set_rules(rules.0).await.map_err(MyError)?;
-    let ret = Json(state.rules().await.clone());
-    timer.stop_and_record();
-    Ok(ret)
-}
+    Ok(Json(state.rules().await.clone()))
+});
 
-async fn get_metrics() -> impl IntoResponse {
-    HTTP_COUNTER.with_label_values(&["get_metrics"]).inc();
-    let timer = HTTP_REQ_HISTOGRAM
-        .with_label_values(&["get_metrics"])
-        .start_timer();
+handler!(get_metrics() -> impl IntoResponse {
     let encoder = TextEncoder::new();
     let data = prometheus::gather();
     let mut buffer = vec![];
     encoder.encode(&data, &mut buffer).unwrap();
-    let ret = Response::builder()
+    Response::builder()
         .status(200)
         .header(CONTENT_TYPE, encoder.format_type())
         .body(Body::from(buffer))
-        .unwrap();
-    timer.stop_and_record();
-    ret
-}
+        .unwrap()
+});
 
-async fn post_logrotate(state: Extension<Arc<GlobalState>>) -> Result<(), MyError> {
+handler!(post_logrotate(state: Extension<Arc<GlobalState>>) -> Result<(), MyError> {
     if let Some(log) = &state.contexts.access_log {
         log.reopen().await.map_err(MyError)
     } else {
         Ok(())
     }
-}
+});
 
 async fn not_found() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, "not found")
