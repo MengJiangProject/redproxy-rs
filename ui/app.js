@@ -9,6 +9,7 @@ Number.prototype.fileSize = function (a, b, c, d) {
 };
 
 const API_PREFIX = "/api";
+const TITLE_SURFIX = ' - redproxy-rs console';
 const app = Vue.createApp({
   data() {
     return {
@@ -39,6 +40,8 @@ const app = Vue.createApp({
       localStorage.autoRefresh = val;
     },
     currentTab(val) {
+      let t = this.tabs.find((tab) => tab.slug == val);
+      document.title = t.title + TITLE_SURFIX;
       history.replaceState(val, "", '#' + val);
     }
   },
@@ -47,7 +50,6 @@ const app = Vue.createApp({
       if (location.hash) {
         let hash = location.hash.substr(1);
         let t = this.tabs.find((tab) => tab.slug == hash);
-        console.log(hash, t);
         if (t) {
           this.currentTab = t.slug;
         }
