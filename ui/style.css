@@ -25,6 +25,8 @@
 
 .tab-button.active {
   background: #e0e0e0;
+  border-top-color: blue;
+  border-top-width: medium;
 }
 
 .tab {

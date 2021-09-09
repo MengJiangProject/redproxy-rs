@@ -15,9 +15,9 @@
     <div id="root-component" class="root container">
         <div id="nav" class="row">
             <div class="col-10">
-                <button v-for="tab in tabs" :key="tab" :class="['tab-button', { active: currentTab === tab }]"
-                    @click="currentTab = tab">
-                    {{ tab }}
+                <button v-for="tab in tabs" :key="tab" :class="['tab-button', { active: currentTab === tab.slug }]"
+                    @click="currentTab = tab.slug">
+                    {{ tab.title }}
                 </button>
             </div>
             <div class="col-2 form-check form-switch">

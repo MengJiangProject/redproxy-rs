@@ -12,20 +12,23 @@ const API_PREFIX = "/api";
 const app = Vue.createApp({
   data() {
     return {
-      currentTab: 'Live',
-      tabs: ['Live', 'History'],
+      currentTab: 'live',
+      tabs: [{ title: 'Live', slug: 'live' }, { title: 'History', slug: 'history' }, { title: 'Rules', slug: 'rules' }],
       autoRefresh: false,
     }
   },
   computed: {
     currentTabComponent() {
-      return 'tab-' + this.currentTab.toLowerCase()
+      return 'tab-' + this.currentTab
     }
   },
   mounted() {
     if (localStorage.autoRefresh) {
       this.autoRefresh = localStorage.autoRefresh == "true";
     }
+
+    window.addEventListener("popstate", () => this.setupTab());
+    this.setupTab();
     this.setupTimeout()
   },
   unmounted() {
@@ -34,17 +37,28 @@ const app = Vue.createApp({
   watch: {
     autoRefresh(val) {
       localStorage.autoRefresh = val;
+    },
+    currentTab(val) {
+      history.replaceState(val, "", '#' + val);
     }
   },
   methods: {
+    setupTab() {
+      if (location.hash) {
+        let hash = location.hash.substr(1);
+        let t = this.tabs.find((tab) => tab.slug == hash);
+        console.log(hash, t);
+        if (t) {
+          this.currentTab = t.slug;
+        }
+      }
+    },
     setupTimeout() {
       this.timeout = setTimeout(() => {
-        // console.log('timeout')
         this.loadData()
       }, 5000)
     },
     loadData() {
-      // console.info(this.autoRefresh);
       if (this.autoRefresh) {
         try {
           this.$refs.current.loadData()
@@ -108,6 +122,58 @@ app.component('tab-history', {
   }
 })
 
+app.component('tab-rules', {
+  template: `
+  <div class="rules-tab">
+    <ol class="list-group list-group-numbered">
+      <li v-for="item in list" class="list-group-item d-flex justify-content-between align-items-start">
+        <dl class="row ms-2 me-auto">
+          <dt v-if=item.filter>filter</dt>
+          <dd v-if=item.filter>{{item.filter}}</dd>
+          <dt>target</dt>
+          <dd>{{item.target}}</dd>
+        </dl>
+        <rule-stats :stats=item.stats></rule-stats>
+      </li>
+    </ol>
+  </div>`,
+  data() {
+    return {
+      list: []
+    }
+  },
+  mounted() { this.loadData(); },
+  methods: {
+    async loadData() {
+      let response = await fetch(API_PREFIX + '/rules')
+      if (response.status !== 200) {
+        console.log('Response Error', response);
+        return;
+      }
+      let data = await response.json()
+      // console.info(data);
+      this.list = data;
+    }
+  }
+})
+
+app.component('rule-stats', {
+  props: { stats: Object },
+  template: `
+  <span class="badge bg-primary rounded-pill">E:{{stats.exec}}</span>&nbsp;
+  <span class="badge bg-success rounded-pill">H:{{stats.hits}}</span>&nbsp;
+  <span class="badge bg-secondary rounded-pill">T:{{time}}ns</span>
+  `,
+  computed: {
+    time() {
+      if (this.stats.exec) {
+        this.stats.time / this.stats.exec
+      } else {
+        return 0;
+      }
+    }
+  }
+})
 app.component('contexts', {
   props: { list: Array },
   template: `
