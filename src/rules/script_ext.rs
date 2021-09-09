@@ -6,6 +6,7 @@ use milu::{
     function,
     script::{Accessible, Callable, Evaluatable, NativeObject, ScriptContextRef, Type, Value},
 };
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::{convert::TryInto, net::IpAddr};
 
@@ -39,15 +40,15 @@ impl Accessible for ContextAdaptor {
         match name {
             "listener" => Ok(self.req.listener.clone().into()),
             "target" => Ok(self.req.target.clone().into()),
-            "source" => Ok(self.req.source.to_string().into()),
+            "source" => Ok(SocketAddress(self.req.source).into()),
             _ => bail!("property undefined: {}", name),
         }
     }
 
     fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error> {
         match name {
-            "listener" | "source" => Ok(Type::String),
-            "target" => self.get(name)?.type_of(ctx),
+            "listener" => Ok(Type::String),
+            "target" | "source" => self.get(name)?.type_of(ctx),
             _ => bail!("undefined"),
         }
     }
@@ -91,6 +92,71 @@ impl Evaluatable for TargetAddress {
 }
 
 impl Accessible for TargetAddress {
+    fn names(&self) -> Vec<&str> {
+        vec!["host", "port", "type"]
+    }
+
+    fn get(&self, name: &str) -> Result<Value, Error> {
+        match name {
+            "host" => Ok(self.host().into()),
+            "port" => Ok(self.port().into()),
+            "type" => Ok(self.r#type().into()),
+            _ => bail!("property undefined: {}", name),
+        }
+    }
+
+    fn type_of<'b>(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
+        match name {
+            "host" | "port" | "type" => Ok(Type::String),
+            _ => bail!("undefined"),
+        }
+    }
+}
+
+#[derive(Debug, Hash)]
+struct SocketAddress(SocketAddr);
+impl SocketAddress {
+    pub fn host(&self) -> String {
+        match &self.0 {
+            SocketAddr::V4(x) => x.ip().to_string(),
+            SocketAddr::V6(x) => x.ip().to_string(),
+        }
+    }
+    pub fn port(&self) -> u16 {
+        match &self.0 {
+            SocketAddr::V4(x) => x.port(),
+            SocketAddr::V6(x) => x.port(),
+        }
+    }
+    pub fn r#type(&self) -> &str {
+        if self.0.is_ipv4() {
+            "ipv4"
+        } else {
+            "ipv6"
+        }
+    }
+}
+
+impl NativeObject for SocketAddress {
+    fn as_evaluatable(&self) -> Option<&dyn Evaluatable> {
+        Some(self)
+    }
+    fn as_accessible(&self) -> Option<&dyn Accessible> {
+        Some(self)
+    }
+}
+
+impl Evaluatable for SocketAddress {
+    fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
+        Ok(Type::String)
+    }
+
+    fn value_of(&self, _ctx: ScriptContextRef) -> Result<Value, Error> {
+        Ok(self.0.to_string().into())
+    }
+}
+
+impl Accessible for SocketAddress {
     fn names(&self) -> Vec<&str> {
         vec!["host", "port", "type"]
     }

@@ -77,7 +77,7 @@ rules:
     target: deny
   - filter: request.target.type == "domain"
     target: socks
-  - filter: request.listener == "quic" && request.target.port == 443
+  - filter: request.source.host == "127.0.0.1"
     target: direct
   # available varibles are request: { source: string, target: {port:int, host:string, type:string }, listener: string }
   # available functions: split(str,str)->[str] to_string(any)->str to_integer(str)->int
