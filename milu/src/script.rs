@@ -598,6 +598,16 @@ mod tests {
     }
 
     #[test]
+    fn template() {
+        type_test(r#" `x=${to_string(1+2)}` "#, Type::String);
+        eval_test!(
+            r#" `x=
+${to_string(1+2)}` "#,
+            "x=\n3".into()
+        );
+    }
+
+    #[test]
     fn native_objects() {
         let mut ctx = ScriptContext::new(Some(Default::default()));
         ctx.set("a".into(), ("xx".to_owned(), 1).into());

@@ -15,6 +15,7 @@ use nom_locate::LocatedSpan;
 use std::{fmt, num::ParseIntError, sync::Arc};
 
 mod string;
+mod template;
 use super::script::stdlib::*;
 use super::script::{Call, Value};
 
@@ -169,6 +170,7 @@ macro_rules! ctx {
 
 //for debug use
 #[allow(unused_macros)]
+#[macro_export]
 macro_rules! tap {
     ($e:expr) => {
         |i| {
@@ -203,6 +205,10 @@ where
 
 rule!(string -> Value, {
     map(string::parse_string,Into::into)
+});
+
+rule!(template -> Value, {
+    map(template::parse_template, |v| StringConcat::make_call(v.into()).into() )
 });
 
 rule!(boolean -> Value, {
@@ -293,6 +299,7 @@ rule!(value -> Value, {
     // println!("value: i={}", i);
     alt((
         string,
+        template,
         boolean,
         integer,
         identifier,
@@ -544,6 +551,7 @@ mod tests {
     expr!(index, Index);
     expr!(access, Access);
     expr!(branch, If);
+    expr!(strcat, StringConcat);
 
     // macro_rules! call {
     //     ($p1:expr) => {
@@ -652,6 +660,19 @@ mod tests {
     fn op_5() {
         let input = "1+1-2";
         let value = minus!(plus!(int!(1), int!(1)), int!(2));
+        assert_ast(input, value);
+    }
+
+    #[test]
+    fn template_string() {
+        let input = "`a=${1+1}`";
+        let value = strcat!(array!(str!("a="), plus!(int!(1), int!(1))));
+        assert_ast(input, value);
+        let input = r#"`a=\${a}`"#;
+        let value = strcat!(array!(str!("a="), str!("$"), str!("{a}")));
+        assert_ast(input, value);
+        let input = "`a=${`x=${x}`}`";
+        let value = strcat!(array!(str!("a="), strcat!(array!(str!("x="), id!("x")))));
         assert_ast(input, value);
     }
 

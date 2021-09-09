@@ -30,7 +30,7 @@ use super::Span;
 /// Parse a unicode sequence, of the form u{XXXX}, where XXXX is 1 to 6
 /// hexadecimal numerals. We will combine this later with parse_escaped_char
 /// to parse sequences like \u{00AC}.
-fn parse_unicode<'a, E>(input: Span<'a>) -> IResult<Span<'a>, char, E>
+pub(crate) fn parse_unicode<'a, E>(input: Span<'a>) -> IResult<Span<'a>, char, E>
 where
     E: ParseError<Span<'a>> + FromExternalError<Span<'a>, std::num::ParseIntError>,
 {
@@ -91,7 +91,7 @@ where
 
 /// Parse a backslash, followed by any amount of whitespace. This is used later
 /// to discard any escaped whitespace.
-fn parse_escaped_whitespace<'a, E: ParseError<Span<'a>>>(
+pub(crate) fn parse_escaped_whitespace<'a, E: ParseError<Span<'a>>>(
     input: Span<'a>,
 ) -> IResult<Span<'a>, Span<'a>, E> {
     preceded(char('\\'), multispace1)(input)
