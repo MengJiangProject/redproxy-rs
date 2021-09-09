@@ -8,6 +8,14 @@ Protocol supported:
 - HTTP CONNECT over QUIC
 - SOCKS v4,v4a,v5 with mTLS (TCP CONNECT ONLY)
 - TPROXY on linux, used with iptables REDIRECT, that is where the name comes from: RED(irect)PROXY
+- Reverse Proxy
+
+Features:
+- Embedded Web Console
+- Prometheus integration
+- Access log in JSON format
+- Dynamic reconfigurable rules via RESTful API
+
 
 ## Config example
 
