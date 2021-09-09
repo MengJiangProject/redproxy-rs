@@ -7,7 +7,7 @@ use super::*;
 
 #[macro_export]
 macro_rules! function_head {
-    ($name:ident ($($aname:ident : $atype:ident),+) => $rtype:expr) => {
+    ($name:ident ($($aname:ident : $atype:expr),+) => $rtype:expr) => {
 
         // the String field is added to avoid hashing a empty struct always returns same value
         #[derive(Clone,Hash)]
@@ -63,21 +63,24 @@ macro_rules! args {
 
 #[macro_export]
 macro_rules! function {
-    ($name:ident ($($aname:ident : $atype:ident),+) => $rtype:expr, $self:ident, $body:tt) => {
+    ($name:ident ($($aname:ident : $atype:expr),+) => $rtype:expr, $body:tt) =>{
+        function!($name ($($aname : $atype),+) => $rtype, ctx=ctx, $body);
+    };
+    ($name:ident ($($aname:ident : $atype:expr),+) => $rtype:expr, ctx=$ctx:ident, $body:tt) => {
         $crate::function_head!($name ($($aname : $atype),+) => $rtype);
         impl Callable for $name {
             fn signature(
                 &self,
-                ctx: ScriptContextRef,
+                $ctx: ScriptContextRef,
                 args: &[Value],
             ) -> Result<Type, Error>
             {
                 let mut targs : Vec<Type> = Vec::with_capacity(args.len());
                 for x in args {
-                    let t = x.type_of(ctx.clone())?;
+                    let t = x.type_of($ctx.clone())?;
                     let t = if let Type::NativeObject(o) = t {
                         if let Some(e) = o.as_evaluatable() {
-                            e.type_of(ctx.clone())?
+                            e.type_of($ctx.clone())?
                         }else{
                             Type::NativeObject(o)
                         }
@@ -99,11 +102,11 @@ macro_rules! function {
             }
             fn call(
                 &self,
-                ctx: ScriptContextRef,
+                $ctx: ScriptContextRef,
                 args: &[Value],
             ) -> Result<Value, Error>
             {
-                $crate::args!(args, ctx=ctx, $($aname),+);
+                $crate::args!(args, ctx=$ctx, $($aname),+);
                 $body
             }
         }
@@ -391,24 +394,24 @@ impl Callable for IsMemberOf {
     }
 }
 
-function!(Not(b:Boolean)=>Boolean, self, {
+function!(Not(b:Boolean)=>Boolean, {
     let b:bool = b.try_into()?;
     Ok((!b).into())
 });
 
-function!(BitNot(b:Integer)=>Integer, self, {
+function!(BitNot(b:Integer)=>Integer, {
     let b:i64 = b.try_into()?;
     Ok((!b).into())
 });
 
-function!(Negative(b:Integer)=>Integer, self, {
+function!(Negative(b:Integer)=>Integer, {
     let b:i64 = b.try_into()?;
     Ok((-b).into())
 });
 
 macro_rules! int_op{
     ($name:ident, $op:tt) =>{
-        function!($name(a: Integer, b: Integer)=>Integer, self, {
+        function!($name(a: Integer, b: Integer)=>Integer, {
             let a:i64 = a.try_into()?;
             let b:i64 = b.try_into()?;
             Ok((a $op b).into())
@@ -426,7 +429,7 @@ int_op!(BitOr,|);
 int_op!(BitXor,^);
 int_op!(ShiftLeft,<<);
 int_op!(ShiftRight,>>);
-function!(ShiftRightUnsigned(a: Integer, b: Integer)=>Integer, self, {
+function!(ShiftRightUnsigned(a: Integer, b: Integer)=>Integer, {
     let a:i64 = a.try_into()?;
     let b:i64 = b.try_into()?;
     let a = a as u64;
@@ -436,7 +439,7 @@ function!(ShiftRightUnsigned(a: Integer, b: Integer)=>Integer, self, {
 
 macro_rules! bool_op{
     ($name:ident, $op:tt) =>{
-        function!($name(a: Boolean, b: Boolean)=>Boolean, self, {
+        function!($name(a: Boolean, b: Boolean)=>Boolean, {
             let a:bool = a.try_into()?;
             let b:bool = b.try_into()?;
             Ok((a $op b).into())
@@ -450,7 +453,7 @@ bool_op!(Xor,^);
 
 macro_rules! compare_op{
     ($name:ident, $op:tt) =>{
-        function!($name(a: Any, b: Any)=>Boolean, self, {
+        function!($name(a: Any, b: Any)=>Boolean, {
             match (a,b) {
                 (Value::Integer(a),Value::Integer(b)) => Ok((a $op b).into()),
                 (Value::String(a),Value::String(b)) => Ok((a $op b).into()),
@@ -468,34 +471,45 @@ compare_op!(LesserOrEqual, <=);
 compare_op!(Equal, == );
 compare_op!(NotEqual, !=);
 
-function!(Like(a: String, b: String)=>Boolean, self, {
+function!(Like(a: String, b: String)=>Boolean, {
     let a:String = a.try_into()?;
     let b:String = b.try_into()?;
     let re = regex::Regex::new(&b).context("failed to compile regex")?;
     Ok(re.is_match(&a).into())
 });
 
-function!(NotLike(a: String, b: String)=>Boolean, self, {
+function!(NotLike(a: String, b: String)=>Boolean, {
     let a:String = a.try_into()?;
     let b:String = b.try_into()?;
     let re = regex::Regex::new(&b).context("failed to compile regex")?;
     Ok((!re.is_match(&a)).into())
 });
 
-function!(ToString(s: Any)=>String, self, {
+function!(ToString(s: Any)=>String, {
     Ok(s.to_string().into())
 });
 
-function!(ToInteger(s: String)=>Integer, self, {
+function!(ToInteger(s: String)=>Integer, {
     let s:String = s.try_into()?;
     s.parse::<i64>().map(Into::into)
         .context(format!("failed to parse integer: {}", s))
 });
 
-function!(Split(a: String, b: String)=>Type::array_of(String), self, {
+function!(Split(a: String, b: String)=>Type::array_of(String), {
     let s:String = a.try_into()?;
     let d:String = b.try_into()?;
     Ok(s.split(&d).map(Into::into).collect::<Vec<Value>>().into())
+});
+
+function!(StringConcat(a: Type::array_of(String))=>String, ctx=ctx, {
+    let s:Arc<Vec<Value>> = a.try_into()?;
+    let mut ret = String::new();
+    for sv in s.iter(){
+        let sv = sv.value_of(ctx.clone())?;
+        let sv: String = sv.try_into()?;
+        ret += &sv;
+    }
+    Ok(ret.into())
 });
 
 #[cfg(test)]
@@ -632,5 +646,11 @@ mod tests {
         Split,
         ["1,2".into(), ",".into()],
         vec!["1".into(), "2".into()].into()
+    );
+    op_test!(
+        string_concat,
+        StringConcat,
+        [vec!["1".into(), "2".into()].into()],
+        "12".into()
     );
 }

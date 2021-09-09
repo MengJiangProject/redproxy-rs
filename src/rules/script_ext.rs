@@ -178,7 +178,7 @@ impl Accessible for SocketAddress {
     }
 }
 
-function!(CidrMatch(ip: String, cidr: String)=>Type::Boolean, self, {
+function!(CidrMatch(ip: String, cidr: String)=>Boolean, {
     let s_ip:String = ip.try_into()?;
     let s_cidr:String = cidr.try_into()?;
     let ip = s_ip.parse();

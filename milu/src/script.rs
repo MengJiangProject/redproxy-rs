@@ -220,6 +220,7 @@ impl Default for ScriptContext {
         varibles.insert("to_string".to_string(), stdlib::ToString::stub().into());
         varibles.insert("to_integer".to_string(), stdlib::ToInteger::stub().into());
         varibles.insert("split".to_string(), stdlib::Split::stub().into());
+        varibles.insert("strcat".to_string(), stdlib::StringConcat::stub().into());
         Self {
             parent: None,
             varibles,
@@ -588,6 +589,12 @@ mod tests {
     fn access_tuple() {
         type_test("(1,\"2\",false).1", Type::String);
         eval_test!("(1,\"2\",false).1", "2".into());
+    }
+
+    #[test]
+    fn strcat() {
+        type_test(r#" strcat(["1","2",to_string(3)]) "#, Type::String);
+        eval_test!(r#" strcat(["1","2",to_string(3)]) "#, "123".into());
     }
 
     #[test]
