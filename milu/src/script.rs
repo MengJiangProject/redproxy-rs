@@ -284,6 +284,31 @@ impl Value {
     pub fn is_identifier(&self) -> bool {
         matches!(self, Self::Identifier(..))
     }
+
+    pub fn real_type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
+        let t = self.type_of(ctx.clone())?;
+        if let Type::NativeObject(o) = t {
+            if let Some(e) = o.as_evaluatable() {
+                e.type_of(ctx)
+            } else {
+                Ok(Type::NativeObject(o))
+            }
+        } else {
+            Ok(t)
+        }
+    }
+    pub fn real_value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
+        let t = self.value_of(ctx.clone())?;
+        if let Self::NativeObject(o) = t {
+            if let Some(e) = o.as_evaluatable() {
+                e.value_of(ctx)
+            } else {
+                Ok(Self::NativeObject(o))
+            }
+        } else {
+            Ok(t)
+        }
+    }
 }
 
 impl Evaluatable for Value {
@@ -301,11 +326,11 @@ impl Evaluatable for Value {
                 if a.is_empty() {
                     Ok(Type::Array(Box::new(Type::Any)))
                 } else {
-                    let t = a[0].type_of(ctx.clone())?;
+                    let t = a[0].real_type_of(ctx.clone())?;
                     a.iter().try_for_each(|x| {
-                        let xt = x.type_of(ctx.clone())?;
+                        let xt = x.real_type_of(ctx.clone())?;
                         if xt != t {
-                            bail!("array member must have same type: required type={:?}, mismatch item={:?}", t, x)
+                            bail!("array member must have same type: required type={:?}, mismatch type={} item={:?}", t, xt, x)
                         } else {
                             Ok(())
                         }

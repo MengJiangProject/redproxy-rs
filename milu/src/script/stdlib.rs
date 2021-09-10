@@ -45,18 +45,7 @@ macro_rules! args {
     ($args:ident, ctx=$ctx:ident, $($aname:ident),+) => {
         let mut iter = $args.into_iter();
         $(
-            let $aname = {
-                let x = iter.next().unwrap().value_of($ctx.clone())?;
-                if let Value::NativeObject(o) = x {
-                    if let Some(e) = o.as_evaluatable() {
-                        e.value_of($ctx.clone())?
-                    }else{
-                        Value::NativeObject(o)
-                    }
-                }else{
-                    x
-                }
-            };
+            let $aname = iter.next().unwrap().real_value_of($ctx.clone())?;
         )+
     }
 }
@@ -77,16 +66,7 @@ macro_rules! function {
             {
                 let mut targs : Vec<Type> = Vec::with_capacity(args.len());
                 for x in args {
-                    let t = x.type_of($ctx.clone())?;
-                    let t = if let Type::NativeObject(o) = t {
-                        if let Some(e) = o.as_evaluatable() {
-                            e.type_of($ctx.clone())?
-                        }else{
-                            Type::NativeObject(o)
-                        }
-                    }else{
-                        t
-                    };
+                    let t = x.real_type_of($ctx.clone())?;
                     targs.push(t);
                 }
                 $crate::args!(targs, $($aname),+);
