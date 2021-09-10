@@ -55,8 +55,9 @@ impl ScriptFormater {
         let rtype = value.type_of(ctx.clone())?;
         ensure!(
             rtype == Type::String,
-            "filter return type mismatch: required string, got {}",
-            rtype
+            "log script type mismatch: required string, got {}\nsnippet: {}",
+            rtype,
+            s
         );
         value.value_of(ctx)?;
         Ok(Self(value))
