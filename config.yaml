@@ -94,4 +94,6 @@ rules:
 
 accessLog:
   path: access.log
-  format: json
+  format:
+    script: |
+      `src=${request.source} dst=${request.target} listener=${request.listener} connector=${request.connector}`

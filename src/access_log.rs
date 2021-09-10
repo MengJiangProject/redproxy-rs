@@ -1,8 +1,13 @@
-use easy_error::{err_msg, Error, ResultExt};
+use easy_error::{ensure, err_msg, Error, ResultExt};
 use futures::TryFutureExt;
 use log::info;
+use milu::{
+    parser::parse,
+    script::{Evaluatable, Type, Value},
+};
 use serde::{Deserialize, Serialize};
 use std::{
+    convert::TryInto,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -13,31 +18,54 @@ use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
 };
 
-use crate::context::ContextProps;
+use crate::{context::ContextProps, rules::script_ext::create_context};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 enum Format {
     Json,
-    // Script(String),
+    Script(String),
 }
 impl Format {
     fn create(&self) -> Result<Box<dyn Formater>, Error> {
         match self {
             Self::Json => Ok(Box::new(JsonFormater)),
+            Self::Script(s) => Ok(Box::new(ScriptFormater::new(s)?)),
             // _ => bail!("not implemented"),
         }
     }
 }
 
 trait Formater: Send + Sync {
-    fn to_string(&self, e: &ContextProps) -> Result<String, Error>;
+    fn to_string(&self, e: Arc<ContextProps>) -> Result<String, Error>;
 }
 
 struct JsonFormater;
 impl Formater for JsonFormater {
-    fn to_string(&self, e: &ContextProps) -> Result<String, Error> {
-        serde_json::to_string(e).context("deserializer failure")
+    fn to_string(&self, e: Arc<ContextProps>) -> Result<String, Error> {
+        serde_json::to_string(&e).context("deserializer failure")
+    }
+}
+
+struct ScriptFormater(Value);
+impl ScriptFormater {
+    fn new(s: &str) -> Result<Self, Error> {
+        let value = parse(s).context("fail to compile")?;
+        let ctx: Arc<milu::script::ScriptContext> = create_context(Default::default()).into();
+        let rtype = value.type_of(ctx.clone())?;
+        ensure!(
+            rtype == Type::String,
+            "filter return type mismatch: required string, got {}",
+            rtype
+        );
+        value.value_of(ctx)?;
+        Ok(Self(value))
+    }
+}
+impl Formater for ScriptFormater {
+    fn to_string(&self, e: Arc<ContextProps>) -> Result<String, Error> {
+        let ctx = create_context(e);
+        self.0.value_of(ctx.into())?.try_into()
     }
 }
 
@@ -101,7 +129,7 @@ async fn log_thread(
     loop {
         let e = rx.recv().await.ok_or_else(|| err_msg("dequeue"))?;
         if let Some(e) = e {
-            let mut line = format.to_string(&e).context("deserializer error")?;
+            let mut line = format.to_string(e).context("deserializer error")?;
             line += "\r\n";
             stream
                 .write(line.as_bytes())

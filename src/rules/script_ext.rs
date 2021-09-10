@@ -39,6 +39,7 @@ impl Accessible for ContextAdaptor {
     fn get(&self, name: &str) -> Result<Value, Error> {
         match name {
             "listener" => Ok(self.req.listener.clone().into()),
+            "connector" => Ok(self.req.connector.as_deref().unwrap_or("").into()),
             "target" => Ok(self.req.target.clone().into()),
             "source" => Ok(SocketAddress(self.req.source).into()),
             _ => bail!("property undefined: {}", name),
@@ -47,9 +48,9 @@ impl Accessible for ContextAdaptor {
 
     fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error> {
         match name {
-            "listener" => Ok(Type::String),
+            "listener" | "connector" => Ok(Type::String),
             "target" | "source" => self.get(name)?.type_of(ctx),
-            _ => bail!("undefined"),
+            _ => bail!("undefined field: {}", name),
         }
     }
 }
