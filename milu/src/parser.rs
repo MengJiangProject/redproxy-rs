@@ -217,9 +217,9 @@ rule!(boolean -> Value, {
     map(alt((parse_true, parse_false)),Into::into)
 });
 
-rule!(null -> Value, {
-    nom::combinator::value(Value::Null, tag("null"))
-});
+// rule!(null -> Value, {
+//     nom::combinator::value(Value::Null, tag("null"))
+// });
 
 rule!(hexadecimal, {
     preceded(

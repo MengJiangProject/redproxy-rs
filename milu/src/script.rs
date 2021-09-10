@@ -15,7 +15,7 @@ pub enum Type {
     Array(Box<Type>),
     Tuple(Vec<Type>),
     NativeObject(Arc<NativeObjectRef>),
-    Null,
+    // Null,
     Any, //native only
 }
 
@@ -40,7 +40,7 @@ impl PartialEq for Type {
             (Array(a), Array(b)) => a == b,
             (Tuple(a), Tuple(b)) => a == b,
             (NativeObject(a), NativeObject(b)) => a == b,
-            (Null, Null) => true,
+            // (Null, Null) => true,
             _ => false,
         }
     }
@@ -62,7 +62,7 @@ impl Display for Type {
                     .join(",")
             ),
             Self::NativeObject(x) => write!(f, "native@{:x}", x.gen_hash()),
-            Self::Null => write!(f, "null"),
+            // Self::Null => write!(f, "null"),
             Self::Any => write!(f, "any"),
         }
     }
@@ -230,7 +230,7 @@ impl Default for ScriptContext {
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum Value {
-    Null,
+    // Null,
     Integer(i64),
     Boolean(bool),
     String(String),
@@ -316,7 +316,7 @@ impl Evaluatable for Value {
         log::trace!("type_of={}", self);
         use Value::*;
         match self {
-            Null => Ok(Type::Null),
+            // Null => Ok(Type::Null),
             String(_) => Ok(Type::String),
             Boolean(_) => Ok(Type::Boolean),
             Integer(_) => Ok(Type::Integer),
@@ -440,7 +440,7 @@ impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use Value::*;
         match self {
-            Null => write!(f, "null"),
+            // Null => write!(f, "null"),
             String(s) => write!(f, "{:?}", s),
             Integer(i) => write!(f, "{}", i),
             Boolean(b) => write!(f, "{}", b),
