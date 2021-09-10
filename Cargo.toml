@@ -10,7 +10,7 @@ name = "redproxy-rs"
 path = "src/main.rs"
 
 [features]
-default = ["quic","metrics"]
+default = ["quic","metrics","embedded-ui"]
 quic = ["quinn","futures-util","pin-project-lite"]
 metrics = ["axum","tower","tower-http","prometheus","lazy_static"]
 embedded-ui = ["metrics"]
