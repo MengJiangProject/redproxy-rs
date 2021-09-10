@@ -485,7 +485,7 @@ function!(StringConcat(a: Type::array_of(String))=>String, ctx=ctx, {
     let s:Arc<Vec<Value>> = a.try_into()?;
     let mut ret = String::new();
     for sv in s.iter(){
-        let sv = sv.value_of(ctx.clone())?;
+        let sv = sv.real_value_of(ctx.clone())?;
         let sv: String = sv.try_into()?;
         ret += &sv;
     }
