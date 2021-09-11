@@ -108,14 +108,23 @@ async fn main() -> Result<(), Terminator> {
             ctx_mut.access_log = Some(log);
         }
 
-        for (_name, l) in st_mut.listeners.iter_mut() {
+        for l in st_mut.listeners.values_mut() {
             Arc::get_mut(l).unwrap().init().await?;
         }
 
-        for (_name, c) in st_mut.connectors.iter_mut() {
+        for c in st_mut.connectors.values_mut() {
             Arc::get_mut(c).unwrap().init().await?;
         }
+
         st_mut.set_rules(rules::from_config(&cfg.rules)?).await?;
+    }
+
+    for l in state.listeners.values() {
+        l.verify(state.clone()).await?;
+    }
+
+    for c in state.connectors.values() {
+        c.verify(state.clone()).await?;
     }
 
     if config_test {
@@ -170,7 +179,7 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
         .await
         .set_state(ContextState::ServerConnecting)
         .set_connector(connector.name().to_owned());
-    if let Err(e) = connector.connect(ctx.clone()).await {
+    if let Err(e) = connector.connect(state.clone(), ctx.clone()).await {
         let ctx_str = ctx.to_string().await;
         warn!(
             "failed to connect to upstream: {} cause: {:?} \nctx: {}",

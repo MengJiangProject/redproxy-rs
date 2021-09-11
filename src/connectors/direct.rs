@@ -6,7 +6,10 @@ use log::trace;
 use serde::{Deserialize, Serialize};
 
 use super::ConnectorRef;
-use crate::context::{make_buffered_stream, ContextRef};
+use crate::{
+    context::{make_buffered_stream, ContextRef},
+    GlobalState,
+};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DirectConnector {
@@ -23,12 +26,11 @@ impl super::Connector for DirectConnector {
     fn name(&self) -> &str {
         self.name.as_str()
     }
-
-    async fn init(&mut self) -> Result<(), Error> {
-        Ok(())
-    }
-
-    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<(), Error> {
+    async fn connect(
+        self: Arc<Self>,
+        _state: Arc<GlobalState>,
+        ctx: ContextRef,
+    ) -> Result<(), Error> {
         let target = ctx.read().await.target();
         trace!("connecting to {:?}", target);
         let server = target.connect_tcp().await.context("connect")?;

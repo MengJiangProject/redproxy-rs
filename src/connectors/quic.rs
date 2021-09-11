@@ -14,6 +14,7 @@ use crate::{
         tls::TlsClientConfig,
     },
     context::{make_buffered_stream, ContextRef, IOBufStream},
+    GlobalState,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -55,7 +56,11 @@ impl super::Connector for QuicConnector {
         Ok(())
     }
 
-    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<(), Error> {
+    async fn connect(
+        self: Arc<Self>,
+        _state: Arc<GlobalState>,
+        ctx: ContextRef,
+    ) -> Result<(), Error> {
         let conn = self.clone().get_connection().await?;
         let remote = conn.remote_address();
         let local = self

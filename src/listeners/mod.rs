@@ -19,7 +19,12 @@ mod tproxy;
 
 #[async_trait]
 pub trait Listener: Send + Sync {
-    async fn init(&mut self) -> Result<(), Error>;
+    async fn init(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+    async fn verify(&self, _state: Arc<GlobalState>) -> Result<(), Error> {
+        Ok(())
+    }
     async fn listen(
         self: Arc<Self>,
         state: Arc<GlobalState>,

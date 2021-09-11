@@ -30,9 +30,6 @@ pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
 
 #[async_trait]
 impl Listener for TProxyListener {
-    async fn init(&mut self) -> Result<(), Error> {
-        Ok(())
-    }
     async fn listen(
         self: Arc<Self>,
         state: Arc<GlobalState>,
