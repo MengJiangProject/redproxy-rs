@@ -44,7 +44,7 @@
   visibility: hidden;
   background-color: black;
   color: #fff;
-  text-align: center;
+  /* text-align: center; */
   padding: 1em;
   border-radius: 6px;
   font-size: small;

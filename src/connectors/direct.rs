@@ -31,8 +31,14 @@ impl super::Connector for DirectConnector {
     async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<(), Error> {
         let target = ctx.read().await.target();
         trace!("connecting to {:?}", target);
-        let server = make_buffered_stream(target.connect_tcp().await.context("connect")?);
-        ctx.write().await.set_server_stream(server);
+        let server = target.connect_tcp().await.context("connect")?;
+        let local = server.local_addr().context("local_addr")?;
+        let remote = server.peer_addr().context("peer_addr")?;
+        ctx.write()
+            .await
+            .set_server_stream(make_buffered_stream(server))
+            .set_local_addr(local)
+            .set_server_addr(remote);
         trace!("connected to {:?}", target);
         Ok(())
     }

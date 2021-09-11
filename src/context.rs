@@ -241,6 +241,8 @@ pub struct ContextProps {
     pub connector: Option<String>,
     pub source: SocketAddr,
     pub target: TargetAddress,
+    pub local_addr: SocketAddr,
+    pub server_addr: SocketAddr,
     pub error: Option<String>,
     pub client_stat: Arc<ContextStatistics>,
     pub server_stat: Arc<ContextStatistics>,
@@ -268,6 +270,8 @@ impl Default for ContextProps {
             connector: Default::default(),
             source: ([0, 0, 0, 0], 0).into(),
             target: TargetAddress::Unknown,
+            local_addr: ([0, 0, 0, 0], 0).into(),
+            server_addr: ([0, 0, 0, 0], 0).into(),
             error: Default::default(),
             client_stat: Default::default(),
             server_stat: Default::default(),
@@ -453,6 +457,28 @@ impl Context {
     /// Set the context's target.
     pub fn set_target(&mut self, target: TargetAddress) -> &mut Self {
         Arc::make_mut(&mut self.props).target = target;
+        self
+    }
+
+    /// Get a clone to the context's remote_addr.
+    pub fn server_addr(&self) -> SocketAddr {
+        self.props.server_addr
+    }
+
+    /// Set the context's remote_addr.
+    pub fn set_server_addr(&mut self, server_addr: SocketAddr) -> &mut Self {
+        Arc::make_mut(&mut self.props).server_addr = server_addr;
+        self
+    }
+
+    /// Get a clone to the context's remote_addr.
+    pub fn local_addr(&self) -> SocketAddr {
+        self.props.local_addr
+    }
+
+    /// Set the context's remote_addr.
+    pub fn set_local_addr(&mut self, local_addr: SocketAddr) -> &mut Self {
+        Arc::make_mut(&mut self.props).local_addr = local_addr;
         self
     }
 

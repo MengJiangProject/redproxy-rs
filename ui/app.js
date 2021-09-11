@@ -8,6 +8,31 @@ Number.prototype.fileSize = function (a, b, c, d) {
     + ' ' + (d ? (a[1] + 'MGTPEZY')[--d] + a[2] : 'Bytes');
 };
 
+Number.prototype.timeSince = function () {
+  return new Date(this).timeSince()
+}
+
+Date.prototype.timeSince = function () {
+  var ret = "";
+  var seconds = Math.floor((new Date() - this) / 1000);
+  var interval = Math.floor(seconds / 86400);
+  if (interval > 1) {
+    ret += interval + " days ";
+    seconds -= interval * 86400;
+  }
+  interval = Math.floor(seconds / 3600);
+  if (interval > 1) {
+    ret += interval + " hours ";
+    seconds -= interval * 3600;
+  }
+  interval = Math.floor(seconds / 60);
+  if (interval > 1) {
+    ret += interval + " minutes ";
+    seconds -= interval * 60;
+  }
+  return ret + Math.floor(seconds) + " seconds ago";
+}
+
 const API_PREFIX = "/api";
 const TITLE_SURFIX = ' - redproxy-rs console';
 const app = Vue.createApp({
@@ -204,33 +229,63 @@ app.component('context-row', {
   <td>{{ item.source }}</td>
   <td>{{ item.target }}</td>
   <td>{{ item.listener }}</td>
-  <td>{{ item.connector }}</td>
+  <td>
+    <tooltip>
+      <template #tip>
+        local: {{ item.local_addr }}<br/>
+        remote: {{ item.server_addr }}
+      </template>
+      <template #content>{{ item.connector }}</template>
+    </tooltip>
+  </td>
   <td><context-state :item=item></context-state></td>
-  <td>&#9650; {{ item.client_stat.read_bytes.fileSize() }}</td>
-  <td>&#9660; {{ item.server_stat.read_bytes.fileSize() }}</td>
+  <td>
+    <tooltip>
+      <template #tip>{{ item.client_stat.last_read.timeSince() }}</template>
+      <template #content>&#9650; {{ item.client_stat.read_bytes.fileSize() }}</template>
+    </tooltip>
+  </td>
+  <td>
+    <tooltip>
+      <template #tip>{{ item.server_stat.last_read.timeSince()}}</template>
+      <template #content>&#9660; {{ item.server_stat.read_bytes.fileSize() }}</template>
+    </tooltip>
+  </td>
 </tr>
 `
 })
 
+app.component('tooltip', {
+  template: `
+  <span class="my_tooltip">
+    <slot name="content"></slot>
+    <span class="my_tooltiptext">
+      <slot name="tip"></slot>
+    </span>
+  </span>`,
+});
+
 app.component('context-state', {
   props: { item: Object },
   template: `
-  <span class="my_tooltip">
-    {{ state }}
-    <span class="my_tooltiptext">
-      <span>{{ time }}</span><br/>
-      <span v-if=error>{{ error }}</span>
-    </span>
-  </span>`,
+  <tooltip>
+    <template #content>
+      {{ state }}
+    </template>
+    <template #tip>
+      <span>Time: {{ time }}</span><br/>
+      <span v-if=error>Error: {{ error }}</span>
+    </template>
+  </tooltip>`,
   computed: {
     state() {
       return this.item.state.last().state;
     },
     time() {
-      return new Date(this.item.state.last().time).toLocaleString();
+      return this.item.state.last().time.timeSince();
     },
     error() {
-      return this.item.error ? `Error: ${this.item.error}` : "";
+      return this.item.error || "";
     }
   }
 })

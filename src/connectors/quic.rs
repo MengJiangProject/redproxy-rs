@@ -57,10 +57,21 @@ impl super::Connector for QuicConnector {
 
     async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<(), Error> {
         let conn = self.clone().get_connection().await?;
+        let remote = conn.remote_address();
+        let local = self
+            .endpoint
+            .as_ref()
+            .unwrap()
+            .local_addr()
+            .context("local_addr")?;
         let ret = self.clone().handshake(conn, ctx.clone()).await;
         match ret {
             Ok(server) => {
-                ctx.write().await.set_server_stream(server);
+                ctx.write()
+                    .await
+                    .set_server_stream(server)
+                    .set_local_addr(local)
+                    .set_server_addr(remote);
                 Ok(())
             }
             Err(e) => {

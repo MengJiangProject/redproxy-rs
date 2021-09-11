@@ -71,6 +71,8 @@ impl super::Connector for SocksConnector {
         let server = TcpStream::connect((self.server.as_str(), self.port))
             .await
             .with_context(|| format!("failed to connect to upstream server: {}", self.server))?;
+        let local = server.local_addr().context("local_addr")?;
+        let remote = server.peer_addr().context("peer_addr")?;
         let mut server = if let Some(connector) = tls_connector {
             let domain = DNSNameRef::try_from_ascii(self.server.as_bytes())
                 .or_else(|e| {
@@ -106,7 +108,11 @@ impl super::Connector for SocksConnector {
         if resp.cmd != 0 {
             bail!("upstream server failure: {:?}", resp.cmd);
         }
-        ctx.write().await.set_server_stream(server);
+        ctx.write()
+            .await
+            .set_server_stream(server)
+            .set_local_addr(local)
+            .set_server_addr(remote);
         Ok(())
     }
 }
