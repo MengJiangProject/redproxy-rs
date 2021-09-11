@@ -273,16 +273,21 @@ app.component('context-state', {
       {{ state }}
     </template>
     <template #tip>
-      <span>Time: {{ time }}</span><br/>
-      <span v-if=error>Error: {{ error }}</span>
+      <table class="table-dark table-sm">
+        <tr v-for="st in item.state">
+          <td>{{ st.state }}</td>
+          <td>{{ st.time.timeSince() }}</td>
+        </tr>
+        <tr v-if=error>
+          <td>Error</td>
+          <td>{{ error }}</td>
+        </tr>
+      </table>
     </template>
   </tooltip>`,
   computed: {
     state() {
       return this.item.state.last().state;
-    },
-    time() {
-      return this.item.state.last().time.timeSince();
     },
     error() {
       return this.item.error || "";
