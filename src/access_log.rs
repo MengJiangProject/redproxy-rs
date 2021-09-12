@@ -3,7 +3,7 @@ use futures::TryFutureExt;
 use log::info;
 use milu::{
     parser::parse,
-    script::{Evaluatable, Type, Value},
+    script::{Evaluatable, ScriptContext, Type, Value},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -53,7 +53,7 @@ struct ScriptFormater(Value);
 impl ScriptFormater {
     fn new(s: &str) -> Result<Self, Error> {
         let value = parse(s).context("fail to compile")?;
-        let ctx: Arc<milu::script::ScriptContext> = create_context(Default::default()).into();
+        let ctx: Arc<ScriptContext> = create_context(Default::default()).into();
         let rtype = value.type_of(ctx.clone())?;
         ensure!(
             rtype == Type::String,
