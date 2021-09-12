@@ -14,9 +14,11 @@ use std::{
 use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncWriteExt, BufWriter},
-    signal::unix::{signal, SignalKind},
     sync::mpsc::{channel, Receiver, Sender},
 };
+
+#[cfg(unix)]
+use tokio::signal::unix::{signal, SignalKind};
 
 use crate::{context::ContextProps, rules::script_ext::create_context};
 
