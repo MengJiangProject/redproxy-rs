@@ -40,6 +40,12 @@ listeners:
       key: test.key
 
 connectors:
+  - name: loadbalance
+    connectors:
+      - direct
+      - http
+    algo:
+      hashBy: request.source
   - name: direct
   - name: http
     server: 192.168.100.1
@@ -76,7 +82,7 @@ rules:
   - filter: cidr_match(request.target.host,"127.0.0.0/8") || request.target.host == "localhost"
     target: deny
   - filter: request.target.type == "domain"
-    target: socks
+    target: loadbalance
   - filter: request.source.host == "127.0.0.1"
     target: direct
   # available varibles are request: { source: string, target: {port:int, host:string, type:string }, listener: string }
