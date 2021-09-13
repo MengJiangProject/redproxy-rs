@@ -25,7 +25,7 @@ pub struct LoadBalanceConnector {
     name: String,
     connectors: Vec<String>,
 
-    #[serde(alias = "algo")]
+    #[serde(alias = "algo", default)]
     algorithm: Algorithm,
 
     // for RoundRobin selection,
