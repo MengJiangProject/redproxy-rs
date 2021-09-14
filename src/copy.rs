@@ -54,7 +54,9 @@ async fn copy_stream<T: AsyncRead + AsyncWrite>(
             break;
         }
     }
-    w.shutdown().await.or(Ok(())) // Ignore "Transport endpoint is not connected"
+    w.shutdown()
+        .await
+        .with_context(|| format!("shutdown {})", wn)) //.or(Ok(())) // Ignore "Transport endpoint is not connected"
 }
 pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
     let ctx = ctx.read().await;
