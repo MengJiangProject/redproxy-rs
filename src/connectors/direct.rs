@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ConnectorRef;
 use crate::{
+    common::keepalive::set_keepalive,
     context::{make_buffered_stream, ContextRef},
     GlobalState,
 };
@@ -36,6 +37,7 @@ impl super::Connector for DirectConnector {
         let server = target.connect_tcp().await.context("connect")?;
         let local = server.local_addr().context("local_addr")?;
         let remote = server.peer_addr().context("peer_addr")?;
+        set_keepalive(&server)?;
         ctx.write()
             .await
             .set_server_stream(make_buffered_stream(server))

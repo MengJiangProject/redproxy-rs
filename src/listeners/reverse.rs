@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 
+use crate::common::keepalive::set_keepalive;
 use crate::context::ContextRefOps;
 use crate::context::{make_buffered_stream, ContextRef, TargetAddress};
 use crate::GlobalState;
@@ -62,6 +63,7 @@ impl ReverseProxyListener {
         queue: &Sender<ContextRef>,
     ) -> Result<(), Error> {
         let (socket, source) = listener.accept().await.context("accept")?;
+        set_keepalive(&socket)?;
         debug!("{}: connected from {:?}", self.name, source);
         let ctx = state
             .contexts

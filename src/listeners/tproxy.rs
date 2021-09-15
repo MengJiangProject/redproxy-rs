@@ -10,6 +10,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 
+use crate::common::keepalive::set_keepalive;
 use crate::context::ContextRefOps;
 use crate::context::{make_buffered_stream, ContextRef, TargetAddress};
 use crate::GlobalState;
@@ -63,6 +64,7 @@ impl TProxyListener {
     ) -> Result<(), Error> {
         let (socket, source) = listener.accept().await.context("accept")?;
         debug!("connected from {:?}", source);
+        set_keepalive(&socket)?;
         let dst = getsockopt(socket.as_raw_fd(), OriginalDst).context("getsockopt")?;
         let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
         let port = ntohs(dst.sin_port);

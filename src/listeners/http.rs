@@ -8,6 +8,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Sender;
 
 use crate::common::h11c::h11c_handshake;
+use crate::common::keepalive::set_keepalive;
 use crate::common::tls::TlsServerConfig;
 use crate::context::{make_buffered_stream, ContextRef};
 use crate::listeners::Listener;
@@ -88,6 +89,7 @@ impl HttpListener {
         source: SocketAddr,
         socket: TcpStream,
     ) -> Result<ContextRef, Error> {
+        set_keepalive(&socket)?;
         let tls_acceptor = self.tls.as_ref().map(|options| options.acceptor());
         let stream = if let Some(acceptor) = tls_acceptor {
             acceptor

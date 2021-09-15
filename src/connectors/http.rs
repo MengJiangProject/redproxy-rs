@@ -10,6 +10,7 @@ use tokio_rustls::webpki::DNSNameRef;
 use crate::{
     common::{
         http::{HttpRequest, HttpResponse},
+        keepalive::set_keepalive,
         tls::TlsClientConfig,
     },
     context::{make_buffered_stream, ContextRef},
@@ -62,6 +63,8 @@ impl super::Connector for HttpConnector {
             .with_context(|| format!("failed to connect to upstream server: {}", self.server))?;
         let local = server.local_addr().context("local_addr")?;
         let remote = server.peer_addr().context("peer_addr")?;
+        set_keepalive(&server)?;
+
         let mut server = if let Some(connector) = tls_connector {
             let domain = DNSNameRef::try_from_ascii(self.server.as_bytes())
                 .or_else(|e| {

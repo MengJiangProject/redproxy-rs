@@ -11,6 +11,7 @@ use tokio::{
 
 use crate::{
     common::{
+        keepalive::set_keepalive,
         socks::{PasswordAuth, SocksRequest, SocksResponse},
         tls::TlsServerConfig,
     },
@@ -112,6 +113,7 @@ impl SocksListener {
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
     ) -> Result<(), Error> {
+        set_keepalive(&socket)?;
         let tls_acceptor = self.tls.as_ref().map(|options| options.acceptor());
         let mut socket = if let Some(acceptor) = tls_acceptor {
             make_buffered_stream(acceptor.accept(socket).await.context("tls accept error")?)
