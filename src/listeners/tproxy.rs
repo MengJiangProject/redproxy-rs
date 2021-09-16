@@ -2,13 +2,16 @@ use std::{os::unix::prelude::AsRawFd, sync::Arc};
 
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
-use log::{debug, info, trace, warn};
+use futures::TryFutureExt;
+use log::{debug, error, info, trace, warn};
 use nix::sys::socket::getsockopt;
 use nix::sys::socket::sockopt::OriginalDst;
 use serde_yaml::Value;
 use std::net::{Ipv4Addr, SocketAddr};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 
 use crate::common::keepalive::set_keepalive;
 use crate::context::ContextRefOps;
@@ -35,19 +38,18 @@ impl Listener for TProxyListener {
         self: Arc<Self>,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<(JoinHandle<()>, Arc<Notify>), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
-        tokio::spawn(async move {
-            loop {
-                self.clone()
-                    .accept(&listener, &state, &queue)
-                    .await
-                    .map_err(|e| warn!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause))
-                    .unwrap_or(());
-            }
-        });
-        Ok(())
+        let shutdown = Arc::new(Notify::new());
+        let task = tokio::spawn(
+            self.clone()
+                .accept(listener, state, queue, shutdown.clone())
+                .unwrap_or_else(move |e| {
+                    warn!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
+                }),
+        );
+        Ok((task, shutdown))
     }
 
     fn name(&self) -> &str {
@@ -58,26 +60,41 @@ impl Listener for TProxyListener {
 impl TProxyListener {
     async fn accept(
         self: Arc<Self>,
-        listener: &TcpListener,
-        state: &Arc<GlobalState>,
-        queue: &Sender<ContextRef>,
+        listener: TcpListener,
+        state: Arc<GlobalState>,
+        queue: Sender<ContextRef>,
+        shutdown: Arc<Notify>,
     ) -> Result<(), Error> {
-        let (socket, source) = listener.accept().await.context("accept")?;
-        debug!("connected from {:?}", source);
-        set_keepalive(&socket)?;
-        let dst = getsockopt(socket.as_raw_fd(), OriginalDst).context("getsockopt")?;
-        let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
-        let port = ntohs(dst.sin_port);
-        trace!("{}: dst={}:{}", self.name, addr, port);
-        let ctx = state
-            .contexts
-            .create_context(self.name.to_owned(), source)
-            .await;
-        ctx.write()
-            .await
-            .set_target(TargetAddress::from((addr, port)))
-            .set_client_stream(make_buffered_stream(socket));
-        ctx.enqueue(queue).await?;
+        loop {
+            tokio::select! {
+            _ = shutdown.notified() => break,
+            res = listener.accept() =>
+                match res {
+                    Ok((socket, source)) => {
+
+                        debug!("connected from {:?}", source);
+                        set_keepalive(&socket)?;
+                        let dst = getsockopt(socket.as_raw_fd(), OriginalDst).context("getsockopt")?;
+                        let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
+                        let port = ntohs(dst.sin_port);
+                        trace!("{}: dst={}:{}", self.name, addr, port);
+                        let ctx = state
+                            .contexts
+                            .create_context(self.name.to_owned(), source)
+                            .await;
+                        ctx.write()
+                            .await
+                            .set_target(TargetAddress::from((addr, port)))
+                            .set_client_stream(make_buffered_stream(socket));
+                        ctx.enqueue(&queue).await?;
+                    },
+                    Err(e) => {
+                        error!("{} accept error: {:?}", self.name, e);
+                        break;
+                    }
+                },
+            }
+        }
         Ok(())
     }
 }

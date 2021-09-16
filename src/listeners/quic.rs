@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{Error, ResultExt};
+use easy_error::{bail, Error, ResultExt};
 use futures_util::{StreamExt, TryFutureExt};
 use log::{debug, info, warn};
 use quinn::{Endpoint, Incoming, IncomingBiStreams, NewConnection};
@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 
 use crate::common::h11c::h11c_handshake;
 use crate::common::quic::{create_quic_server, QuicStream};
@@ -40,41 +42,53 @@ impl Listener for QuicListener {
         self: Arc<Self>,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<(JoinHandle<()>, Arc<Notify>), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let epb = create_quic_server(&self.tls)?;
         let (endpoint, incoming) = epb.bind(&self.bind).context("bind")?;
-        tokio::spawn(
-            self.accept(endpoint, incoming, state, queue)
+        let shutdown = Arc::new(Notify::new());
+        let task = tokio::spawn(
+            self.accept(endpoint, incoming, state, queue, shutdown.clone())
                 .unwrap_or_else(|e| panic!("{}: {:?}", e, e.cause)),
         );
-        Ok(())
+        Ok((task, shutdown))
     }
 }
 impl QuicListener {
     async fn accept(
         self: Arc<Self>,
-        _endpoint: Endpoint,
+        endpoint: Endpoint,
         mut incoming: Incoming,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
+        shutdown: Arc<Notify>,
     ) -> Result<(), Error> {
-        while let Some(conn) = incoming.next().await {
-            let source = conn.remote_address();
-            debug!("{}: QUIC connected from {:?}", self.name, source);
-            match conn.await.context("connection") {
-                Ok(NewConnection { bi_streams, .. }) => {
-                    let this = self.clone();
-                    let state = state.clone();
-                    let queue = queue.clone();
-                    tokio::spawn(this.client_thead(bi_streams, source, state, queue));
-                }
-                Err(e) => {
-                    warn!("{}, Accept error: {}: cause: {:?}", self.name, e, e.cause);
-                }
+        loop {
+            tokio::select! {
+                _ = shutdown.notified() => {
+                    endpoint.close(0u8.into(),b"shutdown");
+                    return Ok(())
+                },
+                res = incoming.next() => match res {
+                    Some(conn) => {
+                        let source = conn.remote_address();
+                        debug!("{}: QUIC connected from {:?}", self.name, source);
+                        match conn.await.context("connection") {
+                            Ok(NewConnection { bi_streams, .. }) => {
+                                let this = self.clone();
+                                let state = state.clone();
+                                let queue = queue.clone();
+                                tokio::spawn(this.client_thead(bi_streams, source, state, queue));
+                            }
+                            Err(e) => {
+                                warn!("{}, Accept error: {}: cause: {:?}", self.name, e, e.cause);
+                            }
+                        }
+                    }
+                    None => bail!("end of incoming stream")
+                },
             }
         }
-        Ok(())
     }
     async fn client_thead(
         self: Arc<Self>,

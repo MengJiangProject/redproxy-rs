@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::{future::Future, net::SocketAddr, ops::DerefMut, pin::Pin, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::mpsc::Sender,
+    sync::{mpsc::Sender, Notify},
+    task::JoinHandle,
 };
 
 use crate::{
@@ -59,12 +60,13 @@ impl Listener for SocksListener {
         self: Arc<Self>,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<(JoinHandle<()>, Arc<Notify>), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
         let this = self.clone();
-        tokio::spawn(this.accept(listener, state, queue));
-        Ok(())
+        let shutdown = Arc::new(Notify::new());
+        let task = tokio::spawn(this.accept(listener, state, queue, shutdown.clone()));
+        Ok((task, shutdown))
     }
 
     fn name(&self) -> &str {
@@ -78,30 +80,35 @@ impl SocksListener {
         listener: TcpListener,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
+        shutdown: Arc<Notify>,
     ) {
         loop {
-            match listener.accept().await.context("accept") {
-                Ok((socket, source)) => {
-                    let this = self.clone();
-                    let queue = queue.clone();
-                    let state = state.clone();
-                    debug!("{}: connected from {:?}", self.name, source);
-                    // we spawn a new thread here to avoid handshake to block accept thread
-                    tokio::spawn(
-                        this.clone()
-                            .handshake(socket, source, state, queue)
-                            .unwrap_or_else(move |e| {
-                                warn!(
-                                    "{}: handshake error: {}: cause: {:?}",
-                                    this.name, e, e.cause
-                                );
-                            }),
-                    );
-                }
-                Err(e) => {
-                    warn!("{}, Accept error: {}: cause: {:?}", self.name, e, e.cause);
-                    return;
-                }
+            tokio::select! {
+                _ = shutdown.notified() => break,
+                res = listener.accept() =>
+                    match res {
+                        Ok((socket, source)) => {
+                            let this = self.clone();
+                            let queue = queue.clone();
+                            let state = state.clone();
+                            debug!("{}: connected from {:?}", self.name, source);
+                            // we spawn a new thread here to avoid handshake to block accept thread
+                            tokio::spawn(
+                                this.clone()
+                                    .handshake(socket, source, state, queue)
+                                    .unwrap_or_else(move |e| {
+                                        warn!(
+                                            "{}: handshake error: {}: cause: {:?}",
+                                            this.name, e, e.cause
+                                        );
+                                    }),
+                            );
+                        }
+                        Err(e) => {
+                            warn!("{}, Accept error: {:?}", self.name, e);
+                            return;
+                        }
+                    },
             }
         }
     }

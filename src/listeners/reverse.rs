@@ -1,12 +1,15 @@
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
-use log::{debug, info, warn};
+use futures::TryFutureExt;
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 
 use crate::common::keepalive::set_keepalive;
 use crate::context::ContextRefOps;
@@ -34,20 +37,18 @@ impl Listener for ReverseProxyListener {
         self: Arc<Self>,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<(JoinHandle<()>, Arc<Notify>), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
-        tokio::spawn(async move {
-            loop {
-                self.clone()
-                    .accept(&listener, &state, &queue)
-                    .await
-                    .unwrap_or_else(|e| {
-                        warn!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
-                    });
-            }
-        });
-        Ok(())
+        let shutdown = Arc::new(Notify::new());
+        let task = tokio::spawn(
+            self.clone()
+                .accept(listener, state, queue, shutdown.clone())
+                .unwrap_or_else(move |e| {
+                    warn!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
+                }),
+        );
+        Ok((task, shutdown))
     }
 
     fn name(&self) -> &str {
@@ -58,22 +59,36 @@ impl Listener for ReverseProxyListener {
 impl ReverseProxyListener {
     async fn accept(
         self: Arc<Self>,
-        listener: &TcpListener,
-        state: &Arc<GlobalState>,
-        queue: &Sender<ContextRef>,
+        listener: TcpListener,
+        state: Arc<GlobalState>,
+        queue: Sender<ContextRef>,
+        shutdown: Arc<Notify>,
     ) -> Result<(), Error> {
-        let (socket, source) = listener.accept().await.context("accept")?;
-        set_keepalive(&socket)?;
-        debug!("{}: connected from {:?}", self.name, source);
-        let ctx = state
-            .contexts
-            .create_context(self.name.to_owned(), source)
-            .await;
-        ctx.write()
-            .await
-            .set_target(self.target.clone())
-            .set_client_stream(make_buffered_stream(socket));
-        ctx.enqueue(queue).await?;
+        loop {
+            tokio::select! {
+            _ = shutdown.notified() => break,
+            res = listener.accept() =>
+                match res {
+                    Ok((socket, source)) => {
+                        set_keepalive(&socket)?;
+                        debug!("{}: connected from {:?}", self.name, source);
+                        let ctx = state
+                            .contexts
+                            .create_context(self.name.to_owned(), source)
+                            .await;
+                        ctx.write()
+                            .await
+                            .set_target(self.target.clone())
+                            .set_client_stream(make_buffered_stream(socket));
+                        ctx.enqueue(&queue).await?;
+                    },
+                    Err(e) => {
+                        error!("{} accept error: {:?}", self.name, e);
+                        break;
+                    }
+                },
+            }
+        }
         Ok(())
     }
 }

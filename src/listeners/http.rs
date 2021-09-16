@@ -6,6 +6,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Sender;
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 
 use crate::common::h11c::h11c_handshake;
 use crate::common::keepalive::set_keepalive;
@@ -41,12 +43,13 @@ impl Listener for HttpListener {
         self: Arc<Self>,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<(JoinHandle<()>, Arc<Notify>), Error> {
         info!("{} listening on {}", self.name, self.bind);
         let listener = TcpListener::bind(&self.bind).await.context("bind")?;
         let this = self.clone();
-        tokio::spawn(this.accept(listener, state, queue));
-        Ok(())
+        let shutdown = Arc::new(Notify::new());
+        let task = tokio::spawn(this.accept(listener, state, queue, shutdown.clone()));
+        Ok((task, shutdown))
     }
 }
 impl HttpListener {
@@ -55,31 +58,36 @@ impl HttpListener {
         listener: TcpListener,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
+        shutdown: Arc<Notify>,
     ) {
         loop {
-            match listener.accept().await.context("accept") {
-                Ok((socket, source)) => {
-                    // we spawn a new thread here to avoid handshake to block accept thread
-                    let this = self.clone();
-                    let queue = queue.clone();
-                    let state = state.clone();
-                    tokio::spawn(async move {
-                        let res = match this.create_context(state, source, socket).await {
-                            Ok(ctx) => h11c_handshake(ctx, queue).await,
-                            Err(e) => Err(e),
-                        };
-                        if let Err(e) = res {
-                            warn!(
-                                "{}: handshake failed: {}\ncause: {:?}",
-                                this.name, e, e.cause
-                            );
+            tokio::select! {
+                _ = shutdown.notified() => break,
+                res = listener.accept() =>
+                    match res{
+                        Ok((socket, source)) => {
+                            // we spawn a new thread here to avoid handshake to block accept thread
+                            let this = self.clone();
+                            let queue = queue.clone();
+                            let state = state.clone();
+                            tokio::spawn(async move {
+                                let res = match this.create_context(state, source, socket).await {
+                                    Ok(ctx) => h11c_handshake(ctx, queue).await,
+                                    Err(e) => Err(e),
+                                };
+                                if let Err(e) = res {
+                                    warn!(
+                                        "{}: handshake failed: {}\ncause: {:?}",
+                                        this.name, e, e.cause
+                                    );
+                                }
+                            });
                         }
-                    });
-                }
-                Err(e) => {
-                    error!("{} accept error: {} \ncause: {:?}", self.name, e, e.cause);
-                    return;
-                }
+                        Err(e) => {
+                            error!("{} accept error: {:?}", self.name, e);
+                            return;
+                        }
+                    },
             }
         }
     }

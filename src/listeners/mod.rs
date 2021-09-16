@@ -3,7 +3,10 @@ use std::{collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error};
 use serde_yaml::Value;
-use tokio::sync::mpsc::Sender;
+use tokio::{
+    sync::{mpsc::Sender, Notify},
+    task::JoinHandle,
+};
 
 use crate::{context::ContextRef, GlobalState};
 
@@ -29,7 +32,7 @@ pub trait Listener: Send + Sync {
         self: Arc<Self>,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error>;
+    ) -> Result<(JoinHandle<()>, Arc<Notify>), Error>;
     fn name(&self) -> &str;
 }
 
