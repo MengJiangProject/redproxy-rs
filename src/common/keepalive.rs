@@ -4,6 +4,7 @@ use easy_error::{Error, ResultExt};
 use mio::net::{TcpKeepalive, TcpSocket};
 use tokio::net::TcpStream;
 
+#[cfg(not(target_os = "windows"))]
 fn to_socket(stream: &TcpStream) -> TcpSocket {
     use std::os::unix::io::{AsRawFd, FromRawFd};
     let fd = stream.as_raw_fd();
@@ -11,9 +12,14 @@ fn to_socket(stream: &TcpStream) -> TcpSocket {
     unsafe { TcpSocket::from_raw_fd(dup_fd) }
 }
 
+#[cfg(not(target_os = "windows"))]
 pub fn set_keepalive(stream: &TcpStream) -> Result<(), Error> {
     let socket = to_socket(stream);
     socket
         .set_keepalive_params(TcpKeepalive::new().with_time(Duration::from_secs(10)))
         .context("set_keepalive")
+}
+#[cfg(target_os = "windows")]
+pub fn set_keepalive(stream: &TcpStream) -> Result<(), Error> {
+    Ok(())
 }
