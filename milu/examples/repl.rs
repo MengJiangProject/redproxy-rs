@@ -100,7 +100,8 @@ fn main() -> Result<(), Terminator> {
 }
 
 fn repl() -> rustyline::Result<()> {
-    let is_tty = nix::unistd::isatty(nix::libc::STDIN_FILENO)?;
+    let is_tty = nix::unistd::isatty(nix::libc::STDIN_FILENO)
+        .map_err(|_e| std::io::Error::last_os_error())?;
     macro_rules! println {
         () => (if(is_tty) {println!("\n")});
         ($($arg:tt)*) => ({if(is_tty) {std::println!($($arg)*);}})
