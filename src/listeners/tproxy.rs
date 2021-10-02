@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
 use log::{debug, info, trace, warn};
 use nix::sys::socket::getsockopt;
-use nix::sys::socket::sockopt::OriginalDst;
+use nix::sys::socket::sockopt::{Ip6tOriginalDst, OriginalDst};
 use serde_yaml::Value;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 
@@ -65,17 +65,38 @@ impl TProxyListener {
         let (socket, source) = listener.accept().await.context("accept")?;
         debug!("connected from {:?}", source);
         set_keepalive(&socket)?;
-        let dst = getsockopt(socket.as_raw_fd(), OriginalDst).context("getsockopt")?;
-        let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
-        let port = ntohs(dst.sin_port);
-        trace!("{}: dst={}:{}", self.name, addr, port);
+
+        // map v6 socket addr into v4 if possible
+        let source = if let SocketAddr::V6(v6) = source {
+            if let Some(v4a) = v6.ip().to_ipv4() {
+                SocketAddr::V4(SocketAddrV4::new(v4a, v6.port()))
+            } else {
+                source
+            }
+        } else {
+            source
+        };
+
+        let target = if source.is_ipv4() {
+            let dst = getsockopt(socket.as_raw_fd(), OriginalDst).context("getsockopt")?;
+            let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
+            let port = ntohs(dst.sin_port);
+            TargetAddress::from((addr, port))
+        } else {
+            let dst = getsockopt(socket.as_raw_fd(), Ip6tOriginalDst).context("getsockopt")?;
+            let addr = Ipv6Addr::from(dst.sin6_addr.s6_addr);
+            let port = ntohs(dst.sin6_port);
+            TargetAddress::from((addr, port))
+        };
+
+        trace!("{}: target={}", self.name, target);
         let ctx = state
             .contexts
             .create_context(self.name.to_owned(), source)
             .await;
         ctx.write()
             .await
-            .set_target(TargetAddress::from((addr, port)))
+            .set_target(target)
             .set_client_stream(make_buffered_stream(socket));
         ctx.enqueue(queue).await?;
         Ok(())

@@ -6,7 +6,7 @@ use std::{
     collections::{HashMap, LinkedList},
     fmt::{Debug, Display},
     future::Future,
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     ops::DerefMut,
     pin::Pin,
     str::FromStr,
@@ -81,6 +81,13 @@ impl From<(Ipv4Addr, u16)> for TargetAddress {
     fn from((ip, port): (Ipv4Addr, u16)) -> Self {
         let a = SocketAddrV4::new(ip, port);
         Self::SocketAddr(SocketAddr::V4(a))
+    }
+}
+
+impl From<(Ipv6Addr, u16)> for TargetAddress {
+    fn from((ip, port): (Ipv6Addr, u16)) -> Self {
+        let a = SocketAddrV6::new(ip, port, 0, 0);
+        Self::SocketAddr(SocketAddr::V6(a))
     }
 }
 
