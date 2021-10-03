@@ -61,6 +61,7 @@ impl QuicListener {
     ) -> Result<(), Error> {
         while let Some(conn) = incoming.next().await {
             let source = conn.remote_address();
+            let source = crate::common::try_map_v4_addr(source);
             debug!("{}: QUIC connected from {:?}", self.name, source);
             match conn.await.context("connection") {
                 Ok(NewConnection { bi_streams, .. }) => {

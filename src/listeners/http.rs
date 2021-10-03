@@ -63,6 +63,7 @@ impl HttpListener {
                     let this = self.clone();
                     let queue = queue.clone();
                     let state = state.clone();
+                    let source = crate::common::try_map_v4_addr(source);
                     tokio::spawn(async move {
                         let res = match this.create_context(state, source, socket).await {
                             Ok(ctx) => h11c_handshake(ctx, queue).await,

@@ -63,6 +63,7 @@ impl ReverseProxyListener {
         queue: &Sender<ContextRef>,
     ) -> Result<(), Error> {
         let (socket, source) = listener.accept().await.context("accept")?;
+        let source = crate::common::try_map_v4_addr(source);
         set_keepalive(&socket)?;
         debug!("{}: connected from {:?}", self.name, source);
         let ctx = state

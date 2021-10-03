@@ -1,3 +1,5 @@
+use std::net::{SocketAddr, SocketAddrV4};
+
 pub mod h11c;
 pub mod http;
 pub mod keepalive;
@@ -5,3 +7,16 @@ pub mod keepalive;
 pub mod quic;
 pub mod socks;
 pub mod tls;
+
+// map v6 socket addr into v4 if possible
+pub fn try_map_v4_addr(addr: SocketAddr) -> SocketAddr {
+    if let SocketAddr::V6(v6) = addr {
+        if let Some(v4a) = v6.ip().to_ipv4() {
+            SocketAddr::V4(SocketAddrV4::new(v4a, v6.port()))
+        } else {
+            addr
+        }
+    } else {
+        addr
+    }
+}

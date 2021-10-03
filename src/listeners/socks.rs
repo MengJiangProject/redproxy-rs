@@ -82,6 +82,7 @@ impl SocksListener {
         loop {
             match listener.accept().await.context("accept") {
                 Ok((socket, source)) => {
+                    let source = crate::common::try_map_v4_addr(source);
                     let this = self.clone();
                     let queue = queue.clone();
                     let state = state.clone();

@@ -6,7 +6,7 @@ use log::{debug, info, trace, warn};
 use nix::sys::socket::getsockopt;
 use nix::sys::socket::sockopt::{Ip6tOriginalDst, OriginalDst};
 use serde_yaml::Value;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 
@@ -65,17 +65,7 @@ impl TProxyListener {
         let (socket, source) = listener.accept().await.context("accept")?;
         debug!("connected from {:?}", source);
         set_keepalive(&socket)?;
-
-        // map v6 socket addr into v4 if possible
-        let source = if let SocketAddr::V6(v6) = source {
-            if let Some(v4a) = v6.ip().to_ipv4() {
-                SocketAddr::V4(SocketAddrV4::new(v4a, v6.port()))
-            } else {
-                source
-            }
-        } else {
-            source
-        };
+        let source = crate::common::try_map_v4_addr(source);
 
         let target = if source.is_ipv4() {
             let dst = getsockopt(socket.as_raw_fd(), OriginalDst).context("getsockopt")?;
