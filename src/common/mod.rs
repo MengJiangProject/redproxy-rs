@@ -2,9 +2,18 @@ use std::net::{SocketAddr, SocketAddrV4};
 
 pub mod h11c;
 pub mod http;
+
+#[cfg(not(target_os = "windows"))]
+#[path = "keepalive-unix.rs"]
 pub mod keepalive;
+
+#[cfg(target_os = "windows")]
+#[path = "keepalive-windows.rs"]
+pub mod keepalive;
+
 #[cfg(feature = "quic")]
 pub mod quic;
+
 pub mod socks;
 pub mod tls;
 
