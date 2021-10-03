@@ -5,7 +5,7 @@
   padding: 20px 30px;
   margin-top: 1em;
   margin-bottom: 40px;
-  overflow-x: auto;
+  overflow: visible;
 }
 
 .tab-button {
@@ -59,4 +59,8 @@
 
 dl.row {
   margin-bottom: 0;
+}
+
+.nowrap {
+  white-space: nowrap;
 }

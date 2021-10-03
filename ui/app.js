@@ -239,13 +239,13 @@ app.component('context-row', {
     </tooltip>
   </td>
   <td><context-state :item=item></context-state></td>
-  <td>
+  <td class="nowrap">
     <tooltip>
       <template #tip>{{ item.client_stat.last_read.timeSince() }}</template>
       <template #content>&#9650; {{ item.client_stat.read_bytes.fileSize() }}</template>
     </tooltip>
   </td>
-  <td>
+  <td class="nowrap">
     <tooltip>
       <template #tip>{{ item.server_stat.last_read.timeSince()}}</template>
       <template #content>&#9660; {{ item.server_stat.read_bytes.fileSize() }}</template>
