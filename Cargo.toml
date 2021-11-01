@@ -32,7 +32,7 @@ futures = "0.3.17"
 cidr = "0.2.0"
 rand = "0.8.4"
 libc = "0.2"
-mio = "0.7.13"
+mio = "0.7.14"
 
 # features quic
 quinn = { version = "0.7.2", optional = true}
