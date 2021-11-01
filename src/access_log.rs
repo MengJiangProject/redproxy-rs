@@ -10,13 +10,11 @@ use std::{
     convert::TryInto,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
 };
 use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncWriteExt, BufWriter},
     sync::mpsc::{channel, Receiver, Sender},
-    time::Instant,
 };
 
 #[cfg(unix)]
@@ -130,34 +128,22 @@ async fn log_thread(
     mut rx: Receiver<Option<Arc<ContextProps>>>,
     path: PathBuf,
 ) -> Result<(), Error> {
-    let timeout = Duration::from_secs(10);
     let mut stream = BufWriter::new(log_open(&path).await?);
-    let sleep = tokio::time::sleep(timeout);
-    tokio::pin!(sleep);
     loop {
-        tokio::select! {
-            e = rx.recv() => {
-                let e = e.ok_or_else(|| err_msg("dequeue"))?;
-                if let Some(e) = e {
-                    let mut line = format.to_string(e).context("deserializer error")?;
-                    line += "\r\n";
-                    stream
-                        .write(line.as_bytes())
-                        .await
-                        .context("log write error")?;
-                } else {
-                    info!("log rotate");
-                    stream.flush().await.context("flush")?;
-                    stream.shutdown().await.context("shutdown")?;
-                    stream = BufWriter::new(log_open(&path).await?);
-                }
-            },
-            () = &mut sleep => {
-                // trace!("flushing log buffers");
-                stream.flush().await.context("flush")?;
-            },
-        };
-        sleep.as_mut().reset(Instant::now() + timeout);
+        let e = rx.recv().await.ok_or_else(|| err_msg("dequeue"))?;
+        if let Some(e) = e {
+            let mut line = format.to_string(e).context("deserializer error")?;
+            line += "\r\n";
+            stream
+                .write(line.as_bytes())
+                .await
+                .context("log write error")?;
+        } else {
+            info!("log rotate");
+            stream.flush().await.context("flush")?;
+            stream.shutdown().await.context("shutdown")?;
+            stream = BufWriter::new(log_open(&path).await?);
+        }
     }
 }
 
