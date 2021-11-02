@@ -2,17 +2,20 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use easy_error::{err_msg, Error, ResultExt};
+use rustls_pemfile::{certs, rsa_private_keys};
 use serde::{Deserialize, Serialize};
-use tokio_rustls::rustls::{ClientConfig, ServerCertVerified, ServerCertVerifier, TLSError};
+use tokio_rustls::rustls::client::{ServerCertVerified, ServerCertVerifier, WebPkiVerifier};
+use tokio_rustls::rustls::server::{
+    AllowAnyAnonymousOrAuthenticatedClient, AllowAnyAuthenticatedClient, ClientCertVerifier,
+    NoClientAuth,
+};
+use tokio_rustls::rustls::{Certificate, ClientConfig, OwnedTrustAnchor, ServerName};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::{
-    rustls::{
-        internal::pemfile::{certs, rsa_private_keys},
-        AllowAnyAnonymousOrAuthenticatedClient, AllowAnyAuthenticatedClient, Certificate,
-        ClientCertVerifier, NoClientAuth, PrivateKey, RootCertStore, ServerConfig,
-    },
+    rustls::{PrivateKey, RootCertStore, ServerConfig},
     TlsAcceptor,
 };
 
@@ -77,10 +80,11 @@ impl TlsServerConfig {
 
     pub fn init(&mut self) -> Result<(), Error> {
         let client_auth = self.client_auth()?;
-        let mut config = ServerConfig::new(client_auth);
         let (certs, key) = self.certs()?;
-        config
-            .set_single_cert(certs, key)
+        let mut config: ServerConfig = ServerConfig::builder()
+            .with_safe_defaults()
+            .with_client_cert_verifier(client_auth)
+            .with_single_cert(certs, key)
             .context("failed to load certificate")?;
         let config = Arc::new(config);
         self.populated = Some(TlsServerConfigPopulated { config });
@@ -114,11 +118,13 @@ impl TlsClientConfig {
         impl ServerCertVerifier for InsecureVerifier {
             fn verify_server_cert(
                 &self,
-                _roots: &RootCertStore,
-                _presented_certs: &[Certificate],
-                _dns_name: tokio_rustls::webpki::DNSNameRef,
+                _end_entity: &Certificate,
+                _intermediates: &[Certificate],
+                _server_name: &ServerName,
+                _scts: &mut dyn Iterator<Item = &[u8]>,
                 _ocsp_response: &[u8],
-            ) -> Result<ServerCertVerified, TLSError> {
+                _now: SystemTime,
+            ) -> Result<ServerCertVerified, tokio_rustls::rustls::Error> {
                 Ok(ServerCertVerified::assertion())
             }
         }
@@ -131,30 +137,41 @@ impl TlsClientConfig {
             .as_ref()
             .map(load_certs)
             .unwrap_or_else(|| Ok(vec![]))?;
-        for cert in certs {
-            ret.add(&cert).context("fail to add trusted certificate")?;
+        if certs.is_empty() {
+            ret.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+                OwnedTrustAnchor::from_subject_spki_name_constraints(
+                    ta.subject,
+                    ta.spki,
+                    ta.name_constraints,
+                )
+            }));
+        } else {
+            for cert in certs {
+                ret.add(&cert).context("fail to add trusted certificate")?;
+            }
         }
         Ok(ret)
     }
 
     pub fn init(&mut self) -> Result<(), Error> {
-        let mut config = ClientConfig::new();
-        config.enable_early_data = !self.disable_early_data;
+        let root_store = self.root_store()?;
+        let mut config = ClientConfig::builder().with_safe_defaults();
+        // config.enable_early_data = !self.disable_early_data;
+        let mut config = if self.insecure {
+            config.with_custom_certificate_verifier(self.insecure_verifier())
+        } else {
+            config.with_custom_certificate_verifier(Arc::new(WebPkiVerifier::new(root_store, None)))
+        };
 
-        if self.ca.is_some() {
-            config.root_store = self.root_store()?;
-        }
-        if self.auth.is_some() {
-            self.auth
-                .as_ref()
-                .map(|auth| auth.setup(&mut config))
-                .unwrap()?;
-        }
-        if self.insecure {
+        let mut config = if self.auth.is_some() {
+            let certs = self.auth.as_ref().unwrap().certs()?;
             config
-                .dangerous()
-                .set_certificate_verifier(self.insecure_verifier())
-        }
+                .with_single_cert(certs.0, certs.1)
+                .context("failed to load certificate")?
+        } else {
+            config.with_no_client_auth()
+        };
+
         let config = Arc::new(config);
         self.populated = Some(TlsClientConfigPopulated { config });
         Ok(())
@@ -183,13 +200,13 @@ impl TlsClientAuthConfig {
         Ok((certs, key))
     }
 
-    pub fn setup(&self, config: &mut ClientConfig) -> Result<(), Error> {
-        let (certs, key) = self.certs()?;
-        config
-            .set_single_client_cert(certs, key)
-            .context("failed to load certificate")?;
-        Ok(())
-    }
+    // pub fn setup(&self, config: &mut ClientConfig) -> Result<(), Error> {
+    //     let (certs, key) = self.certs()?;
+    //     config
+    //         .set_single_client_cert(certs, key)
+    //         .context("failed to load certificate")?;
+    //     Ok(())
+    // }
 }
 
 #[derive(Clone)]
@@ -205,11 +222,15 @@ impl std::fmt::Debug for TlsClientConfigPopulated {
 fn load_certs<P: AsRef<Path>>(path: P) -> Result<Vec<Certificate>, Error> {
     let file = File::open(path).context("failed to read certificates")?;
     let mut reader = BufReader::new(file);
-    certs(&mut reader).map_err(|_| err_msg("fail to load certificate"))
+    certs(&mut reader)
+        .map(|x| x.into_iter().map(Certificate).collect())
+        .map_err(|_| err_msg("fail to load certificate"))
 }
 
 fn load_keys<P: AsRef<Path>>(path: P) -> Result<Vec<PrivateKey>, Error> {
     let file = File::open(path).context("failed to read private key")?;
     let mut reader = BufReader::new(file);
-    rsa_private_keys(&mut reader).map_err(|_| err_msg("fail to load private key"))
+    rsa_private_keys(&mut reader)
+        .map(|x| x.into_iter().map(PrivateKey).collect())
+        .map_err(|_| err_msg("fail to load private key"))
 }

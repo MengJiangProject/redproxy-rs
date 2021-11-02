@@ -3,7 +3,7 @@ use std::{pin::Pin, sync::Arc};
 use easy_error::{Error, ResultExt};
 use quinn::{EndpointBuilder, RecvStream, SendStream};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_rustls::rustls;
+// use tokio_rustls::rustls;
 
 use super::tls::{TlsClientConfig, TlsServerConfig};
 
@@ -24,6 +24,11 @@ pub fn create_quic_server(tls: &TlsServerConfig) -> Result<EndpointBuilder, Erro
     let tls_cfg = std::sync::Arc::get_mut(&mut cfg.crypto).unwrap();
 
     let (certs, key) = tls.certs()?;
+    // let certs = certs
+    //     .into_iter()
+    //     .map(|cert| rustls::Certificate(cert.0))
+    //     .collect();
+    // let key = rustls::PrivateKey(key.0);
     tls_cfg
         .set_single_cert(certs, key)
         .context("load certificate")?;
