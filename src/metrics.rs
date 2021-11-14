@@ -1,14 +1,16 @@
 use crate::{rules::Rule, GlobalState};
 use axum::{
     body::Body,
+    error_handling::HandleErrorExt,
     extract::Extension,
-    handler::{get, post, Handler},
+    handler::Handler,
     http::{
         header::{ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_TYPE},
         HeaderValue, Response, StatusCode,
     },
     response::IntoResponse,
-    routing::BoxRoute,
+    routing::service_method_routing as service,
+    routing::{get, post},
     Json, Router,
 };
 use easy_error::{ensure, Error};
@@ -20,7 +22,6 @@ use prometheus::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    convert::Infallible,
     net::SocketAddr,
     sync::{Arc, Weak},
 };
@@ -90,8 +91,7 @@ impl MetricsServer {
             .layer(SetResponseHeaderLayer::<_, Body>::if_not_present(
                 CACHE_CONTROL,
                 HeaderValue::from_static("no-store"),
-            ))
-            .check_infallible();
+            ));
 
         let root = ui_service(self.ui.as_deref())?
             .nest(&self.api_prefix, api)
@@ -103,7 +103,7 @@ impl MetricsServer {
                 CACHE_CONTROL,
                 HeaderValue::from_static("public, max-age=3600"),
             ))
-            .or(not_found.into_service());
+            .fallback(not_found.into_service());
 
         tokio::spawn(async move {
             info!("metrics server listening on {}", self.bind);
@@ -117,25 +117,23 @@ impl MetricsServer {
     }
 }
 
-fn ui_service(ui: Option<&str>) -> Result<Router<BoxRoute>, Error> {
+fn ui_service(ui: Option<&str>) -> Result<Router, Error> {
     if let Some(ui) = ui {
         #[cfg(feature = "embedded-ui")]
         if ui == "<embedded>" {
             return Ok(embedded_ui::app());
         }
-        Ok(Router::new()
-            .nest(
-                "/",
-                axum::service::get(ServeDir::new(ui)).handle_error(|error: std::io::Error| {
-                    Ok::<_, Infallible>((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Unhandled internal error: {}", error),
-                    ))
-                }),
-            )
-            .boxed())
+        Ok(Router::new().nest(
+            "/",
+            service::get(ServeDir::new(".")).handle_error(|error: std::io::Error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Unhandled internal error: {}", error),
+                )
+            }),
+        ))
     } else {
-        Ok(Router::new().boxed())
+        Ok(Router::new())
     }
 }
 

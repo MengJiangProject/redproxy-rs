@@ -42,7 +42,7 @@ async fn get_{id}() -> impl IntoResponse {{
         .iter()
         .map(|f| {
             format!(
-                r#".route("/{}", get(get_{})).boxed()"#,
+                r#".route("/{}", get(get_{}))"#,
                 escape_path(f),
                 escape_name(f)
             )
@@ -62,16 +62,14 @@ async fn get_{id}() -> impl IntoResponse {{
         format!(
             r#"
 use axum::{{
-    handler::get,
+    routing::get,
     Router,
-    routing::BoxRoute,
     response::{{IntoResponse, Headers}},
 }};
 #[allow(dead_code)]
-pub fn app() -> Router<BoxRoute> {{
+pub fn app() -> Router {{
     Router::new()
     {routes}
-    // .boxed()
 }}
 {resources}
 "#,
