@@ -18,7 +18,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, BufStream},
-    net::TcpStream,
+    net::lookup_host,
     sync::{mpsc::Sender, Mutex, MutexGuard, RwLock},
 };
 
@@ -41,10 +41,22 @@ pub enum TargetAddress {
 }
 
 impl TargetAddress {
-    pub async fn connect_tcp(&self) -> std::io::Result<TcpStream> {
+    // pub async fn connect_tcp(&self) -> std::io::Result<TcpStream> {
+    //     match self {
+    //         Self::DomainPort(host, port) => TcpStream::connect((host.as_str(), *port)).await,
+    //         Self::SocketAddr(addr) => TcpStream::connect(addr).await,
+    //         _ => unreachable!(),
+    //     }
+    // }
+    pub async fn resolve(&self) -> std::io::Result<Vec<SocketAddr>> {
         match self {
-            Self::DomainPort(host, port) => TcpStream::connect((host.as_str(), *port)).await,
-            Self::SocketAddr(addr) => TcpStream::connect(addr).await,
+            Self::DomainPort(host, port) => {
+                let addr = format!("{}:{}", host, port);
+                lookup_host(addr.as_str())
+                    .await
+                    .map(|addrs| addrs.collect())
+            }
+            Self::SocketAddr(addr) => Ok(vec![*addr]),
             _ => unreachable!(),
         }
     }
