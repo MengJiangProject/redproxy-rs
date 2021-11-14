@@ -50,7 +50,7 @@ impl super::Connector for DirectConnector {
         } else {
             remote
         };
-        let remote = remote.pop().ok_or(err_msg("failed to resolve"))?;
+        let remote = remote.pop().ok_or_else(|| err_msg("failed to resolve"))?;
         let server = if remote.is_ipv4() {
             TcpSocket::new_v4().context("socket")?
         } else {
