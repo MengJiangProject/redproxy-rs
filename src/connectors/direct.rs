@@ -15,7 +15,7 @@ use crate::{
         dns::{AddressFamily, DnsConfig},
         keepalive::set_keepalive,
     },
-    context::{make_buffered_stream, ContextRef},
+    context::{make_buffered_stream, ContextRef, TargetAddress},
     GlobalState,
 };
 
@@ -57,13 +57,16 @@ impl super::Connector for DirectConnector {
         ctx: ContextRef,
     ) -> Result<(), Error> {
         let target = ctx.read().await.target();
-        trace!("connecting to {:?}", target);
-        let remote = self
-            .dns
-            .lookup_host(target.host().as_str(), target.port())
-            .await?;
+        trace!("connecting to {}", target);
+        let remote = match &target {
+            TargetAddress::SocketAddr(addr) => *addr,
+            TargetAddress::DomainPort(domain, port) => {
+                self.dns.lookup_host(domain.as_str(), *port).await?
+            }
+            _ => unreachable!(),
+        };
 
-        trace!("target resolved to {:?}", remote);
+        trace!("target resolved to {}", remote);
         let server = if remote.is_ipv4() {
             TcpSocket::new_v4().context("socket")?
         } else {
