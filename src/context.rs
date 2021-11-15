@@ -48,6 +48,7 @@ impl TargetAddress {
     //         _ => unreachable!(),
     //     }
     // }
+    #[allow(dead_code)]
     pub async fn resolve(&self) -> std::io::Result<Vec<SocketAddr>> {
         match self {
             Self::DomainPort(host, port) => {

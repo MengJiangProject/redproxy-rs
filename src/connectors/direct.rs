@@ -4,14 +4,17 @@ use std::{
 };
 
 use async_trait::async_trait;
-use easy_error::{err_msg, Error, ResultExt};
-use log::trace;
+use easy_error::{Error, ResultExt};
+use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpSocket;
 
 use super::ConnectorRef;
 use crate::{
-    common::keepalive::set_keepalive,
+    common::{
+        dns::{AddressFamily, DnsConfig},
+        keepalive::set_keepalive,
+    },
     context::{make_buffered_stream, ContextRef},
     GlobalState,
 };
@@ -20,6 +23,8 @@ use crate::{
 pub struct DirectConnector {
     name: String,
     bind: Option<IpAddr>,
+    #[serde(default)]
+    dns: DnsConfig,
 }
 
 pub fn from_value(value: &serde_yaml::Value) -> Result<ConnectorRef, Error> {
@@ -29,9 +34,23 @@ pub fn from_value(value: &serde_yaml::Value) -> Result<ConnectorRef, Error> {
 
 #[async_trait]
 impl super::Connector for DirectConnector {
+    async fn init(&mut self) -> Result<(), Error> {
+        self.dns.init()?;
+        if let Some(addr) = self.bind {
+            debug!("bind address set, overriding dns family");
+            if addr.is_ipv4() {
+                self.dns.family = AddressFamily::V4Only;
+            } else {
+                self.dns.family = AddressFamily::V6Only;
+            }
+        }
+        Ok(())
+    }
+
     fn name(&self) -> &str {
         self.name.as_str()
     }
+
     async fn connect(
         self: Arc<Self>,
         _state: Arc<GlobalState>,
@@ -39,18 +58,12 @@ impl super::Connector for DirectConnector {
     ) -> Result<(), Error> {
         let target = ctx.read().await.target();
         trace!("connecting to {:?}", target);
-        let remote = target.resolve().await.context("resolve")?;
+        let remote = self
+            .dns
+            .lookup_host(target.host().as_str(), target.port())
+            .await?;
+
         trace!("target resolved to {:?}", remote);
-        let mut remote = if let Some(bind) = self.bind {
-            let is_v4 = bind.is_ipv4();
-            remote
-                .into_iter()
-                .filter(|r| r.is_ipv4() == is_v4)
-                .collect()
-        } else {
-            remote
-        };
-        let remote = remote.pop().ok_or_else(|| err_msg("failed to resolve"))?;
         let server = if remote.is_ipv4() {
             TcpSocket::new_v4().context("socket")?
         } else {

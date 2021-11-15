@@ -47,7 +47,12 @@ connectors:
     algo:
       hashBy: request.source
   - name: direct
-    # bind: "[::]:0"
+    # bind: 192.168.100.1
+    dns:
+      # could be one of: google,cloudflare,system,comma splited ip list with optional port number
+      servers: google
+      # servers: 192.168.100.1:5353,1.1.1.1,8.8.8.8:53
+      family: V6First # one of V4Only, V6Only, V4First, V6First(default)
   - name: http
     server: 192.168.100.1
     port: 8848
