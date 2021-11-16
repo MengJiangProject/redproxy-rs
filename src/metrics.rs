@@ -1,4 +1,4 @@
-use crate::{rules::Rule, GlobalState};
+use crate::{rules::Rule, GlobalState, VERSION};
 use axum::{
     body::Body,
     error_handling::HandleErrorExt,
@@ -82,6 +82,7 @@ impl MetricsServer {
 
     pub async fn listen(self: Arc<Self>, state: Arc<GlobalState>) -> Result<(), Error> {
         let api = Router::new()
+            .route("/status", get(get_status))
             .route("/live", get(get_alive))
             .route("/history", get(get_history))
             .route("/rules", get(get_rules).post(post_rules))
@@ -170,6 +171,22 @@ macro_rules! handler {
         }
     };
 }
+
+handler!(get_status(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
+    #[derive(Serialize)]
+    struct Status {
+        version: String,
+        listeners: Vec<String>,
+        connectors: Vec<String>,
+    }
+    Json(
+        Status {
+            version: VERSION.to_string(),
+            listeners: state.listeners.keys().cloned().collect(),
+            connectors: state.connectors.keys().cloned().collect(),
+        }
+    )
+});
 
 handler!(get_alive(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
     Json(

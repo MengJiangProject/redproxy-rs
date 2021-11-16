@@ -18,7 +18,7 @@ mod rules;
 
 use crate::{connectors::Connector, context::ContextRefOps, copy::copy_bidi, listeners::Listener};
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Default)]
 pub struct GlobalState {
