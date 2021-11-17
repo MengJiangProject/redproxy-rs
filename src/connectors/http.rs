@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use std::{convert::TryFrom, sync::Arc};
 
 use async_trait::async_trait;
-use easy_error::{bail, Error, ResultExt};
+use easy_error::{bail, err_msg, Error, ResultExt};
 use log::trace;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
-use tokio_rustls::webpki::DNSNameRef;
+use tokio_rustls::rustls::ServerName;
 
 use crate::{
     common::{
@@ -66,15 +66,15 @@ impl super::Connector for HttpConnector {
         set_keepalive(&server)?;
 
         let mut server = if let Some(connector) = tls_connector {
-            let domain = DNSNameRef::try_from_ascii(self.server.as_bytes())
+            let domain = ServerName::try_from(self.server.as_str())
                 .or_else(|e| {
                     if tls_insecure {
-                        DNSNameRef::try_from_ascii_str("example.com")
+                        ServerName::try_from("example.com")
                     } else {
                         Err(e)
                     }
                 })
-                .with_context(|| format!("invalid upstream address: {}", self.server))?;
+                .map_err(|_e| err_msg(format!("invalid upstream address: {}", self.server)))?;
             make_buffered_stream(
                 connector
                     .connect(domain, server)

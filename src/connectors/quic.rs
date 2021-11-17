@@ -49,9 +49,10 @@ impl super::Connector for QuicConnector {
 
     async fn init(&mut self) -> Result<(), Error> {
         self.tls.init()?;
-        let epb = create_quic_client(&self.tls)?;
+        let cfg = create_quic_client(&self.tls)?;
         let bind = self.bind.parse().context("parse bind")?;
-        let (endpoint, _) = epb.bind(&bind).context("bind")?;
+        let mut endpoint = Endpoint::client(bind).context("bind")?;
+        endpoint.set_default_client_config(cfg);
         self.endpoint = Some(endpoint);
         Ok(())
     }
@@ -144,7 +145,7 @@ impl QuicConnector {
             .endpoint
             .as_ref()
             .unwrap()
-            .connect(&remote, server)
+            .connect(remote, server)
             .context("quic connect")?
             .await
             .context("quic connect")?;

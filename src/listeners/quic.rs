@@ -42,8 +42,8 @@ impl Listener for QuicListener {
         queue: Sender<ContextRef>,
     ) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
-        let epb = create_quic_server(&self.tls)?;
-        let (endpoint, incoming) = epb.bind(&self.bind).context("bind")?;
+        let cfg = create_quic_server(&self.tls)?;
+        let (endpoint, incoming) = Endpoint::server(cfg, self.bind).context("quic_listen")?;
         tokio::spawn(
             self.accept(endpoint, incoming, state, queue)
                 .unwrap_or_else(|e| panic!("{}: {:?}", e, e.cause)),
