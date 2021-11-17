@@ -81,7 +81,7 @@ impl TlsServerConfig {
     pub fn init(&mut self) -> Result<(), Error> {
         let client_auth = self.client_auth()?;
         let (certs, key) = self.certs()?;
-        let mut config: ServerConfig = ServerConfig::builder()
+        let config: ServerConfig = ServerConfig::builder()
             .with_safe_defaults()
             .with_client_cert_verifier(client_auth)
             .with_single_cert(certs, key)
@@ -130,6 +130,8 @@ impl TlsClientConfig {
         }
         Arc::new(InsecureVerifier)
     }
+
+    // return default roots if ca is undefined
     pub fn root_store(&self) -> Result<RootCertStore, Error> {
         let mut ret = RootCertStore::empty();
         let certs = self
@@ -155,15 +157,15 @@ impl TlsClientConfig {
 
     pub fn init(&mut self) -> Result<(), Error> {
         let root_store = self.root_store()?;
-        let mut config = ClientConfig::builder().with_safe_defaults();
+        let config = ClientConfig::builder().with_safe_defaults();
         // config.enable_early_data = !self.disable_early_data;
-        let mut config = if self.insecure {
+        let config = if self.insecure {
             config.with_custom_certificate_verifier(self.insecure_verifier())
         } else {
             config.with_custom_certificate_verifier(Arc::new(WebPkiVerifier::new(root_store, None)))
         };
 
-        let mut config = if self.auth.is_some() {
+        let config = if self.auth.is_some() {
             let certs = self.auth.as_ref().unwrap().certs()?;
             config
                 .with_single_cert(certs.0, certs.1)

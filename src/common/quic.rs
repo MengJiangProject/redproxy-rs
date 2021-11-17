@@ -1,64 +1,55 @@
 use std::{pin::Pin, sync::Arc};
 
 use easy_error::{Error, ResultExt};
-use quinn::{EndpointBuilder, RecvStream, SendStream};
+use quinn::{ClientConfig, RecvStream, SendStream, ServerConfig};
 use tokio::io::{AsyncRead, AsyncWrite};
-// use tokio_rustls::rustls;
+use tokio_rustls::rustls;
 
 use super::tls::{TlsClientConfig, TlsServerConfig};
 
 pub const ALPN_QUIC_HTTP11C: &[&[u8]] = &[b"h11c"]; //this is not regular HTTP3 connection, it uses HTTP1.1 CONNECT instead.
 
-pub fn create_quic_server(tls: &TlsServerConfig) -> Result<EndpointBuilder, Error> {
+pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig, Error> {
     let mut transport_config = quinn::TransportConfig::default();
-    transport_config.max_concurrent_uni_streams(0).unwrap();
-    let mut server_config = quinn::ServerConfig::default();
-    server_config.transport = Arc::new(transport_config);
-
-    let mut server_config = quinn::ServerConfigBuilder::new(server_config);
-    server_config.protocols(ALPN_QUIC_HTTP11C);
-    server_config.enable_keylog();
-    server_config.use_stateless_retry(true);
-
-    let mut cfg = server_config.build();
-    let tls_cfg = std::sync::Arc::get_mut(&mut cfg.crypto).unwrap();
+    transport_config.max_concurrent_uni_streams(0u8.into());
 
     let (certs, key) = tls.certs()?;
-    // let certs = certs
-    //     .into_iter()
-    //     .map(|cert| rustls::Certificate(cert.0))
-    //     .collect();
-    // let key = rustls::PrivateKey(key.0);
-    tls_cfg
-        .set_single_cert(certs, key)
-        .context("load certificate")?;
 
-    let mut endpoint = quinn::Endpoint::builder();
-    endpoint.listen(cfg);
-    Ok(endpoint)
+    let mut server_crypto = rustls::ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .context("load certificate")?;
+    server_crypto.alpn_protocols = ALPN_QUIC_HTTP11C.iter().map(|&x| x.into()).collect();
+
+    let mut cfg = ServerConfig::with_crypto(Arc::new(server_crypto));
+    cfg.transport = Arc::new(transport_config);
+    Ok(cfg)
 }
 
-pub fn create_quic_client(tls: &TlsClientConfig) -> Result<EndpointBuilder, Error> {
-    let mut endpoint = quinn::Endpoint::builder();
-    let mut client_config = quinn::ClientConfigBuilder::default();
-    client_config.protocols(ALPN_QUIC_HTTP11C);
-    client_config.enable_keylog();
-    let mut cfg = client_config.build();
-    let tls_cfg: &mut rustls::ClientConfig = std::sync::Arc::get_mut(&mut cfg.crypto).unwrap();
-    if tls.ca.is_some() {
-        tls_cfg.root_store = tls.root_store()?;
-    }
-    if tls.auth.is_some() {
-        tls.auth.as_ref().map(|auth| auth.setup(tls_cfg)).unwrap()?;
-    }
+pub fn create_quic_client(tls: &TlsClientConfig) -> Result<ClientConfig, Error> {
+    let builder = rustls::ClientConfig::builder()
+        .with_safe_defaults()
+        .with_root_certificates(tls.root_store()?);
+
+    let mut client_crypto = if let Some(auth) = &tls.auth {
+        let (certs, key) = auth.certs()?;
+        builder
+            .with_single_cert(certs, key)
+            .context("load client certs")?
+    } else {
+        builder.with_no_client_auth()
+    };
+
+    client_crypto.alpn_protocols = ALPN_QUIC_HTTP11C.iter().map(|&x| x.into()).collect();
+
     if tls.insecure {
-        tls_cfg
+        client_crypto
             .dangerous()
             .set_certificate_verifier(tls.insecure_verifier());
     }
-    endpoint.default_client_config(cfg);
-
-    Ok(endpoint)
+    let cfg = ClientConfig::new(Arc::new(client_crypto));
+    Ok(cfg)
 }
 
 pin_project_lite::pin_project! {
