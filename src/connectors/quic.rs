@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error, ResultExt};
 use log::debug;
-use quinn::{Connection, Endpoint};
+use quinn::{congestion, Connection, Endpoint};
 use serde::{Deserialize, Serialize};
 use std::{net::ToSocketAddrs, sync::Arc};
 use tokio::sync::Mutex;
@@ -25,7 +25,8 @@ pub struct QuicConnector {
     tls: TlsClientConfig,
     #[serde(default = "default_bind_addr")]
     bind: String,
-
+    #[serde(default = "default_bbr")]
+    bbr: bool,
     #[serde(skip)]
     endpoint: Option<Endpoint>,
     #[serde(skip)]
@@ -34,6 +35,10 @@ pub struct QuicConnector {
 
 fn default_bind_addr() -> String {
     "[::]:0".to_owned()
+}
+
+fn default_bbr() -> bool {
+    true
 }
 
 pub fn from_value(value: &serde_yaml::Value) -> Result<ConnectorRef, Error> {
@@ -49,7 +54,11 @@ impl super::Connector for QuicConnector {
 
     async fn init(&mut self) -> Result<(), Error> {
         self.tls.init()?;
-        let cfg = create_quic_client(&self.tls)?;
+        let mut cfg = create_quic_client(&self.tls)?;
+        if self.bbr {
+            let transport = Arc::get_mut(&mut cfg.transport).unwrap();
+            transport.congestion_controller_factory(Arc::new(congestion::BbrConfig::default()));
+        }
         let bind = self.bind.parse().context("parse bind")?;
         let mut endpoint = Endpoint::client(bind).context("bind")?;
         endpoint.set_default_client_config(cfg);

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
 use futures_util::{StreamExt, TryFutureExt};
 use log::{debug, info, warn};
-use quinn::{Endpoint, Incoming, IncomingBiStreams, NewConnection};
+use quinn::{congestion, Endpoint, Incoming, IncomingBiStreams, NewConnection};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -20,6 +20,12 @@ pub struct QuicListener {
     name: String,
     bind: SocketAddr,
     tls: TlsServerConfig,
+    #[serde(default = "default_bbr")]
+    bbr: bool,
+}
+
+fn default_bbr() -> bool {
+    true
 }
 
 pub fn from_value(value: &serde_yaml::Value) -> Result<Box<dyn Listener>, Error> {
@@ -42,7 +48,11 @@ impl Listener for QuicListener {
         queue: Sender<ContextRef>,
     ) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
-        let cfg = create_quic_server(&self.tls)?;
+        let mut cfg = create_quic_server(&self.tls)?;
+        if self.bbr {
+            let transport = Arc::get_mut(&mut cfg.transport).unwrap();
+            transport.congestion_controller_factory(Arc::new(congestion::BbrConfig::default()));
+        }
         let (endpoint, incoming) = Endpoint::server(cfg, self.bind).context("quic_listen")?;
         tokio::spawn(
             self.accept(endpoint, incoming, state, queue)
