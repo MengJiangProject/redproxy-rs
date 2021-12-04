@@ -749,6 +749,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mio"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba272f85fa0b41fc91872be579b3bbe0f56b792aa361a380eb669469f68dafb2"
+dependencies = [
+ "libc",
+ "log",
+ "miow",
+ "ntapi",
+ "winapi",
+]
+
+[[package]]
 name = "miow"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1013,7 +1026,7 @@ checksum = "5f7996776e9ee3fc0e5c14476c1a640a17e993c847ae9c81191c2c102fbef903"
 dependencies = [
  "futures-util",
  "libc",
- "mio",
+ "mio 0.7.14",
  "quinn-proto",
  "socket2 0.4.1",
  "tokio",
@@ -1115,7 +1128,7 @@ dependencies = [
  "log",
  "milu",
  "mime_guess",
- "mio",
+ "mio 0.8.0",
  "nix 0.23.0",
  "pin-project-lite",
  "prometheus",
@@ -1507,7 +1520,7 @@ dependencies = [
  "bytes",
  "libc",
  "memchr",
- "mio",
+ "mio 0.7.14",
  "num_cpus",
  "once_cell",
  "parking_lot",
