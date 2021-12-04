@@ -89,18 +89,18 @@ impl MetricsServer {
             .route("/metrics", get(get_metrics))
             .route("/logrotate", post(post_logrotate))
             .layer(AddExtensionLayer::new(state))
-            .layer(SetResponseHeaderLayer::<_, Body>::if_not_present(
+            .layer(SetResponseHeaderLayer::if_not_present(
                 CACHE_CONTROL,
                 HeaderValue::from_static("no-store"),
             ));
 
         let root = ui_service(self.ui.as_deref())?
             .nest(&self.api_prefix, api)
-            .layer(SetResponseHeaderLayer::<_, Body>::if_not_present(
+            .layer(SetResponseHeaderLayer::if_not_present(
                 ACCESS_CONTROL_ALLOW_ORIGIN,
                 HeaderValue::from_str(&self.cors).unwrap(),
             ))
-            .layer(SetResponseHeaderLayer::<_, Body>::if_not_present(
+            .layer(SetResponseHeaderLayer::if_not_present(
                 CACHE_CONTROL,
                 HeaderValue::from_static("public, max-age=3600"),
             ))

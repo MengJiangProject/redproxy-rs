@@ -77,9 +77,9 @@ checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 
 [[package]]
 name = "axum"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebef2d70f09908abd9bedd61f62db165e051eb7643c48ab1642b568b685752a0"
+checksum = "6b4e96976b2022b23b2199168ff9b281e9ddc1aa795607d5cb7146868ca5c101"
 dependencies = [
  "async-trait",
  "bitflags",
@@ -99,7 +99,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tower",
- "tower-http",
+ "tower-http 0.1.2",
  "tower-layer",
  "tower-service",
 ]
@@ -480,9 +480,9 @@ dependencies = [
 
 [[package]]
 name = "http"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "527e8c9ac747e28542699a951517aa9a6945af506cd1f2e1b53a576c17b6cc11"
+checksum = "1323096b05d41827dadeaee54c9981958c0f94e670bc94ed80037d1a7b8b186b"
 dependencies = [
  "bytes",
  "fnv",
@@ -499,6 +499,12 @@ dependencies = [
  "http",
  "pin-project-lite",
 ]
+
+[[package]]
+name = "http-range-header"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfe8eed0a9285ef776bb792479ea3834e8b94e13d615c2f66d03dd50a435a29"
 
 [[package]]
 name = "httparse"
@@ -1123,8 +1129,9 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-test",
+ "tokio-util",
  "tower",
- "tower-http",
+ "tower-http 0.2.0",
  "trust-dns-resolver",
  "webpki-roots",
  "yaml-rust",
@@ -1558,9 +1565,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.6.7"
+version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1caa0b0c8d94a049db56b5acf8cba99dc0623aab1b26d5b5f5e2d945846b3592"
+checksum = "9e99e1983e5d376cd8eb4b66604d2e99e79f5bd988c3055891dcd8c9e2604cc0"
 dependencies = [
  "bytes",
  "futures-core",
@@ -1572,9 +1579,9 @@ dependencies = [
 
 [[package]]
 name = "tower"
-version = "0.4.10"
+version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c00e500fff5fa1131c866b246041a6bf96da9c965f8fe4128cb1421f23e93c00"
+checksum = "5651b5f6860a99bd1adb59dbfe1db8beb433e73709d9032b413a77e2fb7c066a"
 dependencies = [
  "futures-core",
  "futures-util",
@@ -1589,18 +1596,37 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b7b56efe69aa0ad2b5da6b942e57ea9f6fe683b7a314d4ff48662e2c8838de1"
+checksum = "6f70061b0592867f0a60e67a6e699da5fe000c88a360a5b92ebdba9d73b2238c"
 dependencies = [
  "bytes",
  "futures-core",
  "futures-util",
  "http",
  "http-body",
+ "pin-project",
+ "tower-layer",
+ "tower-service",
+]
+
+[[package]]
+name = "tower-http"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39ee603d6e665ecc7e0f8d479eedb4626bd4726f0ee6119cee5b3a6bf184cac0"
+dependencies = [
+ "bitflags",
+ "bytes",
+ "futures-core",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-range-header",
  "mime",
  "mime_guess",
- "pin-project",
+ "percent-encoding",
+ "pin-project-lite",
  "tokio",
  "tokio-util",
  "tower-layer",
