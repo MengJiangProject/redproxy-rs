@@ -1130,7 +1130,6 @@ dependencies = [
  "log",
  "milu",
  "mime_guess",
- "mio",
  "nix 0.23.0",
  "pin-project-lite",
  "prometheus",

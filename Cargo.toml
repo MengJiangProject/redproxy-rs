@@ -35,7 +35,6 @@ futures = "0.3.18"
 cidr = "0.2.1"
 rand = "0.8.4"
 libc = "0.2"
-mio = "0.7.14"
 trust-dns-resolver = "0.20.3"
 
 # features quic
