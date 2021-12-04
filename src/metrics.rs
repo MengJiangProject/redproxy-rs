@@ -1,7 +1,6 @@
 use crate::{rules::Rule, GlobalState, VERSION};
 use axum::{
-    body::Body,
-    error_handling::HandleErrorExt,
+    body::{Body, BoxBody},
     extract::Extension,
     handler::Handler,
     http::{
@@ -9,8 +8,7 @@ use axum::{
         HeaderValue, Response, StatusCode,
     },
     response::IntoResponse,
-    routing::service_method_routing as service,
-    routing::{get, post},
+    routing::{get, get_service, post},
     Json, Router,
 };
 use easy_error::{ensure, Error};
@@ -126,7 +124,7 @@ fn ui_service(ui: Option<&str>) -> Result<Router, Error> {
         }
         Ok(Router::new().nest(
             "/",
-            service::get(ServeDir::new(".")).handle_error(|error: std::io::Error| {
+            get_service(ServeDir::new(".")).handle_error(|error: std::io::Error| async move {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("Unhandled internal error: {}", error),
@@ -257,16 +255,13 @@ async fn not_found() -> impl IntoResponse {
 struct MyError(Error);
 
 impl IntoResponse for MyError {
-    type Body = Body;
-
-    type BodyError = <Self::Body as axum::body::HttpBody>::Error;
-
-    fn into_response(self) -> axum::http::Response<Self::Body> {
+    fn into_response(self) -> Response<BoxBody> {
         let body = Body::from(format!("{} cause: {:?}", self.0, self.0.cause));
         Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .body(body)
             .unwrap()
+            .into_response()
     }
 }
 
