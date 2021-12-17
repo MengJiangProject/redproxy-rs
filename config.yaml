@@ -30,9 +30,14 @@ listeners:
       # if it's false, user/pass is still asked from client but not check agaist following list
       # it's main used to satisfy some strange software that do not work with NoAuth option of SOCK5
       required: true
-      users:
-        - username: a
-          password: a
+      auth_cmd:
+        - test
+        - "$USER"
+        - ==
+        - "$PASS"
+      # users:
+      #   - username: a
+      #     password: a
   - name: quic
     bind: 0.0.0.0:4433
     tls:
