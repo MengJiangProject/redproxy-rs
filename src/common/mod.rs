@@ -1,5 +1,8 @@
 use std::net::{SocketAddr, SocketAddrV4};
 
+use log::warn;
+use tokio::process::Command;
+
 pub mod h11c;
 pub mod http;
 
@@ -30,4 +33,25 @@ pub fn try_map_v4_addr(addr: SocketAddr) -> SocketAddr {
     } else {
         addr
     }
+}
+
+pub async fn auth_cmd(cmd: &[String], user: &str, pass: &str) -> bool {
+    if cmd.is_empty() {
+        warn!("auth_cmd is empty");
+        return false;
+    }
+    let cmd = cmd
+        .iter()
+        .map(|s| s.replace("$USER", user).replace("$PASS", pass))
+        .collect::<Vec<_>>();
+    let mut child = Command::new(&cmd[0]);
+    if cmd.len() > 1 {
+        child.args(&cmd[1..]);
+    }
+    let child = child.spawn();
+    if let Ok(mut child) = child {
+        let status = child.wait().await.unwrap();
+        return status.success();
+    }
+    false
 }

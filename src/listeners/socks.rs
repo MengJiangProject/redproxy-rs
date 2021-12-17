@@ -11,6 +11,7 @@ use tokio::{
 
 use crate::{
     common::{
+        auth_cmd,
         keepalive::set_keepalive,
         socks::{PasswordAuth, SocksRequest, SocksResponse},
         tls::TlsServerConfig,
@@ -32,6 +33,7 @@ pub struct SocksListener {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SocksAuthData {
     required: bool,
+    auth_cmd: Option<Vec<String>>,
     #[serde(default)]
     users: Vec<UserEntry>,
 }
@@ -139,7 +141,7 @@ impl SocksListener {
                 version: request.version,
             })
             .set_client_stream(socket);
-        if self.auth.required && !self.lookup_user(&request.auth) {
+        if self.auth.required && !self.lookup_user(&request.auth).await {
             ctx.on_error(err_msg("not authencated")).await;
             debug!("client not authencated: {:?}", request.auth);
         } else {
@@ -148,11 +150,16 @@ impl SocksListener {
         Ok(())
     }
 
-    fn lookup_user(&self, user: &Option<(String, String)>) -> bool {
+    async fn lookup_user(&self, user: &Option<(String, String)>) -> bool {
         if let Some((user, pass)) = user {
-            let db = &self.auth.users;
-            db.iter()
-                .any(|e| &e.username == user && &e.password == pass)
+            if let Some(cmd) = &self.auth.auth_cmd {
+                return auth_cmd(cmd, user, pass).await;
+            } else {
+                self.auth
+                    .users
+                    .iter()
+                    .any(|e| &e.username == user && &e.password == pass)
+            }
         } else {
             false
         }
