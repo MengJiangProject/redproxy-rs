@@ -463,7 +463,7 @@ async fn read_null_terminated_string<IO: RW>(io: &mut IO) -> Result<String, Erro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use test_env_log::test;
+    use test_log::test;
     use tokio::io::BufReader;
     use tokio_test::io::Builder;
     #[test(tokio::test)]

@@ -159,7 +159,7 @@ async fn read_line(s: Reader<'_>) -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use test_env_log::test;
+    use test_log::test;
     use tokio::io::BufReader;
     use tokio_test::io::Builder;
     #[test(tokio::test)]
