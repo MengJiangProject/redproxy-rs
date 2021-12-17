@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use easy_error::{err_msg, Error, ResultExt};
-use rustls_pemfile::{certs, rsa_private_keys};
+use rustls_pemfile::{certs, read_one, Item};
 use serde::{Deserialize, Serialize};
 use tokio_rustls::rustls::client::{ServerCertVerified, ServerCertVerifier, WebPkiVerifier};
 use tokio_rustls::rustls::server::{
@@ -66,8 +66,7 @@ impl TlsClientVerifyConfig {
 impl TlsServerConfig {
     pub fn certs(&self) -> Result<(Vec<Certificate>, PrivateKey), Error> {
         let certs = load_certs(&self.cert)?;
-        let mut keys = load_keys(&self.key)?;
-        let key = keys.remove(0);
+        let key = load_keys(&self.key)?;
         Ok((certs, key))
     }
 
@@ -197,8 +196,7 @@ pub struct TlsClientAuthConfig {
 impl TlsClientAuthConfig {
     pub fn certs(&self) -> Result<(Vec<Certificate>, PrivateKey), Error> {
         let certs = load_certs(&self.cert)?;
-        let mut keys = load_keys(&self.key)?;
-        let key = keys.remove(0);
+        let key = load_keys(&self.key)?;
         Ok((certs, key))
     }
 
@@ -229,10 +227,15 @@ fn load_certs<P: AsRef<Path>>(path: P) -> Result<Vec<Certificate>, Error> {
         .map_err(|_| err_msg("fail to load certificate"))
 }
 
-fn load_keys<P: AsRef<Path>>(path: P) -> Result<Vec<PrivateKey>, Error> {
+fn load_keys<P: AsRef<Path>>(path: P) -> Result<PrivateKey, Error> {
     let file = File::open(path).context("failed to read private key")?;
     let mut reader = BufReader::new(file);
-    rsa_private_keys(&mut reader)
-        .map(|x| x.into_iter().map(PrivateKey).collect())
-        .map_err(|_| err_msg("fail to load private key"))
+    let item = read_one(&mut reader)
+        .map_err(|_| err_msg("fail to load private key"))?
+        .expect("pem file");
+    match item {
+        Item::RSAKey(key) => Ok(PrivateKey(key)),
+        Item::PKCS8Key(key) => Ok(PrivateKey(key)),
+        _ => Err(err_msg("fail to load private key")),
+    }
 }
