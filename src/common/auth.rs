@@ -11,7 +11,7 @@ use tokio::{process::Command, sync::Mutex};
 pub struct AuthData {
     pub required: bool,
     #[serde(default)]
-    auth_cmd: Vec<String>,
+    cmd: Vec<String>,
     #[serde(default)]
     users: Vec<UserEntry>,
     #[serde(default)]
@@ -29,11 +29,15 @@ impl AuthData {
         self.cache.init().await
     }
     pub async fn auth_cmd(&self, user: &(String, String)) -> bool {
-        if self.auth_cmd.is_empty() {
+        if self.cmd.is_empty() {
             return false;
         }
+        if let Some(ret) = self.cache.check(user).await {
+            trace!("cache hit {} => {}", user.0, ret);
+            return ret;
+        }
         let cmd = self
-            .auth_cmd
+            .cmd
             .iter()
             .map(|s| s.replace("#USER#", &user.0).replace("#PASS#", &user.1))
             .collect::<Vec<_>>();
@@ -58,7 +62,6 @@ impl AuthData {
             self.users
                 .iter()
                 .any(|e| e.username == user.0 && e.password == user.1)
-                || self.cache.check(user).await
                 || self.auth_cmd(user).await
         } else {
             false
@@ -77,13 +80,9 @@ impl Cache {
     pub async fn init(&mut self) -> Result<(), Error> {
         Ok(())
     }
-    pub async fn check(&self, user: &(String, String)) -> bool {
+    pub async fn check(&self, user: &(String, String)) -> Option<bool> {
         let data = self.data.lock().await;
-        if let Some(v) = data.get(user) {
-            trace!("cache hit: {} => {}", user.0, v);
-            return *v;
-        }
-        false
+        data.get(user).cloned()
     }
 
     pub async fn set(&self, key: &(String, String), value: bool) -> bool {
@@ -100,6 +99,7 @@ impl Cache {
             tokio::time::sleep(Duration::from_secs(timeout)).await;
             let mut data = data.lock().await;
             data.remove(&key);
+            trace!("cache timeout: {}", key.0);
         });
         value
     }
