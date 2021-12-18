@@ -33,7 +33,7 @@ impl<'a> ContextAdaptor {
 
 impl Accessible for ContextAdaptor {
     fn names(&self) -> Vec<&str> {
-        vec!["listener", "source", "target"]
+        vec!["listener", "connector", "source", "target", "extra"]
     }
 
     fn get(&self, name: &str) -> Result<Value, Error> {
