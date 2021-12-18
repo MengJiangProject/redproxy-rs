@@ -32,9 +32,9 @@ listeners:
       required: true
       auth_cmd:
         - test
-        - "$USER"
+        - "#USER#"
         - ==
-        - "$PASS"
+        - "#PASS#"
       # users:
       #   - username: a
       #     password: a

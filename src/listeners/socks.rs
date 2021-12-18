@@ -11,7 +11,7 @@ use tokio::{
 
 use crate::{
     common::{
-        auth_cmd,
+        auth::AuthData,
         keepalive::set_keepalive,
         socks::{PasswordAuth, SocksRequest, SocksResponse},
         tls::TlsServerConfig,
@@ -27,21 +27,7 @@ pub struct SocksListener {
     bind: SocketAddr,
     tls: Option<TlsServerConfig>,
     #[serde(default)]
-    auth: SocksAuthData,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct SocksAuthData {
-    required: bool,
-    auth_cmd: Option<Vec<String>>,
-    #[serde(default)]
-    users: Vec<UserEntry>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct UserEntry {
-    username: String,
-    password: String,
+    auth: AuthData,
 }
 
 pub fn from_value(value: &serde_yaml::Value) -> Result<Box<dyn Listener>, Error> {
@@ -55,6 +41,7 @@ impl Listener for SocksListener {
         if let Some(Err(e)) = self.tls.as_mut().map(TlsServerConfig::init) {
             return Err(e);
         }
+        self.auth.init().await?;
         Ok(())
     }
     async fn listen(
@@ -145,29 +132,13 @@ impl SocksListener {
                 version: request.version,
             })
             .set_client_stream(socket);
-        if self.auth.required && !self.lookup_user(&request.auth).await {
+        if self.auth.check(&request.auth).await {
+            ctx.enqueue(&queue).await?;
+        } else {
             ctx.on_error(err_msg("not authencated")).await;
             debug!("client not authencated: {:?}", request.auth);
-        } else {
-            ctx.enqueue(&queue).await?;
         }
         Ok(())
-    }
-
-    async fn lookup_user(&self, user: &Option<(String, String)>) -> bool {
-        if let Some((user, pass)) = user {
-            self.auth
-                .users
-                .iter()
-                .any(|e| &e.username == user && &e.password == pass)
-                || if let Some(cmd) = &self.auth.auth_cmd {
-                    return auth_cmd(cmd, user, pass).await;
-                } else {
-                    false
-                }
-        } else {
-            false
-        }
     }
 }
 struct Callback {
