@@ -514,6 +514,13 @@ impl Context {
         self
     }
 
+    pub fn set_extra(&mut self, key: impl ToString, val: impl ToString) -> &mut Self {
+        Arc::make_mut(&mut self.props)
+            .extra
+            .insert(key.to_string(), val.to_string());
+        self
+    }
+
     // Get state of the context.
     pub fn state(&self) -> ContextState {
         self.props.state.last().unwrap().state

@@ -137,6 +137,10 @@ impl SocksListener {
         ctx.write()
             .await
             .set_target(request.target)
+            .set_extra(
+                "user",
+                request.auth.as_ref().map(|a| a.0.as_str()).unwrap_or(""),
+            )
             .set_callback(Callback {
                 version: request.version,
             })
