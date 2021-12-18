@@ -156,14 +156,15 @@ impl SocksListener {
 
     async fn lookup_user(&self, user: &Option<(String, String)>) -> bool {
         if let Some((user, pass)) = user {
-            if let Some(cmd) = &self.auth.auth_cmd {
-                return auth_cmd(cmd, user, pass).await;
-            } else {
-                self.auth
-                    .users
-                    .iter()
-                    .any(|e| &e.username == user && &e.password == pass)
-            }
+            self.auth
+                .users
+                .iter()
+                .any(|e| &e.username == user && &e.password == pass)
+                || if let Some(cmd) = &self.auth.auth_cmd {
+                    return auth_cmd(cmd, user, pass).await;
+                } else {
+                    false
+                }
         } else {
             false
         }
