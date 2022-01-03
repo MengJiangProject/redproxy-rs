@@ -21,7 +21,7 @@ tokio = { version = "1.15.0", features = ["full"] }
 tokio-rustls = { version="0.23.2", features = ["dangerous_configuration"] }
 tokio-util = "0.6.9"
 rustls-pemfile = "0.2.1"
-webpki-roots = "0.22.1"
+webpki-roots = "0.22.2"
 async-trait = "0.1.52"
 easy-error = "1.0.0"
 log = "0.4"
