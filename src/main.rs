@@ -59,24 +59,24 @@ async fn main() -> Result<(), Terminator> {
     let args = clap::App::new(env!("CARGO_BIN_NAME"))
         .version(VERSION)
         .arg(
-            clap::Arg::with_name("config")
-                .short("c")
+            clap::Arg::new("config")
+                .short('c')
                 .long("config")
                 .help("config filename")
                 .default_value("config.yaml")
                 .takes_value(true),
         )
         .arg(
-            clap::Arg::with_name("log-level")
-                .short("l")
+            clap::Arg::new("log-level")
+                .short('l')
                 .long("log")
                 .help("set log level")
                 .possible_values(&["erro", "warn", "info", "debug", "trace"])
                 .takes_value(true),
         )
         .arg(
-            clap::Arg::with_name("config-check")
-                .short("t")
+            clap::Arg::new("config-check")
+                .short('t')
                 .long("test")
                 .help("load and check config file then exits"),
         )
