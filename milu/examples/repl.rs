@@ -86,7 +86,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 fn main() -> Result<(), Terminator> {
     let args = clap::App::new("milu-repl")
         .version(VERSION)
-        .arg(clap::Arg::with_name("INPUT").help("filename").index(1))
+        .arg(clap::Arg::new("INPUT").help("filename").index(1))
         .get_matches();
     let input = args.value_of("INPUT");
     if let Some(i) = input {
@@ -100,6 +100,9 @@ fn main() -> Result<(), Terminator> {
 }
 
 fn repl() -> rustyline::Result<()> {
+    #[cfg(target_os = "windows")]
+    let is_tty = false;
+    #[cfg(not(target_os = "windows"))]
     let is_tty = nix::unistd::isatty(nix::libc::STDIN_FILENO)
         .map_err(|_e| std::io::Error::last_os_error())?;
     macro_rules! println {
