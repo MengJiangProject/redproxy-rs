@@ -32,9 +32,7 @@ async fn get_{id}() -> impl IntoResponse {{
             id = escape_name(name),
             //name = Path::new(name).file_name().unwrap().to_str().unwrap(),
             fname = std::fs::canonicalize(base.join(name)).unwrap().display(),
-            mime = mime_guess::from_path(name)
-                .first_or_text_plain()
-                .to_string(),
+            mime = mime_guess::from_path(name).first_or_text_plain(),
         )
     };
 
