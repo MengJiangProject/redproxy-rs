@@ -85,7 +85,7 @@ impl AccessLog {
         let path = self.path.to_owned();
         drop(log_open(&path).await?);
         let (tx, rx) = channel(100);
-        self.tx = Some(tx);
+        self.tx = Some(tx.clone());
         let format = self.format.create()?;
         tokio::spawn(
             log_thread(format, rx, path).unwrap_or_else(|e| panic!("{} cause: {:?}", e, e.cause)),
