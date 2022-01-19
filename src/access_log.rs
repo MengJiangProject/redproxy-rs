@@ -90,7 +90,6 @@ impl AccessLog {
         tokio::spawn(
             log_thread(format, rx, path).unwrap_or_else(|e| panic!("{} cause: {:?}", e, e.cause)),
         );
-        #[cfg(unix)]
         tokio::spawn(signal_watch(tx));
         Ok(())
     }
@@ -147,7 +146,10 @@ async fn log_thread(
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "windows")]
+async fn signal_watch(_tx: Sender<Option<Arc<ContextProps>>>) {}
+
+#[cfg(not(target_os = "windows"))]
 async fn signal_watch(tx: Sender<Option<Arc<ContextProps>>>) {
     use log::error;
 
