@@ -43,11 +43,20 @@ macro_rules! args {
         $(let $aname = iter.next().unwrap();)+
     };
     ($args:ident, ctx=$ctx:ident, $($aname:ident),+) => {
+        args!($args, ctx=$ctx, opts=expand, $($aname),+);
+    };
+    ($args:ident, ctx=$ctx:ident, opts=expand, $($aname:ident),+) => {
         let mut iter = $args.into_iter();
         $(
             let $aname = iter.next().unwrap().real_value_of($ctx.clone())?;
         )+
-    }
+    };
+    ($args:ident, ctx=$ctx:ident, opts=raw, $($aname:ident),+) => {
+        let mut iter = $args.into_iter();
+        $(
+            let $aname = iter.next().unwrap();
+        )+
+    };
 }
 
 #[macro_export]
@@ -56,6 +65,9 @@ macro_rules! function {
         function!($name ($($aname : $atype),+) => $rtype, ctx=ctx, $body);
     };
     ($name:ident ($($aname:ident : $atype:expr),+) => $rtype:expr, ctx=$ctx:ident, $body:tt) => {
+        function!($name ($($aname : $atype),+) => $rtype, ctx=$ctx, arg_opts=expand, $body);
+    };
+    ($name:ident ($($aname:ident : $atype:expr),+) => $rtype:expr, ctx=$ctx:ident, arg_opts=$arg_opts:ident, $body:tt) => {
         $crate::function_head!($name ($($aname : $atype),+) => $rtype);
         impl Callable for $name {
             fn signature(
@@ -86,7 +98,7 @@ macro_rules! function {
                 args: &[Value],
             ) -> Result<Value, Error>
             {
-                $crate::args!(args, ctx=$ctx, $($aname),+);
+                $crate::args!(args, ctx=$ctx, opts=$arg_opts, $($aname),+);
                 $body
             }
         }
@@ -417,19 +429,24 @@ function!(ShiftRightUnsigned(a: Integer, b: Integer)=>Integer, {
     Ok(a.into())
 });
 
-macro_rules! bool_op{
-    ($name:ident, $op:tt) =>{
-        function!($name(a: Boolean, b: Boolean)=>Boolean, {
-            let a:bool = a.try_into()?;
-            let b:bool = b.try_into()?;
-            Ok((a $op b).into())
-        });
-    }
-}
-// TODO: implement shortcut evaluation here?
-bool_op!(And,&&);
-bool_op!(Or,||);
-bool_op!(Xor,^);
+function!(And(a: Boolean, b: Boolean)=>Boolean, ctx=ctx, arg_opts=raw,{
+    let a:bool = a.real_value_of(ctx.clone())?.try_into()?;
+    let ret:bool = a && b.real_value_of(ctx)?.try_into()?;
+    Ok(ret.into())
+});
+
+function!(Or(a: Boolean, b: Boolean)=>Boolean, ctx=ctx, arg_opts=raw,{
+    let a:bool = a.real_value_of(ctx.clone())?.try_into()?;
+    let ret:bool = a || b.real_value_of(ctx)?.try_into()?;
+    Ok(ret.into())
+});
+
+function!(Xor(a: Boolean, b: Boolean)=>Boolean, ctx=ctx, arg_opts=raw,{
+    let a:bool = a.real_value_of(ctx.clone())?.try_into()?;
+    let b:bool = b.real_value_of(ctx)?.try_into()?;
+    let ret:bool = a ^ b;
+    Ok(ret.into())
+});
 
 macro_rules! compare_op{
     ($name:ident, $op:tt) =>{
