@@ -43,7 +43,7 @@ impl Listener for TProxyListener {
                 self.clone()
                     .accept(&listener, &state, &queue)
                     .await
-                    .map_err(|e| warn!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause))
+                    .map_err(|e| error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause))
                     .unwrap_or(());
             }
         });

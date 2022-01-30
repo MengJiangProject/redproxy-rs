@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
-use log::{debug, info, warn};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::net::SocketAddr;
@@ -43,7 +43,7 @@ impl Listener for ReverseProxyListener {
                     .accept(&listener, &state, &queue)
                     .await
                     .unwrap_or_else(|e| {
-                        warn!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
+                        error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
                     });
             }
         });
