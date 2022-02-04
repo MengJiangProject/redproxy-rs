@@ -2,7 +2,7 @@ use std::{os::unix::prelude::AsRawFd, sync::Arc};
 
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use nix::sys::socket::getsockopt;
 use nix::sys::socket::sockopt::{Ip6tOriginalDst, OriginalDst};
 use serde_yaml::Value;
