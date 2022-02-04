@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use easy_error::{err_msg, Error, ResultExt};
 use futures::TryFutureExt;
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 use std::{future::Future, net::SocketAddr, ops::DerefMut, pin::Pin, sync::Arc};
 use tokio::{
@@ -89,7 +89,7 @@ impl SocksListener {
                     );
                 }
                 Err(e) => {
-                    warn!("{}, Accept error: {}: cause: {:?}", self.name, e, e.cause);
+                    error!("{}, Accept error: {}: cause: {:?}", self.name, e, e.cause);
                     return;
                 }
             }
