@@ -35,7 +35,7 @@ futures = "0.3.19"
 cidr = "0.2.1"
 rand = "0.8.4"
 libc = "0.2"
-trust-dns-resolver = "0.20.3"
+trust-dns-resolver = "0.20.4"
 
 # features quic
 quinn = { version = "0.8.0", optional = true}
