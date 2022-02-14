@@ -25,6 +25,13 @@ pub struct DirectConnector {
     bind: Option<IpAddr>,
     #[serde(default)]
     dns: DnsConfig,
+    fwmark: Option<u32>,
+    #[serde(default = "default_keepalive")]
+    keepalive: bool,
+}
+
+fn default_keepalive() -> bool {
+    true
 }
 
 pub fn from_value(value: &serde_yaml::Value) -> Result<ConnectorRef, Error> {
@@ -78,7 +85,10 @@ impl super::Connector for DirectConnector {
         let server = server.connect(remote).await.context("connect")?;
         let local = server.local_addr().context("local_addr")?;
         let remote = server.peer_addr().context("peer_addr")?;
-        set_keepalive(&server)?;
+        if self.keepalive {
+            set_keepalive(&server)?;
+        }
+        set_fwmark(&server, self.fwmark)?;
         ctx.write()
             .await
             .set_server_stream(make_buffered_stream(server))
@@ -87,4 +97,22 @@ impl super::Connector for DirectConnector {
         trace!("connected to {:?}", target);
         Ok(())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn set_fwmark(sk: &tokio::net::TcpStream, mark: Option<u32>) -> Result<(), Error> {
+    use nix::sys::socket::setsockopt;
+    use nix::sys::socket::sockopt::Mark;
+    use std::os::unix::prelude::AsRawFd;
+    if mark.is_none() {
+        return Ok(());
+    }
+    let mark = mark.unwrap();
+    setsockopt(sk.as_raw_fd(), Mark, &mark).context("setsockopt")
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_fwmark(sk: &tokio::net::TcpStream, mark: Option<u32>) -> Result<(), Error> {
+    warn!("fwmark not supported on this platform");
+    Ok(())
 }
