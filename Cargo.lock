@@ -1121,7 +1121,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-test",
- "tokio-util 0.6.9",
+ "tokio-util 0.7.0",
  "tower",
  "tower-http",
  "trust-dns-resolver",
