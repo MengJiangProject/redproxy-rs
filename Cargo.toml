@@ -57,7 +57,7 @@ tokio-test = "0.4.2"
 test-log = "0.2.8"
 
 [build-dependencies]
-mime_guess = "2.0.3"
+mime_guess = "2.0.4"
 
 [workspace]
 members = ["milu"]
