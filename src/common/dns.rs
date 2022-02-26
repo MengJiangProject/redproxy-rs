@@ -50,7 +50,7 @@ impl DnsConfig {
     }
 
     fn parse_servers(servers: &str) -> Result<(ResolverConfig, ResolverOpts), Error> {
-        println!("servers: {}", servers);
+        // println!("servers: {}", servers);
         if servers == "system" {
             read_system_conf().context("Failed to read system configuration")
         } else if servers == "google" {
