@@ -211,6 +211,8 @@ pub enum ContextState {
     ClientRequested,
     ServerConnecting,
     Connected,
+    ServerShutdown,
+    ClientShutdown,
     Terminated,
     ErrorOccured,
 }
@@ -222,6 +224,8 @@ impl ContextState {
             Self::ClientRequested => "ClientRequested",
             Self::ServerConnecting => "ServerConnecting",
             Self::Connected => "Connected",
+            Self::ClientShutdown => "ClientShutdown",
+            Self::ServerShutdown => "ServerShutdown",
             Self::Terminated => "Terminated",
             Self::ErrorOccured => "ErrorOccured",
         }
@@ -467,6 +471,13 @@ impl Context {
     /// Get a locked reference to the context's server stream.
     pub async fn get_server_stream(&self) -> MutexGuard<'_, IOBufStream> {
         self.server.as_ref().unwrap().lock().await
+    }
+
+    pub fn get_streams(&self) -> (Arc<Mutex<IOBufStream>>, Arc<Mutex<IOBufStream>>) {
+        (
+            self.client.as_ref().unwrap().clone(),
+            self.server.as_ref().unwrap().clone(),
+        )
     }
 
     /// Get a clone to the context's target.

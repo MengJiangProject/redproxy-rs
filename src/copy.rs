@@ -1,5 +1,6 @@
-use crate::context::{ContextRef, ContextStatistics};
+use crate::context::{ContextRef, ContextState, ContextStatistics};
 use easy_error::{Error, ResultExt};
+use futures::Future;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 
@@ -19,7 +20,7 @@ lazy_static::lazy_static! {
     .unwrap();
 }
 
-async fn copy_stream<T: AsyncRead + AsyncWrite>(
+async fn copy_stream<C, T, F>(
     mut r: ReadHalf<T>,
     rn: &str,
     mut w: WriteHalf<T>,
@@ -28,7 +29,13 @@ async fn copy_stream<T: AsyncRead + AsyncWrite>(
     #[cfg(feature = "metrics")] counter: prometheus::core::GenericCounter<
         prometheus::core::AtomicU64,
     >,
-) -> Result<(), Error> {
+    cb: C,
+) -> Result<(), Error>
+where
+    T: AsyncRead + AsyncWrite,
+    C: FnOnce() -> F,
+    F: Future<Output = ()>,
+{
     let mut buf = [0u8; 65536];
     loop {
         let len = r
@@ -54,34 +61,48 @@ async fn copy_stream<T: AsyncRead + AsyncWrite>(
             break;
         }
     }
+    cb().await;
     w.shutdown()
         .await
         .with_context(|| format!("shutdown {})", wn)) //.or(Ok(())) // Ignore "Transport endpoint is not connected"
 }
 pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
-    let ctx = ctx.read().await;
-    let mut client = ctx.get_client_stream().await;
-    let mut server = ctx.get_server_stream().await;
+    let ctx_lock = ctx.read().await;
+    let (client, server) = ctx_lock.get_streams();
+    let mut client = client.lock().await;
+    let mut server = server.lock().await;
+    let client_stat = ctx_lock.props().client_stat.clone();
+    let client_label = ctx_lock.props().listener.clone();
+    let server_stat = ctx_lock.props().server_stat.clone();
+    let server_label = ctx_lock.props().connector.as_ref().unwrap().clone();
+    drop(ctx_lock);
+
     let (cread, cwrite) = tokio::io::split(client.get_mut());
     let (sread, swrite) = tokio::io::split(server.get_mut());
-    let copy_a_to_b = copy_stream(
+    let copy_c2s = copy_stream(
         cread,
         "client",
         swrite,
         "server",
-        ctx.props().client_stat.clone(),
+        client_stat,
         #[cfg(feature = "metrics")]
-        IO_BYTES_CLIENT.with_label_values(&[ctx.props().listener.as_str()]),
+        IO_BYTES_CLIENT.with_label_values(&[client_label.as_str()]),
+        || async {
+            ctx.write().await.set_state(ContextState::ClientShutdown);
+        },
     );
-    let copy_b_to_a = copy_stream(
+    let copy_s2c = copy_stream(
         sread,
         "server",
         cwrite,
         "client",
-        ctx.props().server_stat.clone(),
+        server_stat,
         #[cfg(feature = "metrics")]
-        IO_BYTES_SERVER.with_label_values(&[ctx.props().connector.as_deref().unwrap()]),
+        IO_BYTES_SERVER.with_label_values(&[server_label.as_str()]),
+        || async {
+            ctx.write().await.set_state(ContextState::ServerShutdown);
+        },
     );
-    tokio::try_join!(copy_a_to_b, copy_b_to_a)?;
+    tokio::try_join!(copy_c2s, copy_s2c)?;
     Ok(())
 }
