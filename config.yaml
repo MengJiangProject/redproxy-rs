@@ -8,6 +8,9 @@ metrics:
   # ui: ./ui
   bind: "[::]:8888"
 
+timeouts:
+  idle: 10 # unit: seconds
+
 listeners:
   # if type is omited, it trys the name field for type,
   - name: tproxy
@@ -57,9 +60,9 @@ connectors:
     # bind: 192.168.100.1
     dns:
       # could be one of: google,cloudflare,system,comma splited ip list with optional port number
-      servers: google
+      servers: system
       # servers: 192.168.100.1:5353,1.1.1.1,8.8.8.8:53
-      family: V6First # one of V4Only, V6Only, V4First, V6First(default)
+      family: V4Only # one of V4Only, V6Only, V4First, V6First(default)
   - name: http
     server: 192.168.100.1
     port: 8848

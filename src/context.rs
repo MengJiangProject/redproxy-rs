@@ -304,10 +304,19 @@ impl Default for ContextProps {
     }
 }
 
-#[derive(Default, Serialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct ContextStatistics {
     read_bytes: AtomicUsize,
     last_read: AtomicU64,
+}
+
+impl Default for ContextStatistics {
+    fn default() -> Self {
+        Self {
+            read_bytes: AtomicUsize::new(0),
+            last_read: AtomicU64::new(SystemTime::now().unix_timestamp()),
+        }
+    }
 }
 
 impl ContextStatistics {
@@ -315,6 +324,11 @@ impl ContextStatistics {
         self.read_bytes.fetch_add(cnt, Ordering::Relaxed);
         self.last_read
             .store(SystemTime::now().unix_timestamp(), Ordering::Relaxed)
+    }
+    pub fn is_timeout(&self, timeout: Duration) -> bool {
+        let last_read = self.last_read.load(Ordering::Relaxed);
+        let now = SystemTime::now().unix_timestamp();
+        now - last_read > timeout.as_millis() as u64
     }
 }
 

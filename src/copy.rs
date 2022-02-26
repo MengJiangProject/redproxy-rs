@@ -1,7 +1,7 @@
 use crate::context::{ContextRef, ContextState, ContextStatistics};
-use easy_error::{Error, ResultExt};
+use easy_error::{err_msg, Error, ResultExt};
 use futures::Future;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 
 #[cfg(feature = "metrics")]
@@ -66,7 +66,7 @@ where
         .await
         .with_context(|| format!("shutdown {})", wn)) //.or(Ok(())) // Ignore "Transport endpoint is not connected"
 }
-pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
+pub async fn copy_bidi(ctx: ContextRef, idle_timeout: Duration) -> Result<(), Error> {
     let ctx_lock = ctx.read().await;
     let (client, server) = ctx_lock.get_streams();
     let mut client = client.lock().await;
@@ -84,25 +84,44 @@ pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
         "client",
         swrite,
         "server",
-        client_stat,
+        client_stat.clone(),
         #[cfg(feature = "metrics")]
         IO_BYTES_CLIENT.with_label_values(&[client_label.as_str()]),
-        || async {
-            ctx.write().await.set_state(ContextState::ClientShutdown);
-        },
+        || async {},
     );
     let copy_s2c = copy_stream(
         sread,
         "server",
         cwrite,
         "client",
-        server_stat,
+        server_stat.clone(),
         #[cfg(feature = "metrics")]
         IO_BYTES_SERVER.with_label_values(&[server_label.as_str()]),
-        || async {
-            ctx.write().await.set_state(ContextState::ServerShutdown);
-        },
+        || async {},
     );
-    tokio::try_join!(copy_c2s, copy_s2c)?;
+    let interval = tokio::time::interval(Duration::from_secs(1));
+    tokio::pin!(copy_c2s);
+    tokio::pin!(copy_s2c);
+    tokio::pin!(interval);
+
+    let mut c2s = None;
+    let mut s2c = None;
+
+    while c2s.is_none() || s2c.is_none() {
+        tokio::select! {
+            biased;
+            ret = (&mut copy_c2s), if c2s.is_none() => {
+                ctx.write().await.set_state(ContextState::ClientShutdown);
+                c2s = Some(ret?)
+            },
+            ret = (&mut copy_s2c), if s2c.is_none() => {
+                ctx.write().await.set_state(ContextState::ServerShutdown);
+                s2c = Some(ret?)
+            },
+            _ = interval.tick() => if server_stat.is_timeout(idle_timeout) && client_stat.is_timeout(idle_timeout){
+                return Err(err_msg("idle timeout"))
+            }
+        }
+    }
     Ok(())
 }

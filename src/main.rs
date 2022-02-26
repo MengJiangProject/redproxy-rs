@@ -1,9 +1,10 @@
+use config::Timeouts;
 use context::{ContextRef, ContextState, GlobalState as ContextGlobalState};
 use easy_error::{err_msg, Error, Terminator};
 use log::{info, warn};
 use metrics::MetricsServer;
 use rules::Rule;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::{mpsc::channel, RwLock, RwLockReadGuard};
 
 mod access_log;
@@ -26,6 +27,7 @@ pub struct GlobalState {
     listeners: HashMap<String, Arc<dyn Listener>>,
     connectors: HashMap<String, Arc<dyn Connector>>,
     contexts: Arc<ContextGlobalState>,
+    timeouts: Timeouts,
     #[cfg(feature = "metrics")]
     metrics: Option<Arc<MetricsServer>>,
 }
@@ -117,6 +119,8 @@ async fn main() -> Result<(), Terminator> {
         }
 
         st_mut.set_rules(rules::from_config(&cfg.rules)?).await?;
+        // println!("{:?}", cfg.timeouts);
+        st_mut.timeouts = cfg.timeouts;
     }
 
     for l in state.listeners.values() {
@@ -189,7 +193,7 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
     }
 
     ctx.on_connect().await;
-    if let Err(e) = copy_bidi(ctx.clone()).await {
+    if let Err(e) = copy_bidi(ctx.clone(), Duration::from_secs(state.timeouts.idle)).await {
         let ctx_str = ctx.to_string().await;
         warn!(
             "error in io thread: {} \ncause: {:?} \nctx: {}",
