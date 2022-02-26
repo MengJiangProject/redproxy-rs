@@ -105,12 +105,12 @@ pub async fn copy_bidi(ctx: ContextRef, idle_timeout: Duration) -> Result<(), Er
         tokio::select! {
             biased;
             ret = (&mut copy_c2s), if c2s.is_none() => {
+                c2s = Some(ret?);
                 ctx.write().await.set_state(ContextState::ClientShutdown);
-                c2s = Some(ret?)
             },
             ret = (&mut copy_s2c), if s2c.is_none() => {
+                s2c = Some(ret?);
                 ctx.write().await.set_state(ContextState::ServerShutdown);
-                s2c = Some(ret?)
             },
             _ = interval.tick() => if server_stat.is_timeout(idle_timeout) && client_stat.is_timeout(idle_timeout){
                 return Err(err_msg("idle timeout"))
