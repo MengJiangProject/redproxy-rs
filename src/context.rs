@@ -326,6 +326,9 @@ impl ContextStatistics {
             .store(SystemTime::now().unix_timestamp(), Ordering::Relaxed)
     }
     pub fn is_timeout(&self, timeout: Duration) -> bool {
+        if timeout.is_zero() {
+            return false;
+        }
         let last_read = self.last_read.load(Ordering::Relaxed);
         let now = SystemTime::now().unix_timestamp();
         now - last_read > timeout.as_millis() as u64
