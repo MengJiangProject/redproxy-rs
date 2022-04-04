@@ -113,6 +113,6 @@ fn set_fwmark(sk: &tokio::net::TcpStream, mark: Option<u32>) -> Result<(), Error
 
 #[cfg(not(target_os = "linux"))]
 fn set_fwmark(sk: &tokio::net::TcpStream, mark: Option<u32>) -> Result<(), Error> {
-    warn!("fwmark not supported on this platform");
+    log::warn!("fwmark not supported on this platform");
     Ok(())
 }
