@@ -58,7 +58,7 @@ impl GlobalState {
 }
 #[tokio::main]
 async fn main() -> Result<(), Terminator> {
-    let args = clap::App::new(env!("CARGO_BIN_NAME"))
+    let args = clap::Command::new(env!("CARGO_BIN_NAME"))
         .version(VERSION)
         .arg(
             clap::Arg::new("config")
