@@ -84,7 +84,7 @@ impl Validator for MyHelper {
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 fn main() -> Result<(), Terminator> {
-    let args = clap::App::new("milu-repl")
+    let args = clap::Command::new("milu-repl")
         .version(VERSION)
         .arg(clap::Arg::new("INPUT").help("filename").index(1))
         .get_matches();
