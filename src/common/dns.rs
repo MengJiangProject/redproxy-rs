@@ -69,6 +69,7 @@ impl DnsConfig {
                     socket_addr,
                     protocol: Protocol::Udp,
                     tls_dns_name: None,
+                    bind_addr: None,
                     trust_nx_responses: true,
                 });
             }
