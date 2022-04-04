@@ -26,7 +26,7 @@ fn gen_embedded_ui(base: &str) {
 #[allow(dead_code)]
 async fn get_{id}() -> impl IntoResponse {{ 
     const BYTES: &[u8] = include_bytes!(r"{fname}");
-    let header = Headers(vec![("content-type", "{mime}")]);
+    let header = [(header::CONTENT_TYPE, "{mime}")];
     (header,BYTES) 
 }}"#,
             id = escape_name(name),
@@ -62,7 +62,8 @@ async fn get_{id}() -> impl IntoResponse {{
 use axum::{{
     routing::get,
     Router,
-    response::{{IntoResponse, Headers}},
+    response::IntoResponse,
+    http::header
 }};
 #[allow(dead_code)]
 pub fn app() -> Router {{
