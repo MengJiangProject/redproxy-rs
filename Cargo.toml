@@ -20,7 +20,7 @@ milu = { path = "milu" }
 tokio = { version = "1.16.1", features = ["full"] }
 tokio-rustls = { version="0.23.3", features = ["dangerous_configuration"] }
 tokio-util = "0.7.1"
-rustls-pemfile = "0.3.0"
+rustls-pemfile = "1.0.0"
 webpki-roots = "0.22.3"
 async-trait = "0.1.53"
 easy-error = "1.0.0"
