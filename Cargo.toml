@@ -43,7 +43,7 @@ futures-util = { version = "0.3.19", optional = true}
 pin-project-lite = { version = "0.2.8", optional = true }
 
 # features metrics
-axum = { version = "0.5.3", optional = true }
+axum = { version = "0.5.4", optional = true }
 tower = { version = "0.4", optional = true }
 tower-http = { version = "0.3", optional = true, features = ["add-extension","fs","set-header"] }
 prometheus = {version = "0.13.0", optional = true, features = ["process"] }
