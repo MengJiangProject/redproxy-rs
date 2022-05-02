@@ -1161,7 +1161,7 @@ dependencies = [
  "tokio-test",
  "tokio-util",
  "tower",
- "tower-http 0.3.0",
+ "tower-http 0.3.2",
  "trust-dns-resolver",
  "webpki-roots",
  "yaml-rust",
@@ -1638,9 +1638,9 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.3.0"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79dd37121c38240c4b4fe6520332406218bbf876f2f690fe9e406020189366fd"
+checksum = "e980386f06883cf4d0578d6c9178c81f68b45d77d00f2c2c1bc034b3439c2c56"
 dependencies = [
  "bitflags",
  "bytes",
