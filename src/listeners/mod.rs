@@ -47,11 +47,7 @@ pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
         .get("name")
         .and_then(Value::as_str)
         .ok_or_else(|| err_msg("missing listener name"))?;
-    let tname = value
-        .get("type")
-        .and_then(Value::as_str)
-        .or(Some(name))
-        .unwrap();
+    let tname = value.get("type").and_then(Value::as_str).unwrap_or(name);
     match tname {
         "http" => http::from_value(value),
         "socks" => socks::from_value(value),

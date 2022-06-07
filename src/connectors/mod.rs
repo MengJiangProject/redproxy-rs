@@ -45,7 +45,7 @@ pub fn from_value(value: &Value) -> Result<ConnectorRef, Error> {
     if name == "deny" {
         bail!("connector name \"deny\" is reserved")
     }
-    let tname = value.get("type").or(Some(name)).unwrap().as_str().unwrap();
+    let tname = value.get("type").unwrap_or(name).as_str().unwrap();
     match tname {
         "direct" => direct::from_value(value),
         "http" => http::from_value(value),
