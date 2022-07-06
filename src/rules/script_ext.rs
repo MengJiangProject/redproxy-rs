@@ -25,7 +25,7 @@ struct ContextAdaptor {
     req: Arc<ContextProps>,
 }
 
-impl<'a> ContextAdaptor {
+impl ContextAdaptor {
     fn new(req: Arc<ContextProps>) -> Self {
         Self { req }
     }
