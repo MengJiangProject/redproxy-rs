@@ -13,5 +13,5 @@ log = "0.4"
 [dev-dependencies]
 clap = "~3.2"
 rustyline = "9"
-rustyline-derive = "0.6.0"
+rustyline-derive = "0.7.0"
 nix = "0.24.2"
