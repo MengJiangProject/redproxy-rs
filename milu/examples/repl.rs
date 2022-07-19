@@ -1,6 +1,5 @@
 use easy_error::{ResultExt, Terminator};
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
-use rustyline::config::OutputStreamType;
 use rustyline::error::ReadlineError;
 use rustyline::highlight::{Highlighter, MatchingBracketHighlighter};
 use rustyline::hint::{Hinter, HistoryHinter};
@@ -114,7 +113,6 @@ fn repl() -> rustyline::Result<()> {
         .history_ignore_space(true)
         .completion_type(CompletionType::List)
         .edit_mode(EditMode::Emacs)
-        .output_stream(OutputStreamType::Stdout)
         .build();
     let h = MyHelper {
         completer: FilenameCompleter::new(),
@@ -123,7 +121,7 @@ fn repl() -> rustyline::Result<()> {
         colored_prompt: "".to_owned(),
         validator: MatchingBracketValidator::new(),
     };
-    let mut rl = Editor::with_config(config);
+    let mut rl = Editor::with_config(config)?;
     rl.set_helper(Some(h));
     rl.bind_sequence(KeyEvent::alt('N'), Cmd::HistorySearchForward);
     rl.bind_sequence(KeyEvent::alt('P'), Cmd::HistorySearchBackward);
