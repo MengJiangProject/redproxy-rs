@@ -54,7 +54,7 @@ nix = { version = "0.24.2"}
 
 [dev-dependencies]
 tokio-test = "0.4.2"
-test-log = "0.2.10"
+test-log = "0.2.11"
 
 [build-dependencies]
 mime_guess = "2.0.4"
