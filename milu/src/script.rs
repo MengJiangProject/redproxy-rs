@@ -193,7 +193,7 @@ pub type ScriptContextRef = Arc<ScriptContext>;
 
 impl ScriptContext {
     pub fn new(parent: Option<ScriptContextRef>) -> Self {
-        let parent = unsafe { std::mem::transmute(parent) };
+        //let parent = unsafe { std::mem::transmute(parent) };
         Self {
             parent,
             varibles: Default::default(),
