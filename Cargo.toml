@@ -38,7 +38,7 @@ libc = "0.2"
 trust-dns-resolver = "0.21.2"
 
 # features quic
-quinn = { version = "0.8.3", optional = true}
+quinn = { version = "0.8.4", optional = true}
 futures-util = { version = "0.3.19", optional = true}
 pin-project-lite = { version = "0.2.9", optional = true }
 
