@@ -25,7 +25,11 @@ pub struct LoadBalanceConnector {
     name: String,
     connectors: Vec<String>,
 
-    #[serde(alias = "algo", default)]
+    #[serde(
+        alias = "algo",
+        default,
+        with = "serde_yaml::with::singleton_map_recursive"
+    )]
     algorithm: Algorithm,
 
     // for RoundRobin selection,
