@@ -37,3 +37,13 @@ impl Default for Timeouts {
         Timeouts { idle: 600 }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn test_load() {
+        use super::*;
+        let cfg = Config::load("config.yaml").await;
+        assert!(cfg.is_ok());
+    }
+}
