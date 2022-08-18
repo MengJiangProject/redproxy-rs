@@ -75,6 +75,7 @@ impl Formater for ScriptFormater {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AccessLog {
     path: PathBuf,
+    #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     format: Format,
     #[serde(skip)]
     tx: Option<Sender<Option<Arc<ContextProps>>>>,
