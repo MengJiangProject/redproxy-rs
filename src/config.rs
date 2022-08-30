@@ -40,10 +40,14 @@ impl Default for Timeouts {
 
 #[cfg(test)]
 mod tests {
+    use crate::{connectors, listeners, rules};
+
     #[tokio::test]
     async fn test_load() {
         use super::*;
-        let cfg = Config::load("config.yaml").await;
-        assert!(cfg.is_ok());
+        let cfg = Config::load("config.yaml").await.unwrap();
+        let _listeners = listeners::from_config(&cfg.listeners).unwrap();
+        let _connectors = connectors::from_config(&cfg.connectors).unwrap();
+        let _rules = rules::from_config(&cfg.rules).unwrap();
     }
 }
