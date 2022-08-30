@@ -15,6 +15,11 @@ listeners:
   # if type is omited, it trys the name field for type,
   - name: tproxy
     bind: 0.0.0.0:8080
+    protocol: tcp # default
+  - name: tproxy-udp
+    type: tproxy
+    bind: 0.0.0.0:8080
+    protocol: udp
   - name: http
     bind: 0.0.0.0:8081
   - name: https
