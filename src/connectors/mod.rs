@@ -33,7 +33,10 @@ pub fn from_config(cfg: &[Value]) -> Result<HashMap<String, Arc<dyn Connector>>,
     let mut ret: HashMap<String, Arc<dyn Connector>> = Default::default();
     for val in cfg {
         let r = from_value(val)?;
-        ret.insert(r.name().to_owned(), r.into());
+        let old = ret.insert(r.name().to_owned(), r.into());
+        if let Some(old) = old {
+            bail!("duplicate connector name: {}", old.name());
+        }
     }
     Ok(ret)
 }

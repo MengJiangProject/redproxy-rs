@@ -52,7 +52,10 @@ pub fn from_config(cfg: &[Value]) -> Result<HashMap<String, Arc<dyn Listener>>, 
     let mut ret: HashMap<String, Arc<dyn Listener>> = Default::default();
     for val in cfg {
         let r = from_value(val)?;
-        ret.insert(r.name().to_owned(), r.into());
+        let old = ret.insert(r.name().to_owned(), r.into());
+        if let Some(old) = old {
+            bail!("duplicate listener name: {}", old.name());
+        }
     }
     Ok(ret)
 }
