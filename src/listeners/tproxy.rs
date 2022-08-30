@@ -22,6 +22,19 @@ use super::Listener;
 pub struct TProxyListener {
     name: String,
     bind: SocketAddr,
+    #[serde(default = "default_protocol")]
+    protocol: Protocol,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub enum Protocol {
+    Tcp,
+    Udp,
+}
+
+fn default_protocol() -> Protocol {
+    Protocol::Tcp
 }
 
 pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
