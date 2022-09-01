@@ -1,6 +1,7 @@
+use async_trait::async_trait;
 use easy_error::{bail, Error, ResultExt};
 use log::warn;
-use std::{future::Future, ops::DerefMut, pin::Pin};
+use std::ops::DerefMut;
 use tokio::sync::mpsc::Sender;
 
 use crate::{
@@ -39,34 +40,31 @@ pub async fn h11c_handshake(ctx: ContextRef, queue: Sender<ContextRef>) -> Resul
 }
 
 struct Callback;
+#[async_trait]
 impl ContextCallback for Callback {
-    fn on_connect(&self, ctx: ContextRef) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        Box::pin(async move {
-            let ctx = ctx.read().await;
-            let mut socket = ctx.get_client_stream().await;
-            let s = socket.deref_mut();
-            if let Err(e) = HttpResponse::new(200, "Connection established")
-                .write_to(s)
-                .await
-            {
-                warn!("failed to send response: {}", e)
-            }
-        })
+    async fn on_connect(&self, ctx: ContextRef) {
+        let ctx = ctx.read().await;
+        let mut socket = ctx.get_client_stream().await;
+        let s = socket.deref_mut();
+        if let Err(e) = HttpResponse::new(200, "Connection established")
+            .write_to(s)
+            .await
+        {
+            warn!("failed to send response: {}", e)
+        }
     }
-    fn on_error(&self, ctx: ContextRef, error: Error) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        Box::pin(async move {
-            let ctx = ctx.read().await;
-            let mut socket = ctx.get_client_stream().await;
-            let s = socket.deref_mut();
-            let buf = format!("Error: {} Cause: {:?}", error, error.cause);
-            if let Err(e) = HttpResponse::new(503, "Service unavailable")
-                .with_header("Content-Type", "text/plain")
-                .with_header("Content-Length", buf.as_bytes().len())
-                .write_with_body(s, buf.as_bytes())
-                .await
-            {
-                warn!("failed to send response: {}", e)
-            }
-        })
+    async fn on_error(&self, ctx: ContextRef, error: Error) {
+        let ctx = ctx.read().await;
+        let mut socket = ctx.get_client_stream().await;
+        let s = socket.deref_mut();
+        let buf = format!("Error: {} Cause: {:?}", error, error.cause);
+        if let Err(e) = HttpResponse::new(503, "Service unavailable")
+            .with_header("Content-Type", "text/plain")
+            .with_header("Content-Length", buf.as_bytes().len())
+            .write_with_body(s, buf.as_bytes())
+            .await
+        {
+            warn!("failed to send response: {}", e)
+        }
     }
 }

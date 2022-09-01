@@ -5,10 +5,8 @@ use serde::{de::Visitor, ser::SerializeStruct, Deserialize, Serialize};
 use std::{
     collections::{HashMap, LinkedList},
     fmt::{Debug, Display},
-    future::Future,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     ops::DerefMut,
-    pin::Pin,
     str::FromStr,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -200,9 +198,11 @@ pub fn make_buffered_stream<T: IOStream + 'static>(stream: T) -> IOBufStream {
     BufStream::new(Box::new(stream))
 }
 
-pub trait ContextCallback {
-    fn on_connect(&self, ctx: ContextRef) -> Pin<Box<dyn Future<Output = ()> + Send>>;
-    fn on_error(&self, ctx: ContextRef, error: Error) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+#[async_trait]
+pub trait ContextCallback: Send + Sync {
+    async fn on_connect(&self, _ctx: ContextRef) {}
+    async fn on_error(&self, _ctx: ContextRef, _error: Error) {}
+    async fn on_finish(&self, _ctx: ContextRef) {}
 }
 
 #[derive(Debug, Hash, Copy, Clone, Eq, PartialEq, Serialize)]
@@ -585,6 +585,7 @@ pub trait ContextRefOps {
     async fn enqueue(self, queue: &Sender<ContextRef>) -> Result<(), Error>;
     async fn on_connect(&self);
     async fn on_error(&self, error: Error);
+    async fn on_finish(&self);
     async fn to_string(&self) -> String;
 }
 
@@ -599,7 +600,7 @@ impl ContextRefOps for ContextRef {
         if let Some(cb) = self.read().await.callback.clone() {
             cb.on_connect(self.clone()).await
         }
-        self.write().await.clear_callback();
+        // self.write().await.clear_callback();
     }
     async fn on_error(&self, error: Error) {
         self.write()
@@ -609,7 +610,14 @@ impl ContextRefOps for ContextRef {
         if let Some(cb) = self.read().await.callback.clone() {
             cb.on_error(self.clone(), error).await
         }
-        self.write().await.clear_callback();
+        // self.write().await.clear_callback();
+    }
+    async fn on_finish(&self) {
+        self.write().await.set_state(ContextState::Connected);
+        if let Some(cb) = self.read().await.callback.clone() {
+            cb.on_finish(self.clone()).await
+        }
+        // self.write().await.clear_callback();
     }
     async fn to_string(&self) -> String {
         self.read().await.to_string()
