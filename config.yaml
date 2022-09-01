@@ -6,7 +6,7 @@ metrics:
   # api_prefix: /api
   # static files to serve, set to null to disable, set "<embedded>" to use embedded ui (if feature enabled)
   # ui: ./ui
-  bind: "[::]:8888"
+  bind: "0.0.0.0:8888"
 
 timeouts:
   idle: 10 # unit: seconds
@@ -19,6 +19,11 @@ listeners:
   - name: tproxy-udp
     type: tproxy
     bind: 0.0.0.0:8080
+    protocol: udp
+  - name: udp-reverse
+    type: reverse
+    bind: 0.0.0.0:8053
+    target: 8.8.8.8:53
     protocol: udp
   - name: http
     bind: 0.0.0.0:8081
