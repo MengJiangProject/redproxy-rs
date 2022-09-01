@@ -470,6 +470,15 @@ impl Context {
         self.callback = None;
     }
 
+    pub fn set_feature(&mut self, feature: Feature) -> &mut Self {
+        Arc::make_mut(&mut self.props).request_feature = feature;
+        self
+    }
+
+    pub fn feature(&self) -> Feature {
+        self.props.request_feature
+    }
+
     /// Set the context's client stream.
     pub fn set_client_stream(&mut self, stream: IOBufStream) -> &mut Self {
         self.client = Some(Arc::new(Mutex::new(stream)));

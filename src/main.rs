@@ -183,7 +183,10 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
     let feature = ctx.read().await.props().request_feature;
     if !connector.has_feature(feature) {
         return ctx
-            .on_error(err_msg("unsupported connector feature: {}"))
+            .on_error(err_msg(format!(
+                "unsupported connector feature: {:?}",
+                feature
+            )))
             .await;
     }
 
