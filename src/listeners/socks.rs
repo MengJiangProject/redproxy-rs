@@ -3,7 +3,7 @@ use easy_error::{err_msg, Error, ResultExt};
 use futures::TryFutureExt;
 use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
-use std::{future::Future, net::SocketAddr, ops::DerefMut, pin::Pin, sync::Arc};
+use std::{net::SocketAddr, ops::DerefMut, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc::Sender,
@@ -145,41 +145,38 @@ struct Callback {
     version: u8,
 }
 
+#[async_trait]
 impl ContextCallback for Callback {
-    fn on_connect(&self, ctx: ContextRef) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    async fn on_connect(&self, ctx: ContextRef) {
         let version = self.version;
         let cmd = 0;
-        Box::pin(async move {
-            let ctx = ctx.read().await;
-            let target = ctx.target();
-            let mut socket = ctx.get_client_stream().await;
-            let s = socket.deref_mut();
-            let resp = SocksResponse {
-                version,
-                cmd,
-                target,
-            };
-            if let Some(e) = resp.write_to(s).await.err() {
-                warn!("failed to send response: {}", e)
-            }
-        })
+        let ctx = ctx.read().await;
+        let target = ctx.target();
+        let mut socket = ctx.get_client_stream().await;
+        let s = socket.deref_mut();
+        let resp = SocksResponse {
+            version,
+            cmd,
+            target,
+        };
+        if let Some(e) = resp.write_to(s).await.err() {
+            warn!("failed to send response: {}", e)
+        }
     }
-    fn on_error(&self, ctx: ContextRef, _error: Error) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    async fn on_error(&self, ctx: ContextRef, _error: Error) {
         let version = self.version;
         let cmd = 1;
-        Box::pin(async move {
-            let ctx = ctx.read().await;
-            let target = ctx.target();
-            let mut socket = ctx.get_client_stream().await;
-            let s = socket.deref_mut();
-            let resp = SocksResponse {
-                version,
-                cmd,
-                target,
-            };
-            if let Some(e) = resp.write_to(s).await.err() {
-                warn!("failed to send response: {}", e)
-            }
-        })
+        let ctx = ctx.read().await;
+        let target = ctx.target();
+        let mut socket = ctx.get_client_stream().await;
+        let s = socket.deref_mut();
+        let resp = SocksResponse {
+            version,
+            cmd,
+            target,
+        };
+        if let Some(e) = resp.write_to(s).await.err() {
+            warn!("failed to send response: {}", e)
+        }
     }
 }

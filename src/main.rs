@@ -202,5 +202,6 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
         ctx.on_error(e).await;
     } else {
         ctx.write().await.set_state(ContextState::Terminated);
+        ctx.on_finish().await;
     }
 }
