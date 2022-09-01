@@ -17,15 +17,6 @@ mod quic;
 #[cfg(any(target_os = "android", target_os = "linux"))]
 mod tproxy;
 
-#[derive(Debug, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum Feature {
-    TcpForward,
-    TcpBind,
-    UdpForward,
-    UdpBind,
-}
-
 #[async_trait]
 pub trait Listener: Send + Sync {
     async fn init(&mut self) -> Result<(), Error> {
@@ -40,12 +31,6 @@ pub trait Listener: Send + Sync {
         queue: Sender<ContextRef>,
     ) -> Result<(), Error>;
     fn name(&self) -> &str;
-    fn features(&self) -> &[Feature] {
-        &[Feature::TcpForward]
-    }
-    fn has_feature(&self, feature: Feature) -> bool {
-        self.features().contains(&feature)
-    }
 }
 
 pub fn from_config(cfg: &[Value]) -> Result<HashMap<String, Arc<dyn Listener>>, Error> {
