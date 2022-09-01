@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use crate::{context::ContextRef, GlobalState};
 use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error};
+use serde::Serialize;
 use serde_yaml::Value;
 
 mod direct;
@@ -11,6 +12,21 @@ mod loadbalance;
 #[cfg(feature = "quic")]
 mod quic;
 mod socks;
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum Feature {
+    TcpForward,
+    TcpBind,
+    UdpForward,
+    UdpBind,
+}
+
+impl Default for Feature {
+    fn default() -> Self {
+        Feature::TcpForward
+    }
+}
 
 #[async_trait]
 pub trait Connector: Send + Sync {
@@ -26,6 +42,12 @@ pub trait Connector: Send + Sync {
         ctx: ContextRef,
     ) -> Result<(), Error>;
     fn name(&self) -> &str;
+    fn features(&self) -> &[Feature] {
+        &[Feature::TcpForward]
+    }
+    fn has_feature(&self, feature: Feature) -> bool {
+        self.features().contains(&feature)
+    }
 }
 
 pub type ConnectorRef = Box<dyn Connector>;

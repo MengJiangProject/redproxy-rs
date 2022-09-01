@@ -271,6 +271,7 @@ pub struct ContextProps {
     pub client_stat: Arc<ContextStatistics>,
     pub server_stat: Arc<ContextStatistics>,
     pub extra: HashMap<String, String>,
+    pub request_feature: Feature,
 }
 
 impl std::hash::Hash for ContextProps {
@@ -300,6 +301,7 @@ impl Default for ContextProps {
             client_stat: Default::default(),
             server_stat: Default::default(),
             extra: Default::default(),
+            request_feature: Default::default(),
         }
     }
 }
@@ -369,7 +371,7 @@ lazy_static::lazy_static! {
 
 use std::sync::Mutex as StdMutex;
 
-use crate::access_log::AccessLog;
+use crate::{access_log::AccessLog, connectors::Feature};
 
 #[derive(Default)]
 pub struct GlobalState {
