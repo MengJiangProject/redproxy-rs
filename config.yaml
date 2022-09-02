@@ -9,7 +9,8 @@ metrics:
   bind: "0.0.0.0:8888"
 
 timeouts:
-  idle: 10 # unit: seconds
+  idle: 10 # unit: seconds, default value: 600
+  udp: 10 # unit: seconds, default value: 600
 
 listeners:
   # if type is omited, it trys the name field for type,
@@ -23,7 +24,7 @@ listeners:
   - name: udp-reverse
     type: reverse
     bind: 0.0.0.0:8053
-    target: 8.8.8.8:53
+    target: one.one.one.one:53
     protocol: udp
   - name: http
     bind: 0.0.0.0:8081
@@ -43,6 +44,10 @@ listeners:
       # if it's false, user/pass is still asked from client but not check agaist following list
       # it's main used to satisfy some strange software that do not work with NoAuth option of SOCK5
       required: true
+      # following section are checked first, then run cmd if previous check failed.
+      users:
+        - username: a
+          password: a
       cmd:
         - test
         - "#USER#"
@@ -50,9 +55,7 @@ listeners:
         - "#PASS#"
       cache:
         timeout: 10 # cache time in seconds
-      # users:
-      #   - username: a
-      #     password: a
+
   - name: quic
     bind: 0.0.0.0:4433
     tls:
@@ -109,6 +112,8 @@ rules:
   #   target: deny
   # - filter: request.target.type == "domain"
   #   target: loadbalance
+  - filter: request.feature == "UdpForward"
+    target: direct
   - filter: request.source.host == "127.0.0.1"
     target: direct
   # available varibles are request: { source: string, target: {port:int, host:string, type:string }, listener: string }
