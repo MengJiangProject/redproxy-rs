@@ -597,8 +597,9 @@ impl Context {
         Duration::from_secs(self.props.idle_timeout)
     }
 
-    pub fn set_idle_timeout(&mut self, timeout: u64) {
+    pub fn set_idle_timeout(&mut self, timeout: u64) -> &mut Self {
         Arc::make_mut(&mut self.props).idle_timeout = timeout;
+        self
     }
 }
 

@@ -139,6 +139,7 @@ impl ReverseProxyListener {
                 .await
                 .set_target(self.target.clone())
                 .set_feature(Feature::UdpForward)
+                .set_idle_timeout(state.timeouts.udp)
                 .set_client_stream(make_buffered_stream(new_session.pair()))
                 .set_callback(SessionCallback::new(self.clone(), source));
             ctx.enqueue(&queue).await?;

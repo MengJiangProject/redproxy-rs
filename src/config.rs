@@ -29,13 +29,23 @@ impl Config {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Timeouts {
+    #[serde(default = "default_timeout")]
     pub idle: u64,
+    #[serde(default = "default_timeout")]
+    pub udp: u64,
 }
 
 impl Default for Timeouts {
     fn default() -> Self {
-        Timeouts { idle: 600 }
+        Timeouts {
+            idle: default_timeout(),
+            udp: default_timeout(),
+        }
     }
+}
+
+fn default_timeout() -> u64 {
+    600
 }
 
 #[cfg(test)]
