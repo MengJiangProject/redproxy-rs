@@ -308,6 +308,20 @@ impl Default for ContextProps {
     }
 }
 
+impl Display for ContextProps {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "id={} l={} c={} s={} t={}",
+            self.id,
+            self.listener,
+            self.connector.as_deref().unwrap_or("<null>"),
+            self.source,
+            self.target
+        )
+    }
+}
+
 #[derive(Serialize, Debug)]
 pub struct ContextStatistics {
     read_bytes: AtomicUsize,
@@ -663,21 +677,13 @@ impl std::hash::Hash for Context {
 
 impl Display for Context {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "id={} l={} c={} s={} t={}",
-            self.props.id,
-            self.props.listener,
-            self.props.connector.as_deref().unwrap_or("<null>"),
-            self.props.source,
-            self.props.target
-        )
+        Display::fmt(&self.props, f)
     }
 }
 
 impl std::fmt::Debug for Context {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Display::fmt(&self, f)
+        Display::fmt(&self.props, f)
     }
 }
 

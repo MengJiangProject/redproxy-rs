@@ -179,14 +179,17 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
     let connector = connector.unwrap();
 
     // Check if connector has requested feature
-    let feature = ctx.read().await.props().request_feature;
+    let props = ctx.read().await.props().clone();
+    let feature = props.request_feature;
     if !connector.has_feature(feature) {
-        return ctx
-            .on_error(err_msg(format!(
-                "unsupported connector feature: {:?}",
-                feature
-            )))
-            .await;
+        let e = err_msg(format!("unsupported connector feature: {:?}", feature));
+        warn!(
+            "failed to connect to upstream: {} \ncause: {:?} \nctx: {}",
+            e,
+            e.cause,
+            props.to_string()
+        );
+        return ctx.on_error(e).await;
     }
 
     ctx.write()
@@ -194,20 +197,22 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
         .set_state(ContextState::ServerConnecting)
         .set_connector(connector.name().to_owned());
     if let Err(e) = connector.connect(state.clone(), ctx.clone()).await {
-        let ctx_str = ctx.to_string().await;
         warn!(
             "failed to connect to upstream: {} cause: {:?} \nctx: {}",
-            e, e.cause, ctx_str
+            e,
+            e.cause,
+            props.to_string()
         );
         return ctx.on_error(e).await;
     }
 
     ctx.on_connect().await;
     if let Err(e) = copy_bidi(ctx.clone()).await {
-        let ctx_str = ctx.to_string().await;
         warn!(
             "error in io thread: {} \ncause: {:?} \nctx: {}",
-            e, e.cause, ctx_str
+            e,
+            e.cause,
+            props.to_string()
         );
         ctx.on_error(e).await;
     } else {
