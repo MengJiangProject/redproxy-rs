@@ -123,7 +123,7 @@ impl ReverseProxyListener {
         queue: &Sender<ContextRef>,
     ) -> Result<(), Error> {
         let mut buf = UdpBuffer::new();
-        let rbuf = buf.as_read_buf();
+        let rbuf = buf.body_mut();
         let (size, source) = listener.recv_from(rbuf).await.context("accept")?;
         let buf = buf.finialize(size);
         let source = crate::common::try_map_v4_addr(source);
