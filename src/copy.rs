@@ -62,8 +62,9 @@ where
         .await
         .with_context(|| format!("shutdown {})", wn))
 }
-pub async fn copy_bidi(ctx: ContextRef, idle_timeout: Duration) -> Result<(), Error> {
+pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
     let ctx_lock = ctx.read().await;
+    let idle_timeout = ctx_lock.idle_timeout();
     let (client, server) = ctx_lock.get_streams();
     let mut client = client.lock().await;
     let mut server = server.lock().await;

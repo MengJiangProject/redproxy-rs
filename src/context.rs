@@ -272,6 +272,7 @@ pub struct ContextProps {
     pub server_stat: Arc<ContextStatistics>,
     pub extra: HashMap<String, String>,
     pub request_feature: Feature,
+    pub idle_timeout: u64,
 }
 
 impl std::hash::Hash for ContextProps {
@@ -302,6 +303,7 @@ impl Default for ContextProps {
             server_stat: Default::default(),
             extra: Default::default(),
             request_feature: Default::default(),
+            idle_timeout: Default::default(),
         }
     }
 }
@@ -382,6 +384,7 @@ pub struct GlobalState {
     // use std Mutex here because Drop is not async
     pub gc_list: StdMutex<Vec<Arc<ContextProps>>>,
     pub access_log: Option<AccessLog>,
+    pub default_timeout: u64,
 }
 
 impl GlobalState {
@@ -395,6 +398,7 @@ impl GlobalState {
             id,
             listener,
             source,
+            idle_timeout: self.default_timeout,
             state: vec![(ContextState::ClientConnected, SystemTime::now()).into()],
             ..Default::default()
         });
@@ -587,6 +591,14 @@ impl Context {
     /// Get a reference to the context's properties.
     pub fn props(&self) -> &Arc<ContextProps> {
         &self.props
+    }
+
+    pub fn idle_timeout(&self) -> Duration {
+        Duration::from_secs(self.props.idle_timeout)
+    }
+
+    pub fn set_idle_timeout(&mut self, timeout: u64) {
+        Arc::make_mut(&mut self.props).idle_timeout = timeout;
     }
 }
 
