@@ -4,7 +4,7 @@ use easy_error::{err_msg, Error, Terminator};
 use log::{info, warn};
 use metrics::MetricsServer;
 use rules::Rule;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc::channel, RwLock, RwLockReadGuard};
 
 mod access_log;
@@ -92,20 +92,21 @@ async fn main() -> Result<(), Terminator> {
     let mut state: Arc<GlobalState> = Default::default();
     {
         let st_mut = Arc::get_mut(&mut state).unwrap();
+        let ctx_mut = Arc::get_mut(&mut st_mut.contexts).unwrap();
+        ctx_mut.default_timeout = st_mut.timeouts.idle;
 
+        st_mut.timeouts = cfg.timeouts;
         st_mut.listeners = listeners::from_config(&cfg.listeners)?;
         st_mut.connectors = connectors::from_config(&cfg.connectors)?;
 
         #[cfg(feature = "metrics")]
         if let Some(mut metrics) = cfg.metrics {
-            let ctx_mut = Arc::get_mut(&mut st_mut.contexts).unwrap();
             metrics.init()?;
             ctx_mut.history_size = metrics.history_size;
             st_mut.metrics = Some(Arc::new(metrics));
         }
 
         if let Some(mut log) = cfg.access_log {
-            let ctx_mut = Arc::get_mut(&mut st_mut.contexts).unwrap();
             log.init().await?;
             ctx_mut.access_log = Some(log);
         }
@@ -119,8 +120,6 @@ async fn main() -> Result<(), Terminator> {
         }
 
         st_mut.set_rules(rules::from_config(&cfg.rules)?).await?;
-        // println!("{:?}", cfg.timeouts);
-        st_mut.timeouts = cfg.timeouts;
     }
 
     for l in state.listeners.values() {
@@ -204,7 +203,7 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
     }
 
     ctx.on_connect().await;
-    if let Err(e) = copy_bidi(ctx.clone(), Duration::from_secs(state.timeouts.idle)).await {
+    if let Err(e) = copy_bidi(ctx.clone()).await {
         let ctx_str = ctx.to_string().await;
         warn!(
             "error in io thread: {} \ncause: {:?} \nctx: {}",
