@@ -185,7 +185,7 @@ async fn tx_loop(read: ReadHalf<DuplexStream>, socket: Arc<UdpSocket>) -> Result
 async fn rx_loop(mut write: WriteHalf<DuplexStream>, socket: Arc<UdpSocket>) -> Result<(), Error> {
     loop {
         let mut buf = UdpBuffer::new();
-        let rbuf = buf.as_read_buf();
+        let rbuf = buf.body_mut();
         let size = socket.recv(rbuf).await.context("recv")?;
         let buf = buf.finialize(size);
         write.write_all(&buf).await.context("write_buf")?;

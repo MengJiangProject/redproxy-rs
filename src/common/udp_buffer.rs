@@ -4,7 +4,8 @@ pub struct UdpBuffer {
     body: BytesMut,
     head: BytesMut,
 }
-
+// Why not use Framed in tokio_util::codec?
+// Because Decoder and Encoder trait will cause extra copy
 impl UdpBuffer {
     pub fn new() -> UdpBuffer {
         let mut head = BytesMut::with_capacity(65536 + 8);
@@ -12,7 +13,7 @@ impl UdpBuffer {
         unsafe { body.set_len(65536) }
         UdpBuffer { body, head }
     }
-    pub fn as_read_buf(&mut self) -> &mut BytesMut {
+    pub fn body_mut(&mut self) -> &mut BytesMut {
         &mut self.body
     }
     pub fn finialize(mut self, size: usize) -> BytesMut {
