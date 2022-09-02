@@ -27,14 +27,12 @@ impl UdpBuffer {
             return None;
         }
         let magic = &buf[..6];
-        log::debug!("magic: {:?}", magic);
         if magic != MAGIC {
             panic!("Invalid magic: {:?}", magic);
         }
         buf.advance(6);
         let len = buf.get_u16();
         let len = len as usize;
-        log::debug!("len: {}", len);
         if buf.len() < len {
             return None;
         }

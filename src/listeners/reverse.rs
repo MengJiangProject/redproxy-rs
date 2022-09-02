@@ -243,14 +243,7 @@ impl SessionCallback {
 
 #[async_trait]
 impl ContextCallback for SessionCallback {
-    async fn on_error(&self, ctx: ContextRef, error: Error) {
-        let ctx = ctx.read().await;
-        warn!(
-            "udp session: {} error: {:?} \n ctx: {}",
-            self.target,
-            error.ctx,
-            ctx.to_string()
-        );
+    async fn on_error(&self, _ctx: ContextRef, _error: Error) {
         self.listener.session_end(self.target).await
     }
     async fn on_finish(&self, _ctx: ContextRef) {
