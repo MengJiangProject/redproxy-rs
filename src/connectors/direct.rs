@@ -15,14 +15,14 @@ use tokio::{
     spawn,
 };
 
-use super::{ConnectorRef, Feature};
+use super::ConnectorRef;
 use crate::{
     common::{
         dns::{AddressFamily, DnsConfig},
         keepalive::set_keepalive,
         udp_buffer::UdpBuffer,
     },
-    context::{make_buffered_stream, ContextRef, TargetAddress},
+    context::{make_buffered_stream, ContextRef, Feature, TargetAddress},
     GlobalState,
 };
 
@@ -169,7 +169,7 @@ async fn tx_loop(read: ReadHalf<DuplexStream>, socket: Arc<UdpSocket>) -> Result
         buf.unsplit(pktbuf);
         let mut offset = 0;
         while let Some(pkt) = UdpBuffer::try_from_buffer(&buf[offset..]) {
-            if let Err(e) = socket.send(&pkt).await {
+            if let Err(e) = socket.send(pkt).await {
                 warn!("unexpected error while sending udp packet: {:?}", e);
             }
             offset += pkt.len() + 8;

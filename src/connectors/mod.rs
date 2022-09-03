@@ -1,14 +1,11 @@
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Display},
-    sync::Arc,
+use crate::{
+    context::{ContextRef, Feature},
+    GlobalState,
 };
-
-use crate::{context::ContextRef, GlobalState};
 use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error};
-use serde::Serialize;
 use serde_yaml::Value;
+use std::{collections::HashMap, sync::Arc};
 
 mod direct;
 mod http;
@@ -16,27 +13,6 @@ mod loadbalance;
 #[cfg(feature = "quic")]
 mod quic;
 mod socks;
-
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum Feature {
-    TcpForward,
-    TcpBind,
-    UdpForward,
-    UdpBind,
-}
-
-impl Default for Feature {
-    fn default() -> Self {
-        Feature::TcpForward
-    }
-}
-
-impl Display for Feature {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Debug::fmt(self, f)
-    }
-}
 
 #[async_trait]
 pub trait Connector: Send + Sync {

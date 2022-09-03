@@ -1,3 +1,4 @@
+use crate::access_log::AccessLog;
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
 use log::trace;
@@ -10,7 +11,7 @@ use std::{
     str::FromStr,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
-        Arc, Weak,
+        Arc, Mutex as StdMutex, Weak,
     },
     time::{Duration, SystemTime},
 };
@@ -385,10 +386,6 @@ lazy_static::lazy_static! {
     .unwrap();
 }
 
-use std::sync::Mutex as StdMutex;
-
-use crate::{access_log::AccessLog, connectors::Feature};
-
 #[derive(Default)]
 pub struct GlobalState {
     pub history_size: usize,
@@ -684,6 +681,32 @@ impl Display for Context {
 impl std::fmt::Debug for Context {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Display::fmt(&self.props, f)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum Feature {
+    // 1-to-1 connection
+    TcpForward,
+    // 1-to-any listening (one shot only)
+    TcpBind,
+    // 1-to-1 connection
+    UdpForward,
+    // 1-to-many listening
+    UdpBind,
+    // maybe we should add tap/tun support in the future
+}
+
+impl Default for Feature {
+    fn default() -> Self {
+        Feature::TcpForward
+    }
+}
+
+impl Display for Feature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(self, f)
     }
 }
 

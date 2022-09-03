@@ -57,13 +57,13 @@ impl AsyncUdpSocket {
                     .map_err(|errno| std::io::Error::from_raw_os_error(errno as i32))
             }) {
                 Ok(result) => {
-                    return result.and_then(|ret| {
+                    return result.map(|ret| {
                         let pktinfo = match ret.cmsgs().next() {
                             Some(ControlMessageOwned::Ipv4PacketInfo(pktinfo)) => pktinfo,
                             Some(_) => panic!("Unexpected control message"),
                             None => panic!("No control message"),
                         };
-                        Ok((ret.bytes, ret.address.unwrap(), pktinfo))
+                        (ret.bytes, ret.address.unwrap(), pktinfo)
                     })
                 }
                 Err(_would_block) => continue,
