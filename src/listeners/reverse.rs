@@ -4,6 +4,7 @@ use easy_error::{Error, ResultExt};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -16,8 +17,7 @@ use tokio::sync::Mutex;
 
 use crate::common::keepalive::set_keepalive;
 use crate::common::udp_buffer::UdpBuffer;
-use crate::connectors::Feature;
-use crate::context::{make_buffered_stream, ContextRef, TargetAddress};
+use crate::context::{make_buffered_stream, ContextRef, Feature, TargetAddress};
 use crate::context::{ContextCallback, ContextRefOps};
 use crate::GlobalState;
 
@@ -129,7 +129,7 @@ impl ReverseProxyListener {
         let source = crate::common::try_map_v4_addr(source);
         debug!("{}: recv from {:?} length: {}", self.name, source, size);
         let mut sessions = self.udp_sessions.lock().await;
-        if !sessions.contains_key(&source) {
+        if let Entry::Vacant(e) = sessions.entry(source) {
             let mut new_session = Session::new(listener.clone(), source);
             let ctx = state
                 .contexts
@@ -142,8 +142,8 @@ impl ReverseProxyListener {
                 .set_idle_timeout(state.timeouts.udp)
                 .set_client_stream(make_buffered_stream(new_session.pair()))
                 .set_callback(SessionCallback::new(self.clone(), source));
-            ctx.enqueue(&queue).await?;
-            sessions.insert(source, new_session);
+            ctx.enqueue(queue).await?;
+            e.insert(new_session);
             debug!("session {} added", source);
         }
 
@@ -207,7 +207,7 @@ impl Session {
                 buf.unsplit(pktbuf);
                 let mut offset = 0;
                 while let Some(pkt) = UdpBuffer::try_from_buffer(&buf[offset..]) {
-                    if let Err(e) = socket.send_to(&pkt, target).await {
+                    if let Err(e) = socket.send_to(pkt, target).await {
                         warn!("unexpected error while sending udp packet: {:?}", e);
                     }
                     offset += pkt.len() + 8;
