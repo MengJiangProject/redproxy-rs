@@ -219,6 +219,7 @@ pub enum ContextState {
 }
 
 impl ContextState {
+    #[cfg(feature = "metrics")]
     fn as_str(&self) -> &'static str {
         match self {
             Self::ClientConnected => "ClientConnected",
@@ -582,6 +583,7 @@ impl Context {
 
     /// Set the context's state.
     pub fn set_state(&mut self, state: ContextState) -> &mut Self {
+        #[cfg(feature = "metrics")]
         if let Some(last) = self.props.state.last() {
             let t = last.time.elapsed().unwrap().as_secs_f64();
             CONTEXT_STATUS

@@ -1,7 +1,10 @@
 use easy_error::{Error, ResultExt};
 use serde::{Deserialize, Serialize};
 
-use crate::{access_log::AccessLog, metrics::MetricsServer};
+use crate::access_log::AccessLog;
+
+#[cfg(feature = "metrics")]
+use crate::metrics::MetricsServer;
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
