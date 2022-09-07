@@ -1,4 +1,4 @@
-use crate::access_log::AccessLog;
+use crate::{access_log::AccessLog, common::frames::Frames};
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
 use log::trace;
@@ -6,6 +6,8 @@ use serde::{de::Visitor, ser::SerializeStruct, Deserialize, Serialize};
 use std::{
     collections::{HashMap, LinkedList},
     fmt::{Debug, Display},
+    io::Error as IoError,
+    io::Result as IoResult,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     ops::DerefMut,
     str::FromStr,
@@ -18,7 +20,7 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite, BufStream},
     net::lookup_host,
-    sync::{mpsc::Sender, Mutex, MutexGuard, RwLock},
+    sync::{mpsc::Sender, Mutex, RwLock},
 };
 
 #[derive(Debug)]
@@ -48,15 +50,15 @@ impl TargetAddress {
     //     }
     // }
     #[allow(dead_code)]
-    pub async fn resolve(&self) -> std::io::Result<Vec<SocketAddr>> {
+    pub async fn resolve(&self) -> IoResult<SocketAddr> {
         match self {
             Self::DomainPort(host, port) => {
                 let addr = format!("{}:{}", host, port);
-                lookup_host(addr.as_str())
-                    .await
-                    .map(|addrs| addrs.collect())
+                let mut ret = lookup_host(addr.as_str()).await?;
+                ret.next()
+                    .ok_or_else(|| IoError::new(std::io::ErrorKind::Other, "DNS Error"))
             }
-            Self::SocketAddr(addr) => Ok(vec![*addr]),
+            Self::SocketAddr(addr) => Ok(*addr),
             _ => unreachable!(),
         }
     }
@@ -89,6 +91,12 @@ impl TargetAddress {
     }
 }
 
+impl From<SocketAddr> for TargetAddress {
+    fn from(addr: SocketAddr) -> Self {
+        Self::SocketAddr(addr)
+    }
+}
+
 impl From<(Ipv4Addr, u16)> for TargetAddress {
     fn from((ip, port): (Ipv4Addr, u16)) -> Self {
         let a = SocketAddrV4::new(ip, port);
@@ -116,6 +124,12 @@ impl From<([u8; 16], u16)> for TargetAddress {
         let ip = ip.into();
         let a = SocketAddrV6::new(ip, port, 0, 0);
         Self::SocketAddr(SocketAddr::V6(a))
+    }
+}
+
+impl From<(String, u16)> for TargetAddress {
+    fn from((host, port): (String, u16)) -> Self {
+        Self::DomainPort(host, port)
     }
 }
 
@@ -201,9 +215,9 @@ pub fn make_buffered_stream<T: IOStream + 'static>(stream: T) -> IOBufStream {
 
 #[async_trait]
 pub trait ContextCallback: Send + Sync {
-    async fn on_connect(&self, _ctx: ContextRef) {}
-    async fn on_error(&self, _ctx: ContextRef, _error: Error) {}
-    async fn on_finish(&self, _ctx: ContextRef) {}
+    async fn on_connect(&self, _ctx: &mut Context) {}
+    async fn on_error(&self, _ctx: &mut Context, _error: Error) {}
+    async fn on_finish(&self, _ctx: &mut Context) {}
 }
 
 #[derive(Debug, Hash, Copy, Clone, Eq, PartialEq, Serialize)]
@@ -327,6 +341,7 @@ impl Display for ContextProps {
 #[derive(Serialize, Debug)]
 pub struct ContextStatistics {
     read_bytes: AtomicUsize,
+    read_frames: AtomicUsize,
     last_read: AtomicU64,
 }
 
@@ -334,6 +349,7 @@ impl Default for ContextStatistics {
     fn default() -> Self {
         Self {
             read_bytes: AtomicUsize::new(0),
+            read_frames: AtomicUsize::new(0),
             last_read: AtomicU64::new(SystemTime::now().unix_timestamp()),
         }
     }
@@ -342,6 +358,11 @@ impl Default for ContextStatistics {
 impl ContextStatistics {
     pub fn incr_sent_bytes(&self, cnt: usize) {
         self.read_bytes.fetch_add(cnt, Ordering::Relaxed);
+        self.last_read
+            .store(SystemTime::now().unix_timestamp(), Ordering::Relaxed)
+    }
+    pub fn incr_sent_frames(&self, cnt: usize) {
+        self.read_frames.fetch_add(cnt, Ordering::Relaxed);
         self.last_read
             .store(SystemTime::now().unix_timestamp(), Ordering::Relaxed)
     }
@@ -416,8 +437,10 @@ impl GlobalState {
         });
         let ret = Arc::new(RwLock::new(Context {
             props,
-            client: None,
-            server: None,
+            client_stream: None,
+            server_stream: None,
+            client_frames: None,
+            server_frames: None,
             callback: None,
             state: self.clone(),
         }));
@@ -462,8 +485,10 @@ impl GlobalState {
 
 pub struct Context {
     props: Arc<ContextProps>,
-    client: Option<Arc<Mutex<IOBufStream>>>,
-    server: Option<Arc<Mutex<IOBufStream>>>,
+    client_stream: Option<IOBufStream>,
+    server_stream: Option<IOBufStream>,
+    client_frames: Option<Frames>,
+    server_frames: Option<Frames>,
     callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
     state: Arc<GlobalState>,
 }
@@ -497,31 +522,48 @@ impl Context {
 
     /// Set the context's client stream.
     pub fn set_client_stream(&mut self, stream: IOBufStream) -> &mut Self {
-        self.client = Some(Arc::new(Mutex::new(stream)));
+        self.client_stream = Some(stream);
         self
     }
 
     /// Set the context's server stream.
     pub fn set_server_stream(&mut self, stream: IOBufStream) -> &mut Self {
-        self.server = Some(Arc::new(Mutex::new(stream)));
+        self.server_stream = Some(stream);
         self
     }
 
-    /// Get a locked reference to the context's client stream.
-    pub async fn get_client_stream(&self) -> MutexGuard<'_, IOBufStream> {
-        self.client.as_ref().unwrap().lock().await
+    pub fn borrow_client_stream(&mut self) -> &mut IOBufStream {
+        self.client_stream.as_mut().unwrap()
     }
 
-    /// Get a locked reference to the context's server stream.
-    pub async fn get_server_stream(&self) -> MutexGuard<'_, IOBufStream> {
-        self.server.as_ref().unwrap().lock().await
+    pub fn take_streams(&mut self) -> Option<(IOBufStream, IOBufStream)> {
+        if self.client_stream.is_none() || self.server_stream.is_none() {
+            return None;
+        }
+        Some((
+            self.client_stream.take().unwrap(),
+            self.server_stream.take().unwrap(),
+        ))
     }
 
-    pub fn get_streams(&self) -> (Arc<Mutex<IOBufStream>>, Arc<Mutex<IOBufStream>>) {
-        (
-            self.client.as_ref().unwrap().clone(),
-            self.server.as_ref().unwrap().clone(),
-        )
+    pub fn set_client_frames(&mut self, frames: Frames) -> &mut Self {
+        self.client_frames = Some(frames);
+        self
+    }
+
+    pub fn set_server_frames(&mut self, frames: Frames) -> &mut Self {
+        self.server_frames = Some(frames);
+        self
+    }
+
+    pub fn take_frames(&mut self) -> Option<(Frames, Frames)> {
+        if self.client_frames.is_none() || self.server_frames.is_none() {
+            return None;
+        }
+        Some((
+            self.client_frames.take().unwrap(),
+            self.server_frames.take().unwrap(),
+        ))
     }
 
     /// Get a clone to the context's target.
@@ -633,26 +675,28 @@ impl ContextRefOps for ContextRef {
         queue.send(self).await.context("enqueue")
     }
     async fn on_connect(&self) {
-        self.write().await.set_state(ContextState::Connected);
-        if let Some(cb) = self.read().await.callback.clone() {
-            cb.on_connect(self.clone()).await
+        let mut inner = self.write().await;
+        inner.set_state(ContextState::Connected);
+        if let Some(cb) = inner.callback.clone() {
+            cb.on_connect(&mut inner).await
         }
         // self.write().await.clear_callback();
     }
     async fn on_error(&self, error: Error) {
-        self.write()
-            .await
+        let mut inner = self.write().await;
+        inner
             .set_state(ContextState::ErrorOccured)
             .set_error(format!("{} cause: {:?}", error, error.cause));
-        if let Some(cb) = self.read().await.callback.clone() {
-            cb.on_error(self.clone(), error).await
+        if let Some(cb) = inner.callback.clone() {
+            cb.on_error(&mut inner, error).await
         }
         // self.write().await.clear_callback();
     }
     async fn on_finish(&self) {
-        self.write().await.set_state(ContextState::Connected);
-        if let Some(cb) = self.read().await.callback.clone() {
-            cb.on_finish(self.clone()).await
+        let mut inner = self.write().await;
+        inner.set_state(ContextState::Connected);
+        if let Some(cb) = inner.callback.clone() {
+            cb.on_finish(&mut inner).await
         }
         // self.write().await.clear_callback();
     }

@@ -3,7 +3,7 @@ use easy_error::{err_msg, Error, ResultExt};
 use futures::TryFutureExt;
 use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, ops::DerefMut, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc::Sender,
@@ -16,7 +16,7 @@ use crate::{
         socks::{PasswordAuth, SocksRequest, SocksResponse},
         tls::TlsServerConfig,
     },
-    context::{make_buffered_stream, ContextCallback, ContextRef, ContextRefOps},
+    context::{make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps},
     listeners::Listener,
     GlobalState,
 };
@@ -147,35 +147,31 @@ struct Callback {
 
 #[async_trait]
 impl ContextCallback for Callback {
-    async fn on_connect(&self, ctx: ContextRef) {
+    async fn on_connect(&self, ctx: &mut Context) {
         let version = self.version;
         let cmd = 0;
-        let ctx = ctx.read().await;
         let target = ctx.target();
-        let mut socket = ctx.get_client_stream().await;
-        let s = socket.deref_mut();
+        let socket = ctx.borrow_client_stream();
         let resp = SocksResponse {
             version,
             cmd,
             target,
         };
-        if let Some(e) = resp.write_to(s).await.err() {
+        if let Some(e) = resp.write_to(socket).await.err() {
             warn!("failed to send response: {}", e)
         }
     }
-    async fn on_error(&self, ctx: ContextRef, _error: Error) {
+    async fn on_error(&self, ctx: &mut Context, _error: Error) {
         let version = self.version;
         let cmd = 1;
-        let ctx = ctx.read().await;
         let target = ctx.target();
-        let mut socket = ctx.get_client_stream().await;
-        let s = socket.deref_mut();
+        let socket = ctx.borrow_client_stream();
         let resp = SocksResponse {
             version,
             cmd,
             target,
         };
-        if let Some(e) = resp.write_to(s).await.err() {
+        if let Some(e) = resp.write_to(socket).await.err() {
             warn!("failed to send response: {}", e)
         }
     }
