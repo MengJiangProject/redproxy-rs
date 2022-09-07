@@ -1,7 +1,17 @@
-use crate::context::{ContextRef, ContextState, ContextStatistics};
+use crate::{
+    common::frames::{Frame, FrameReader, FrameWriter, Frames},
+    context::{make_buffered_stream, ContextRef, ContextState, ContextStatistics, IOBufStream},
+};
+use async_trait::async_trait;
 use easy_error::{err_msg, Error, ResultExt};
-use std::{sync::Arc, time::Duration};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use futures::{Future, FutureExt};
+use std::{
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
+use tokio::io::{duplex, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 
 #[cfg(feature = "metrics")]
 lazy_static::lazy_static! {
@@ -20,10 +30,8 @@ lazy_static::lazy_static! {
 }
 
 async fn copy_stream<T>(
-    mut r: ReadHalf<T>,
-    rn: &str,
-    mut w: WriteHalf<T>,
-    wn: &str,
+    (mut rs, mut rf, rn): (ReadHalf<T>, Box<dyn FrameReader>, &'static str),
+    (mut ws, mut wf, wn): (WriteHalf<T>, Box<dyn FrameWriter>, &'static str),
     stat: Arc<ContextStatistics>,
     #[cfg(feature = "metrics")] counter: prometheus::core::GenericCounter<
         prometheus::core::AtomicU64,
@@ -32,42 +40,50 @@ async fn copy_stream<T>(
 where
     T: AsyncRead + AsyncWrite,
 {
-    let mut buf = [0u8; 65536];
+    let mut sbuf = [0u8; 65536];
     loop {
-        let len = r
-            .read(&mut buf)
-            .await
-            .with_context(|| format!("read from {}", rn))?;
-        if len > 0 {
-            let mut pos = 0;
-            while pos < len {
-                let n = w
-                    .write(&buf[pos..len])
-                    .await
-                    .with_context(|| format!("write to {}", wn))?;
-                pos += n;
+        tokio::select! {
+            ret = rs.read(&mut sbuf) => {
+                let len = ret.with_context(|| format!("read from {}", rn))?;
+                if len > 0 {
+                    ws.write_all(&sbuf[..len]).await.with_context(|| format!("write to {}", wn))?;
+                    ws.flush().await.with_context(|| format!("flush {} buffer", wn))?;
+                    stat.incr_sent_bytes(len);
+                    #[cfg(feature = "metrics")]
+                    counter.inc_by(len as u64);
+                } else {
+                    break;
+                }
             }
-            w.flush()
-                .await
-                .with_context(|| format!("flush {} buffer", wn))?;
-            stat.incr_sent_bytes(len);
-            #[cfg(feature = "metrics")]
-            counter.inc_by(len as u64);
-        } else {
-            break;
+            ret = rf.read() => {
+                let fbuf = ret.with_context(|| format!("read frame from {}", rn))?;
+                if let Some(fbuf) = fbuf {
+                    wf.write(&fbuf).await.with_context(|| format!("write frame to {}", wn))?;
+                    stat.incr_sent_bytes(fbuf.len());
+                    stat.incr_sent_frames(1);
+                    #[cfg(feature = "metrics")]
+                    counter.inc_by(fbuf.len() as u64);
+                }else{
+                    break;
+                }
+
+            }
         }
     }
 
-    w.shutdown()
+    ws.shutdown()
         .await
-        .with_context(|| format!("shutdown {})", wn))
+        .with_context(|| format!("shutdown {})", wn))?;
+    wf.shutdown()
+        .await
+        .with_context(|| format!("shutdown frame {})", wn))?;
+    Ok(())
 }
 pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
-    let ctx_lock = ctx.read().await;
+    let mut ctx_lock = ctx.write().await;
     let idle_timeout = ctx_lock.idle_timeout();
-    let (client, server) = ctx_lock.get_streams();
-    let mut client = client.lock().await;
-    let mut server = server.lock().await;
+    let (client, server) = ctx_lock.take_streams().unwrap_or_else(null_stream);
+    let frames = ctx_lock.take_frames().unwrap_or_else(null_frames);
     let client_stat = ctx_lock.props().client_stat.clone();
     let server_stat = ctx_lock.props().server_stat.clone();
     #[cfg(feature = "metrics")]
@@ -76,22 +92,20 @@ pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
     let server_label = ctx_lock.props().connector.as_ref().unwrap().clone();
     drop(ctx_lock);
 
-    let (cread, cwrite) = tokio::io::split(client.get_mut());
-    let (sread, swrite) = tokio::io::split(server.get_mut());
+    let (csr, csw) = tokio::io::split(client);
+    let (ssr, ssw) = tokio::io::split(server);
+    let (cfr, cfw) = frames.0;
+    let (sfr, sfw) = frames.1;
     let copy_c2s = copy_stream(
-        cread,
-        "client",
-        swrite,
-        "server",
+        (csr, cfr, "client"),
+        (ssw, sfw, "server"),
         client_stat.clone(),
         #[cfg(feature = "metrics")]
         IO_BYTES_CLIENT.with_label_values(&[client_label.as_str()]),
     );
     let copy_s2c = copy_stream(
-        sread,
-        "server",
-        cwrite,
-        "client",
+        (ssr, sfr, "server"),
+        (csw, cfw, "client"),
         server_stat.clone(),
         #[cfg(feature = "metrics")]
         IO_BYTES_SERVER.with_label_values(&[server_label.as_str()]),
@@ -121,4 +135,48 @@ pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+use std::io::Result as IoResult;
+fn null_frames() -> (Frames, Frames) {
+    (
+        (Box::new(NullFrames), Box::new(NullFrames)),
+        (Box::new(NullFrames), Box::new(NullFrames)),
+    )
+}
+
+fn null_stream() -> (IOBufStream, IOBufStream) {
+    let (a, b) = duplex(1);
+    (make_buffered_stream(a), make_buffered_stream(b))
+}
+
+struct NullFrames;
+impl FrameReader for NullFrames {
+    fn read<'life0, 'async_trait>(
+        &'life0 mut self,
+    ) -> Pin<Box<(dyn futures::Future<Output = IoResult<Option<Frame>>> + Send + 'async_trait)>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        struct Never;
+        impl Future for Never {
+            type Output = IoResult<Option<Frame>>;
+
+            fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+                Poll::Pending
+            }
+        }
+        Never.boxed()
+    }
+}
+#[async_trait]
+impl FrameWriter for NullFrames {
+    async fn write(&mut self, _frame: &Frame) -> IoResult<()> {
+        Ok(())
+    }
+
+    async fn shutdown(&mut self) -> IoResult<()> {
+        Ok(())
+    }
 }

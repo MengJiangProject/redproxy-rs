@@ -1,23 +1,20 @@
 use async_trait::async_trait;
-use bytes::BytesMut;
 use easy_error::{Error, ResultExt};
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::io::{ErrorKind, Result as IoResult};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::io::{duplex, split, AsyncReadExt, AsyncWriteExt, DuplexStream, WriteHalf};
-use tokio::spawn;
-
 use tokio::net::{TcpListener, UdpSocket};
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
 
+use crate::common::frames::{Frame, FrameReader, FrameWriter, Frames};
 use crate::common::keepalive::set_keepalive;
-use crate::common::udp_buffer::UdpBuffer;
-use crate::context::{make_buffered_stream, ContextRef, Feature, TargetAddress};
+use crate::context::{make_buffered_stream, Context, ContextRef, Feature, TargetAddress};
 use crate::context::{ContextCallback, ContextRefOps};
 use crate::GlobalState;
 
@@ -122,10 +119,9 @@ impl ReverseProxyListener {
         state: &Arc<GlobalState>,
         queue: &Sender<ContextRef>,
     ) -> Result<(), Error> {
-        let mut buf = UdpBuffer::new();
-        let rbuf = buf.body_mut();
-        let (size, source) = listener.recv_from(rbuf).await.context("accept")?;
-        let buf = buf.finialize(size);
+        let mut buf = Frame::new();
+        let (size, source) = buf.recv_from(listener).await.context("accept")?;
+        buf.addr = Some(self.target.clone());
         let source = crate::common::try_map_v4_addr(source);
         debug!("{}: recv from {:?} length: {}", self.name, source, size);
         let mut sessions = self.udp_sessions.lock().await;
@@ -140,7 +136,7 @@ impl ReverseProxyListener {
                 .set_target(self.target.clone())
                 .set_feature(Feature::UdpForward)
                 .set_idle_timeout(state.timeouts.udp)
-                .set_client_stream(make_buffered_stream(new_session.pair()))
+                .set_client_frames(new_session.frames())
                 .set_callback(SessionCallback::new(self.clone(), source));
             ctx.enqueue(queue).await?;
             e.insert(new_session);
@@ -148,85 +144,95 @@ impl ReverseProxyListener {
         }
 
         let session = sessions.get_mut(&source).unwrap();
-        session.push_packet(&buf).await.context("push packet")?;
+        session.push_packet(buf).await.context("push packet")?;
         Ok(())
     }
 
     async fn session_end(self: &Arc<Self>, target: SocketAddr) {
         let mut sessions = self.udp_sessions.lock().await;
         if let Some(session) = sessions.get_mut(&target) {
-            if let Err(e) = session.shutdown().await {
-                warn!("shutdown: unexpected error: {:?}", e);
-            }
+            session.shutdown().await
         }
         sessions.remove(&target);
     }
 }
 
-#[derive(Debug)]
 struct Session {
     socket: Arc<UdpSocket>,
     target: SocketAddr,
-    sink: Option<WriteHalf<DuplexStream>>,
+    tx: Option<Sender<Frame>>,
+    rx: Option<Receiver<Frame>>,
 }
 
 impl Session {
     fn new(socket: Arc<UdpSocket>, target: SocketAddr) -> Self {
+        let (tx, rx) = channel(10);
         Self {
             socket,
             target,
-            sink: None,
+            tx: Some(tx),
+            rx: Some(rx),
         }
     }
-    fn pair(&mut self) -> DuplexStream {
-        let (mine, yours) = duplex(65536 * 10);
-        let (read, write) = split(mine);
-        self.sink = Some(write);
-        let target = self.target;
-        let socket = self.socket.clone();
-        spawn(async move {
-            let mut read = read;
-            let mut buf = BytesMut::with_capacity(65536 * 10);
-            loop {
-                let mut pktbuf = buf.split();
-                unsafe {
-                    pktbuf.set_len(pktbuf.capacity());
-                }
-                match read.read_buf(&mut pktbuf).await {
-                    Err(e) => {
-                        warn!("unexpected error while read udp packet: {:?}", e);
-                        break;
-                    }
-                    Ok(n) => {
-                        if n == 0 {
-                            break;
-                        }
-                        pktbuf.truncate(n)
-                    }
-                }
-                buf.unsplit(pktbuf);
-                let mut offset = 0;
-                while let Some(pkt) = UdpBuffer::try_from_buffer(&buf[offset..]) {
-                    if let Err(e) = socket.send_to(pkt, target).await {
-                        warn!("unexpected error while sending udp packet: {:?}", e);
-                    }
-                    offset += pkt.len() + 8;
-                }
-                if offset > 0 && offset < buf.len() {
-                    let range = offset..buf.len();
-                    buf.copy_within(range.clone(), 0);
-                    buf.truncate(range.len())
-                }
-            }
-        });
-        yours
+
+    async fn push_packet(&mut self, frame: Frame) -> IoResult<()> {
+        if self.tx.is_none() {
+            return Err(std::io::Error::from(ErrorKind::BrokenPipe));
+        }
+        self.tx
+            .as_mut()
+            .unwrap()
+            .send(frame)
+            .await
+            .map_err(|_| std::io::Error::from(ErrorKind::BrokenPipe))
     }
-    async fn push_packet(&mut self, packet: &[u8]) -> std::io::Result<()> {
-        self.sink.as_mut().unwrap().write_all(packet).await?;
+
+    async fn shutdown(&mut self) {
+        self.tx.take();
+    }
+
+    fn frames(&mut self) -> Frames {
+        let rx = self.rx.take().unwrap();
+        let socket = self.socket.clone();
+        let target = self.target;
+        let r = SessionFrameReader { rx };
+        let w = SessionFrameWriter { socket, target };
+        (Box::new(r), Box::new(w))
+    }
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("target", &self.target)
+            .finish()
+    }
+}
+
+struct SessionFrameReader {
+    rx: Receiver<Frame>,
+}
+
+#[async_trait]
+impl FrameReader for SessionFrameReader {
+    async fn read(&mut self) -> IoResult<Option<Frame>> {
+        Ok(self.rx.recv().await)
+    }
+}
+
+struct SessionFrameWriter {
+    socket: Arc<UdpSocket>,
+    target: SocketAddr,
+}
+
+#[async_trait]
+impl FrameWriter for SessionFrameWriter {
+    async fn write(&mut self, frame: &Frame) -> IoResult<()> {
+        self.socket.send_to(frame.body(), self.target).await?;
         Ok(())
     }
-    async fn shutdown(&mut self) -> std::io::Result<()> {
-        self.sink.as_mut().unwrap().shutdown().await
+    async fn shutdown(&mut self) -> IoResult<()> {
+        Ok(())
     }
 }
 
@@ -243,10 +249,10 @@ impl SessionCallback {
 
 #[async_trait]
 impl ContextCallback for SessionCallback {
-    async fn on_error(&self, _ctx: ContextRef, _error: Error) {
+    async fn on_error(&self, _ctx: &mut Context, _error: Error) {
         self.listener.session_end(self.target).await
     }
-    async fn on_finish(&self, _ctx: ContextRef) {
+    async fn on_finish(&self, _ctx: &mut Context) {
         self.listener.session_end(self.target).await
     }
 }

@@ -5,22 +5,17 @@ use std::{
 };
 
 use async_trait::async_trait;
-use bytes::BytesMut;
 use easy_error::{bail, Error, ResultExt};
-use log::{debug, trace, warn};
+use log::{debug, trace};
 use serde::{Deserialize, Serialize};
-use tokio::{
-    io::{duplex, split, AsyncReadExt, AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf},
-    net::{TcpSocket, UdpSocket},
-    spawn,
-};
+use tokio::net::{TcpSocket, UdpSocket};
 
 use super::ConnectorRef;
 use crate::{
     common::{
         dns::{AddressFamily, DnsConfig},
+        frames::{Frame, FrameReader, FrameWriter, Frames},
         keepalive::set_keepalive,
-        udp_buffer::UdpBuffer,
     },
     context::{make_buffered_stream, ContextRef, Feature, TargetAddress},
     GlobalState,
@@ -121,12 +116,12 @@ impl super::Connector for DirectConnector {
                 };
                 let local = SocketAddr::new(local, 0);
                 let server = UdpSocket::bind(local).await.context("bind")?;
-                server.connect(remote).await.context("connect")?;
+                // server.connect(remote).await.context("connect")?;
                 let local = server.local_addr().context("local_addr")?;
                 set_fwmark(&server, self.fwmark)?;
                 ctx.write()
                     .await
-                    .set_server_stream(make_buffered_stream(setup_session(server)))
+                    .set_server_frames(setup_session(server, remote))
                     .set_local_addr(local)
                     .set_server_addr(remote);
                 trace!("connected to {:?}", target);
@@ -137,58 +132,45 @@ impl super::Connector for DirectConnector {
     }
 }
 
-fn setup_session(socket: UdpSocket) -> DuplexStream {
-    let (mine, yours) = duplex(65536 * 10);
-    let (read, write) = split(mine);
+use std::io::Result as IoResult;
+fn setup_session(socket: UdpSocket, target: SocketAddr) -> Frames {
     let socket = Arc::new(socket);
-    spawn(async move {
-        let tx = tx_loop(read, socket.clone());
-        let rx = rx_loop(write, socket.clone());
-        // if any one finished, session closed
-        tokio::select! {
-            _ = rx => (),
-            _ = tx => (),
-        }
-    });
-    yours
+    let frames = DirectFrames { socket, target };
+    (Box::new(frames.clone()), Box::new(frames))
 }
 
-async fn tx_loop(read: ReadHalf<DuplexStream>, socket: Arc<UdpSocket>) -> Result<(), Error> {
-    let mut read = read;
-    let mut buf = BytesMut::with_capacity(65536 * 10);
-    loop {
-        let mut pktbuf = buf.split();
-        unsafe {
-            pktbuf.set_len(pktbuf.capacity());
-        }
-        let size = read.read_buf(&mut pktbuf).await.context("read_buf")?;
-        if size == 0 {
-            return Ok(());
-        }
-        pktbuf.truncate(size);
-        buf.unsplit(pktbuf);
-        let mut offset = 0;
-        while let Some(pkt) = UdpBuffer::try_from_buffer(&buf[offset..]) {
-            if let Err(e) = socket.send(pkt).await {
-                warn!("unexpected error while sending udp packet: {:?}", e);
+#[derive(Clone)]
+struct DirectFrames {
+    socket: Arc<UdpSocket>,
+    target: SocketAddr,
+}
+
+#[async_trait]
+impl FrameReader for DirectFrames {
+    async fn read(&mut self) -> IoResult<Option<Frame>> {
+        loop {
+            let mut buf = Frame::new();
+            let (_, source) = buf.recv_from(&self.socket).await?;
+            if self.target.ip().is_unspecified() || self.target == source {
+                return Ok(Some(buf));
             }
-            offset += pkt.len() + 8;
-        }
-        if offset > 0 && offset < buf.len() {
-            let range = offset..buf.len();
-            buf.copy_within(range.clone(), 0);
-            buf.truncate(range.len())
         }
     }
 }
 
-async fn rx_loop(mut write: WriteHalf<DuplexStream>, socket: Arc<UdpSocket>) -> Result<(), Error> {
-    loop {
-        let mut buf = UdpBuffer::new();
-        let rbuf = buf.body_mut();
-        let size = socket.recv(rbuf).await.context("recv")?;
-        let buf = buf.finialize(size);
-        write.write_all(&buf).await.context("write_buf")?;
+#[async_trait]
+impl FrameWriter for DirectFrames {
+    async fn write(&mut self, frame: &Frame) -> IoResult<()> {
+        let target = if self.target.ip().is_unspecified() {
+            frame.addr.as_ref().unwrap().resolve().await?
+        } else {
+            self.target
+        };
+        self.socket.send_to(frame.body(), target).await?;
+        Ok(())
+    }
+    async fn shutdown(&mut self) -> IoResult<()> {
+        Ok(())
     }
 }
 

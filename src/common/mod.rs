@@ -16,9 +16,9 @@ pub mod quic;
 
 pub mod auth;
 pub mod dns;
+pub mod frames;
 pub mod socks;
 pub mod tls;
-pub mod udp_buffer;
 
 // map v6 socket addr into v4 if possible
 pub fn try_map_v4_addr(addr: SocketAddr) -> SocketAddr {
