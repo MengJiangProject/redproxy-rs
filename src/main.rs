@@ -2,10 +2,12 @@ use config::Timeouts;
 use context::{ContextRef, ContextState, GlobalState as ContextGlobalState};
 use easy_error::{err_msg, Error, Terminator};
 use log::{info, warn};
-use metrics::MetricsServer;
 use rules::Rule;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc::channel, RwLock, RwLockReadGuard};
+
+#[cfg(feature = "metrics")]
+use metrics::MetricsServer;
 
 mod access_log;
 mod common;
@@ -14,8 +16,10 @@ mod connectors;
 mod context;
 mod copy;
 mod listeners;
-mod metrics;
 mod rules;
+
+#[cfg(feature = "metrics")]
+mod metrics;
 
 use crate::{connectors::Connector, context::ContextRefOps, copy::copy_bidi, listeners::Listener};
 

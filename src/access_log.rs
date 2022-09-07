@@ -95,6 +95,7 @@ impl AccessLog {
         Ok(())
     }
 
+    #[cfg(feature = "metrics")]
     pub async fn reopen(&self) -> Result<(), Error> {
         self.tx
             .as_ref()

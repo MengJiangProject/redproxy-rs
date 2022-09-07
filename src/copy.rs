@@ -69,8 +69,10 @@ pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
     let mut client = client.lock().await;
     let mut server = server.lock().await;
     let client_stat = ctx_lock.props().client_stat.clone();
-    let client_label = ctx_lock.props().listener.clone();
     let server_stat = ctx_lock.props().server_stat.clone();
+    #[cfg(feature = "metrics")]
+    let client_label = ctx_lock.props().listener.clone();
+    #[cfg(feature = "metrics")]
     let server_label = ctx_lock.props().connector.as_ref().unwrap().clone();
     drop(ctx_lock);
 
