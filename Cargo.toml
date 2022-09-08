@@ -37,6 +37,7 @@ cidr = "0.2.1"
 rand = "0.8.5"
 libc = "0.2"
 trust-dns-resolver = "0.21.2"
+chashmap = "2.2.2"
 
 # features quic
 quinn = { version = "0.8.5", optional = true}

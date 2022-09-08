@@ -58,11 +58,11 @@ where
             ret = rf.read() => {
                 let fbuf = ret.with_context(|| format!("read frame from {}", rn))?;
                 if let Some(fbuf) = fbuf {
-                    wf.write(&fbuf).await.with_context(|| format!("write frame to {}", wn))?;
-                    stat.incr_sent_bytes(fbuf.len());
+                    let len = wf.write(fbuf).await.with_context(|| format!("write frame to {}", wn))?;
+                    stat.incr_sent_bytes(len);
                     stat.incr_sent_frames(1);
                     #[cfg(feature = "metrics")]
-                    counter.inc_by(fbuf.len() as u64);
+                    counter.inc_by(len as u64);
                 }else{
                     break;
                 }
@@ -172,8 +172,8 @@ impl FrameReader for NullFrames {
 }
 #[async_trait]
 impl FrameWriter for NullFrames {
-    async fn write(&mut self, _frame: &Frame) -> IoResult<()> {
-        Ok(())
+    async fn write(&mut self, _frame: Frame) -> IoResult<usize> {
+        Ok(0)
     }
 
     async fn shutdown(&mut self) -> IoResult<()> {

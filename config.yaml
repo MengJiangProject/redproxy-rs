@@ -78,7 +78,7 @@ connectors:
       family: V4Only # one of V4Only, V6Only, V4First, V6First(default)
   - name: http
     server: 192.168.100.1
-    port: 8848
+    port: 7081
   - name: https
     type: http
     server: 192.168.100.1
@@ -102,8 +102,8 @@ connectors:
     tls:
       insecure: true
   - name: quic
-    server: 127.0.0.1
-    port: 4433
+    server: 192.168.100.1
+    port: 7081
     tls:
       insecure: true
 
@@ -113,7 +113,7 @@ rules:
   # - filter: request.target.type == "domain"
   #   target: loadbalance
   - filter: request.feature == "UdpForward"
-    target: direct
+    target: quic
   - filter: request.source.host == "127.0.0.1"
     target: direct
   # available varibles are request: { source: string, target: {port:int, host:string, type:string }, listener: string }

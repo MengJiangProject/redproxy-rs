@@ -227,9 +227,8 @@ struct SessionFrameWriter {
 
 #[async_trait]
 impl FrameWriter for SessionFrameWriter {
-    async fn write(&mut self, frame: &Frame) -> IoResult<()> {
-        self.socket.send_to(frame.body(), self.target).await?;
-        Ok(())
+    async fn write(&mut self, frame: Frame) -> IoResult<usize> {
+        self.socket.send_to(frame.body(), self.target).await
     }
     async fn shutdown(&mut self) -> IoResult<()> {
         Ok(())

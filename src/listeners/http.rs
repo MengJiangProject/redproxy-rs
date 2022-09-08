@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{Error, ResultExt};
+use easy_error::{err_msg, Error, ResultExt};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -66,7 +66,10 @@ impl HttpListener {
                     let source = crate::common::try_map_v4_addr(source);
                     tokio::spawn(async move {
                         let res = match this.create_context(state, source, socket).await {
-                            Ok(ctx) => h11c_handshake(ctx, queue).await,
+                            Ok(ctx) => {
+                                h11c_handshake(ctx, queue, |_, _| Err(err_msg("not supported")))
+                                    .await
+                            }
                             Err(e) => Err(e),
                         };
                         if let Err(e) = res {
