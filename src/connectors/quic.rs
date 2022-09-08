@@ -3,17 +3,21 @@ use easy_error::{bail, err_msg, Error, ResultExt};
 use log::debug;
 use quinn::{congestion, Connection, Endpoint};
 use serde::{Deserialize, Serialize};
-use std::{net::ToSocketAddrs, sync::Arc};
+use std::{
+    net::{SocketAddr, ToSocketAddrs},
+    sync::Arc,
+};
 use tokio::sync::Mutex;
 
 use super::ConnectorRef;
 use crate::{
     common::{
+        frames::frames_from_stream,
         http::{HttpRequest, HttpResponse},
         quic::{create_quic_client, QuicStream},
         tls::TlsClientConfig,
     },
-    context::{make_buffered_stream, ContextRef, IOBufStream},
+    context::{make_buffered_stream, ContextRef, Feature},
     GlobalState,
 };
 
@@ -52,6 +56,10 @@ impl super::Connector for QuicConnector {
         self.name.as_str()
     }
 
+    fn features(&self) -> &[Feature] {
+        &[Feature::TcpForward, Feature::UdpForward]
+    }
+
     async fn init(&mut self) -> Result<(), Error> {
         self.tls.init()?;
         let mut cfg = create_quic_client(&self.tls)?;
@@ -79,16 +87,12 @@ impl super::Connector for QuicConnector {
             .unwrap()
             .local_addr()
             .context("local_addr")?;
-        let ret = self.clone().handshake(conn, ctx.clone()).await;
+        let ret = self
+            .clone()
+            .handshake(conn, ctx.clone(), remote, local)
+            .await;
         match ret {
-            Ok(server) => {
-                ctx.write()
-                    .await
-                    .set_server_stream(server)
-                    .set_local_addr(local)
-                    .set_server_addr(remote);
-                Ok(())
-            }
+            Ok(()) => Ok(()),
             Err(e) => {
                 self.clear_connection().await;
                 Err(e)
@@ -102,7 +106,9 @@ impl QuicConnector {
         self: Arc<Self>,
         conn: Arc<Connection>,
         ctx: ContextRef,
-    ) -> Result<IOBufStream, Error> {
+        remote: SocketAddr,
+        local: SocketAddr,
+    ) -> Result<(), Error> {
         let server: QuicStream = conn
             .open_bi()
             .await
@@ -111,15 +117,49 @@ impl QuicConnector {
 
         let mut server = make_buffered_stream(server);
         let target = ctx.read().await.target();
-        HttpRequest::new("CONNECT", &target)
-            .with_header("Host", &target)
-            .write_to(&mut server)
-            .await?;
-        let resp = HttpResponse::read_from(&mut server).await?;
-        if resp.code != 200 {
-            bail!("upstream server failure: {:?}", resp);
+        let feature = ctx.read().await.feature();
+        match feature {
+            Feature::TcpForward => {
+                HttpRequest::new("CONNECT", &target)
+                    .with_header("Host", &target)
+                    .write_to(&mut server)
+                    .await?;
+                let resp = HttpResponse::read_from(&mut server).await?;
+                if resp.code != 200 {
+                    bail!("upstream server failure: {:?}", resp);
+                }
+                ctx.write()
+                    .await
+                    .set_server_stream(server)
+                    .set_local_addr(local)
+                    .set_server_addr(remote);
+            }
+            Feature::UdpForward => {
+                HttpRequest::new("POST", "/udp_channel")
+                    .with_header("Host", &target)
+                    .write_to(&mut server)
+                    .await?;
+                let resp = HttpResponse::read_from(&mut server).await?;
+                log::debug!("response: {:?}", resp);
+                if resp.code != 200 {
+                    bail!("upstream server failure: {:?}", resp);
+                }
+                let session_id = resp
+                    .headers
+                    .iter()
+                    .find(|x| x.0.eq_ignore_ascii_case("Session-Id"))
+                    .and_then(|x| x.1.parse::<u32>().ok())
+                    .unwrap_or(0);
+
+                ctx.write()
+                    .await
+                    .set_server_frames(frames_from_stream(session_id, server))
+                    .set_local_addr(local)
+                    .set_server_addr(remote);
+            }
+            x => bail!("not supported feature {:?}", x),
         }
-        Ok(server)
+        Ok(())
     }
 
     async fn get_connection(self: Arc<Self>) -> Result<Arc<Connection>, Error> {
