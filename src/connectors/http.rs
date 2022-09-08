@@ -9,11 +9,12 @@ use tokio_rustls::rustls::ServerName;
 
 use crate::{
     common::{
+        frames::frames_from_stream,
         http::{HttpRequest, HttpResponse},
         keepalive::set_keepalive,
         tls::TlsClientConfig,
     },
-    context::{make_buffered_stream, ContextRef},
+    context::{make_buffered_stream, ContextRef, Feature},
     GlobalState,
 };
 
@@ -43,6 +44,10 @@ impl super::Connector for HttpConnector {
             return Err(e);
         }
         Ok(())
+    }
+
+    fn features(&self) -> &[Feature] {
+        &[Feature::TcpForward, Feature::UdpForward]
     }
 
     async fn connect(
@@ -86,19 +91,48 @@ impl super::Connector for HttpConnector {
         };
 
         let target = ctx.read().await.target();
-        HttpRequest::new("CONNECT", &target)
-            .with_header("Host", &target)
-            .write_to(&mut server)
-            .await?;
-        let resp = HttpResponse::read_from(&mut server).await?;
-        if resp.code != 200 {
-            bail!("upstream server failure: {:?}", resp);
+        let feature = ctx.read().await.feature();
+        match feature {
+            Feature::TcpForward => {
+                HttpRequest::new("CONNECT", &target)
+                    .with_header("Host", &target)
+                    .write_to(&mut server)
+                    .await?;
+                let resp = HttpResponse::read_from(&mut server).await?;
+                if resp.code != 200 {
+                    bail!("upstream server failure: {:?}", resp);
+                }
+                ctx.write()
+                    .await
+                    .set_server_stream(server)
+                    .set_local_addr(local)
+                    .set_server_addr(remote);
+            }
+            Feature::UdpForward => {
+                HttpRequest::new("POST", "/udp_channel")
+                    .with_header("Host", &target)
+                    .write_to(&mut server)
+                    .await?;
+                let resp = HttpResponse::read_from(&mut server).await?;
+                log::debug!("response: {:?}", resp);
+                if resp.code != 200 {
+                    bail!("upstream server failure: {:?}", resp);
+                }
+                let session_id = resp
+                    .headers
+                    .iter()
+                    .find(|x| x.0.eq_ignore_ascii_case("Session-Id"))
+                    .and_then(|x| x.1.parse::<u32>().ok())
+                    .unwrap_or(0);
+
+                ctx.write()
+                    .await
+                    .set_server_frames(frames_from_stream(session_id, server))
+                    .set_local_addr(local)
+                    .set_server_addr(remote);
+            }
+            x => bail!("not supported feature {:?}", x),
         }
-        ctx.write()
-            .await
-            .set_server_stream(server)
-            .set_local_addr(local)
-            .set_server_addr(remote);
         Ok(())
     }
 }

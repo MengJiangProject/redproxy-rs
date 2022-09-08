@@ -536,6 +536,10 @@ impl Context {
         self.client_stream.as_mut().unwrap()
     }
 
+    pub fn take_client_stream(&mut self) -> IOBufStream {
+        self.client_stream.take().unwrap()
+    }
+
     pub fn take_streams(&mut self) -> Option<(IOBufStream, IOBufStream)> {
         if self.client_stream.is_none() || self.server_stream.is_none() {
             return None;

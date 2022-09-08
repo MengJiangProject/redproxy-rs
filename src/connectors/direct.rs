@@ -149,10 +149,11 @@ struct DirectFrames {
 impl FrameReader for DirectFrames {
     async fn read(&mut self) -> IoResult<Option<Frame>> {
         loop {
-            let mut buf = Frame::new();
-            let (_, source) = buf.recv_from(&self.socket).await?;
+            let mut frame = Frame::new();
+            let (_, source) = frame.recv_from(&self.socket).await?;
+            log::trace!("read udp frame: {:?}", frame);
             if self.target.ip().is_unspecified() || self.target == source {
-                return Ok(Some(buf));
+                return Ok(Some(frame));
             }
         }
     }
@@ -160,14 +161,15 @@ impl FrameReader for DirectFrames {
 
 #[async_trait]
 impl FrameWriter for DirectFrames {
-    async fn write(&mut self, frame: &Frame) -> IoResult<()> {
+    async fn write(&mut self, frame: Frame) -> IoResult<usize> {
         let target = if self.target.ip().is_unspecified() {
             frame.addr.as_ref().unwrap().resolve().await?
         } else {
             self.target
         };
+        log::trace!("send udp frame: {:?}", frame);
         self.socket.send_to(frame.body(), target).await?;
-        Ok(())
+        Ok(frame.len())
     }
     async fn shutdown(&mut self) -> IoResult<()> {
         Ok(())
