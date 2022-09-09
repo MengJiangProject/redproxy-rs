@@ -24,6 +24,7 @@ listeners:
   - name: udp-reverse
     type: reverse
     bind: 0.0.0.0:8053
+    #target: 1.1.1.1:53
     target: one.one.one.one:53
     protocol: udp
   - name: http
@@ -113,7 +114,7 @@ rules:
   # - filter: request.target.type == "domain"
   #   target: loadbalance
   - filter: request.feature == "UdpForward"
-    target: quic
+    target: http
   - filter: request.source.host == "127.0.0.1"
     target: direct
   # available varibles are request: { source: string, target: {port:int, host:string, type:string }, listener: string }
@@ -131,6 +132,6 @@ rules:
 
 accessLog:
   path: access.log
-  format:
-    script: |
-      `src=${request.source} dst=${request.target} listener=${request.listener} connector=${request.connector}`
+  format: json
+#    script: |
+#      `src=${request.source} dst=${request.target} listener=${request.listener} connector=${request.connector}`
