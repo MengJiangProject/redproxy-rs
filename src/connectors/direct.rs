@@ -1,4 +1,5 @@
 use std::{
+    io::ErrorKind,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     os::unix::prelude::AsRawFd,
     sync::Arc,
@@ -26,7 +27,7 @@ pub struct DirectConnector {
     name: String,
     bind: Option<IpAddr>,
     #[serde(default)]
-    dns: DnsConfig,
+    dns: Arc<DnsConfig>,
     fwmark: Option<u32>,
     #[serde(default = "default_keepalive")]
     keepalive: bool,
@@ -44,13 +45,14 @@ pub fn from_value(value: &serde_yaml::Value) -> Result<ConnectorRef, Error> {
 #[async_trait]
 impl super::Connector for DirectConnector {
     async fn init(&mut self) -> Result<(), Error> {
-        self.dns.init()?;
+        let dns = Arc::get_mut(&mut self.dns).unwrap();
+        dns.init()?;
         if let Some(addr) = self.bind {
             debug!("bind address set, overriding dns family");
             if addr.is_ipv4() {
-                self.dns.family = AddressFamily::V4Only;
+                dns.family = AddressFamily::V4Only;
             } else {
-                self.dns.family = AddressFamily::V6Only;
+                dns.family = AddressFamily::V6Only;
             }
         }
         Ok(())
@@ -121,7 +123,7 @@ impl super::Connector for DirectConnector {
                 set_fwmark(&server, self.fwmark)?;
                 ctx.write()
                     .await
-                    .set_server_frames(setup_session(server, remote))
+                    .set_server_frames(setup_session(server, remote, self.dns.clone()))
                     .set_local_addr(local)
                     .set_server_addr(remote);
                 trace!("connected to {:?}", target);
@@ -133,9 +135,13 @@ impl super::Connector for DirectConnector {
 }
 
 use std::io::Result as IoResult;
-fn setup_session(socket: UdpSocket, target: SocketAddr) -> Frames {
+fn setup_session(socket: UdpSocket, target: SocketAddr, dns: Arc<DnsConfig>) -> Frames {
     let socket = Arc::new(socket);
-    let frames = DirectFrames { socket, target };
+    let frames = DirectFrames {
+        socket,
+        target,
+        dns,
+    };
     (Box::new(frames.clone()), Box::new(frames))
 }
 
@@ -143,6 +149,7 @@ fn setup_session(socket: UdpSocket, target: SocketAddr) -> Frames {
 struct DirectFrames {
     socket: Arc<UdpSocket>,
     target: SocketAddr,
+    dns: Arc<DnsConfig>,
 }
 
 #[async_trait]
@@ -163,7 +170,18 @@ impl FrameReader for DirectFrames {
 impl FrameWriter for DirectFrames {
     async fn write(&mut self, frame: Frame) -> IoResult<usize> {
         let target = if self.target.ip().is_unspecified() {
-            frame.addr.as_ref().unwrap().resolve().await?
+            match frame.addr.as_ref() {
+                Some(TargetAddress::SocketAddr(addr)) => *addr,
+                Some(TargetAddress::DomainPort(domain, port)) => self
+                    .dns
+                    .lookup_host(domain.as_str(), *port)
+                    .await
+                    .map_err(|x| {
+                        log::warn!("dns error: {}", x);
+                        std::io::Error::new(ErrorKind::InvalidInput, "dns error")
+                    })?,
+                _ => return Err(std::io::Error::new(ErrorKind::InvalidInput, "bad target")),
+            }
         } else {
             self.target
         };

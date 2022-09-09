@@ -1,6 +1,10 @@
-use std::net::{IpAddr, SocketAddr};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
 
 use easy_error::{err_msg, Error, ResultExt};
+use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use trust_dns_resolver::{
     config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts},
@@ -9,13 +13,14 @@ use trust_dns_resolver::{
     AsyncResolver,
 };
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DnsConfig {
     pub servers: String,
     #[serde(default)]
     pub family: AddressFamily,
     #[serde(skip)]
-    resolver: Option<AsyncResolver<GenericConnection, GenericConnectionProvider<TokioRuntime>>>,
+    resolver:
+        Option<Arc<AsyncResolver<GenericConnection, GenericConnectionProvider<TokioRuntime>>>>,
 }
 
 impl Default for DnsConfig {
@@ -45,7 +50,7 @@ impl Default for AddressFamily {
 impl DnsConfig {
     pub fn init(&mut self) -> Result<(), Error> {
         let config = Self::parse_servers(&self.servers)?;
-        self.resolver = Some(AsyncResolver::tokio(config.0, config.1).unwrap());
+        self.resolver = Some(Arc::new(AsyncResolver::tokio(config.0, config.1).unwrap()));
         Ok(())
     }
 
@@ -84,7 +89,7 @@ impl DnsConfig {
                 .await
                 .context("ipv4_lookup")?
                 .into_iter()
-                .next()
+                .choose(&mut rand::thread_rng())
                 .ok_or_else(|| err_msg(format!("No IPv4 address found for {}", host)))
                 .map(IpAddr::V4)?,
             AddressFamily::V6Only => resolver
@@ -92,23 +97,33 @@ impl DnsConfig {
                 .await
                 .context("ipv6_lookup")?
                 .into_iter()
-                .next()
+                .choose(&mut rand::thread_rng())
                 .ok_or_else(|| err_msg(format!("No IPv6 address found for {}", host)))
                 .map(IpAddr::V6)?,
-            AddressFamily::V4First => resolver
-                .lookup_ip(host)
-                .await
-                .context("lookup_ip")?
-                .into_iter()
-                .reduce(|a, b| if a.is_ipv4() { a } else { b })
-                .ok_or_else(|| err_msg(format!("No address found for {}", host)))?,
-            AddressFamily::V6First => resolver
-                .lookup_ip(host)
-                .await
-                .context("lookup_ip")?
-                .into_iter()
-                .reduce(|a, b| if a.is_ipv6() { a } else { b })
-                .ok_or_else(|| err_msg(format!("No address found for {}", host)))?,
+            AddressFamily::V4First => {
+                let (v4, v6): (Vec<_>, Vec<_>) = resolver
+                    .lookup_ip(host)
+                    .await
+                    .context("lookup_ip")?
+                    .into_iter()
+                    .partition(|a| a.is_ipv4());
+                v4.into_iter()
+                    .choose(&mut rand::thread_rng())
+                    .or_else(|| v6.into_iter().choose(&mut rand::thread_rng()))
+                    .ok_or_else(|| err_msg(format!("No address found for {}", host)))?
+            }
+            AddressFamily::V6First => {
+                let (v4, v6): (Vec<_>, Vec<_>) = resolver
+                    .lookup_ip(host)
+                    .await
+                    .context("lookup_ip")?
+                    .into_iter()
+                    .partition(|a| a.is_ipv4());
+                v6.into_iter()
+                    .choose(&mut rand::thread_rng())
+                    .or_else(|| v4.into_iter().choose(&mut rand::thread_rng()))
+                    .ok_or_else(|| err_msg(format!("No address found for {}", host)))?
+            }
         };
         Ok(SocketAddr::new(addr, port))
     }
