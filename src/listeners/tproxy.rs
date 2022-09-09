@@ -1,20 +1,37 @@
-use std::{os::unix::prelude::AsRawFd, sync::Arc};
-
 use async_trait::async_trait;
+use bytes::BytesMut;
 use easy_error::{Error, ResultExt};
 use log::{debug, error, info, trace};
-use nix::sys::socket::getsockopt;
-use nix::sys::socket::sockopt::{Ip6tOriginalDst, OriginalDst};
-use serde_yaml::Value;
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
-use tokio::net::TcpListener;
-use tokio::sync::mpsc::Sender;
-
-use crate::common::keepalive::set_keepalive;
-use crate::context::ContextRefOps;
-use crate::context::{make_buffered_stream, ContextRef, TargetAddress};
-use crate::GlobalState;
+use nix::{
+    cmsg_space,
+    sys::socket::{
+        bind, getsockopt, recvmsg, setsockopt, socket,
+        sockopt::{
+            Ip6tOriginalDst, IpTransparent, Ipv4OrigDstAddr, Ipv6OrigDstAddr, OriginalDst,
+            ReuseAddr,
+        },
+        AddressFamily, ControlMessageOwned, MsgFlags, SockFlag, SockProtocol, SockType, SockaddrIn,
+        SockaddrIn6, SockaddrLike, SockaddrStorage,
+    },
+};
 use serde::{Deserialize, Serialize};
+use serde_yaml::Value;
+use std::{
+    io::IoSliceMut,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    os::unix::prelude::{AsRawFd, RawFd},
+    sync::Arc,
+};
+use tokio::{io::unix::AsyncFd, net::TcpListener, sync::mpsc::Sender};
+
+use crate::{
+    common::{
+        frames::Frame, keepalive::set_keepalive, set_nonblocking, try_map_v4_addr,
+        udp::setup_udp_session,
+    },
+    context::{make_buffered_stream, ContextRef, ContextRefOps, Feature, TargetAddress},
+    GlobalState,
+};
 
 use super::Listener;
 
@@ -49,19 +66,40 @@ impl Listener for TProxyListener {
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
     ) -> Result<(), Error> {
-        info!("{} listening on {}", self.name, self.bind);
-        let listener = TcpListener::bind(&self.bind).await.context("bind")?;
-        tokio::spawn(async move {
-            loop {
-                self.clone()
-                    .accept(&listener, &state, &queue)
-                    .await
-                    .map_err(|e| {
-                        error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
-                    })
-                    .unwrap_or(());
+        info!(
+            "{} listening on {} protocol: {:?}",
+            self.name, self.bind, self.protocol
+        );
+        match self.protocol {
+            Protocol::Tcp => {
+                let listener = TcpListener::bind(&self.bind).await.context("bind")?;
+                tokio::spawn(async move {
+                    loop {
+                        self.clone()
+                            .tcp_accept(&listener, &state, &queue)
+                            .await
+                            .map_err(|e| {
+                                error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
+                            })
+                            .unwrap_or(());
+                    }
+                });
             }
-        });
+            Protocol::Udp => {
+                let listener = TproxyUdpSocket::bind(self.bind).context("bind")?;
+                tokio::spawn(async move {
+                    loop {
+                        self.clone()
+                            .udp_accept(&listener, &state, &queue)
+                            .await
+                            .map_err(|e| {
+                                error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
+                            })
+                            .unwrap_or(());
+                    }
+                });
+            }
+        }
         Ok(())
     }
 
@@ -71,7 +109,7 @@ impl Listener for TProxyListener {
 }
 
 impl TProxyListener {
-    async fn accept(
+    async fn tcp_accept(
         self: Arc<Self>,
         listener: &TcpListener,
         state: &Arc<GlobalState>,
@@ -106,12 +144,133 @@ impl TProxyListener {
         ctx.enqueue(queue).await?;
         Ok(())
     }
+    async fn udp_accept(
+        self: &Arc<Self>,
+        listener: &TproxyUdpSocket,
+        state: &Arc<GlobalState>,
+        queue: &Sender<ContextRef>,
+    ) -> Result<(), Error> {
+        let mut buf = BytesMut::zeroed(65536);
+        let (size, src, dst) = listener.recv_msg(&mut buf).await.context("accept")?;
+        let src = try_map_v4_addr(src);
+        let dst = try_map_v4_addr(dst);
+        buf.truncate(size);
+        let mut buf = Frame::from_body(buf.freeze());
+        buf.addr = Some(dst.into());
+        debug!("{}: recv from {:?} length: {}", self.name, src, size);
+
+        let ctx = state
+            .contexts
+            .create_context(self.name.to_owned(), src)
+            .await;
+        let frames = setup_udp_session(dst.into(), dst, src, buf, true).context("setup session")?;
+        ctx.write()
+            .await
+            .set_target(dst.into())
+            .set_feature(Feature::UdpForward)
+            .set_idle_timeout(state.timeouts.udp)
+            .set_client_frames(frames);
+        ctx.enqueue(queue).await?;
+        Ok(())
+    }
 }
 
+#[inline]
 fn ntohl(x: u32) -> u32 {
     u32::from_be(x)
 }
 
+#[inline]
 fn ntohs(x: u16) -> u16 {
     u16::from_be(x)
+}
+
+pub struct TproxyUdpSocket {
+    inner: AsyncFd<RawFd>,
+}
+
+impl TproxyUdpSocket {
+    pub fn bind(addr: SocketAddr) -> std::io::Result<Self> {
+        let ss: SockaddrStorage = addr.into();
+
+        let fd = socket(
+            ss.family().unwrap(),
+            SockType::Datagram,
+            SockFlag::empty(),
+            SockProtocol::Udp,
+        )?;
+        set_nonblocking(fd)?;
+        setsockopt(fd, ReuseAddr, &true)?;
+        setsockopt(fd, IpTransparent, &true)?;
+        if addr.is_ipv4() {
+            setsockopt(fd, Ipv4OrigDstAddr, &true)?;
+        } else {
+            setsockopt(fd, Ipv6OrigDstAddr, &true)?;
+        }
+
+        bind(fd, &ss)?;
+
+        Ok(Self {
+            inner: AsyncFd::new(fd)?,
+        })
+    }
+
+    pub async fn recv_msg(
+        &self,
+        out: &mut [u8],
+    ) -> std::io::Result<(usize, SocketAddr, SocketAddr)> {
+        loop {
+            let mut guard = self.inner.readable().await?;
+            let mut iov = [IoSliceMut::new(out)];
+            let mut cmsg_buffer = cmsg_space!(libc::sockaddr);
+            let flags = MsgFlags::empty();
+            match guard.try_io(|inner| {
+                let fd = *inner.get_ref();
+                recvmsg(fd, &mut iov, Some(&mut cmsg_buffer), flags)
+                    .map_err(|errno| std::io::Error::from_raw_os_error(errno as i32))
+            }) {
+                Ok(result) => {
+                    return result.map(|ret| {
+                        let src: SockaddrStorage = ret.address.unwrap();
+                        let src = match src.family() {
+                            Some(AddressFamily::Inet) => {
+                                SocketAddr::V4(src.as_sockaddr_in().cloned().unwrap().into())
+                            }
+                            Some(AddressFamily::Inet6) => {
+                                SocketAddr::V6(src.as_sockaddr_in6().cloned().unwrap().into())
+                            }
+                            _ => panic!("unknown address family"),
+                        };
+                        let dst: SocketAddr = match ret.cmsgs().next() {
+                            Some(ControlMessageOwned::Ipv4OrigDstAddr(addr)) => unsafe {
+                                SocketAddr::V4(
+                                    SockaddrIn::from_raw(
+                                        &addr as *const _ as *const libc::sockaddr,
+                                        None,
+                                    )
+                                    .unwrap()
+                                    .into(),
+                                )
+                            },
+                            Some(ControlMessageOwned::Ipv6OrigDstAddr(addr)) => unsafe {
+                                SocketAddr::V6(
+                                    SockaddrIn6::from_raw(
+                                        &addr as *const _ as *const libc::sockaddr,
+                                        None,
+                                    )
+                                    .unwrap()
+                                    .into(),
+                                )
+                            },
+                            Some(_) => panic!("Unexpected control message"),
+                            None => panic!("No control message"),
+                        };
+
+                        (ret.bytes, src, dst)
+                    })
+                }
+                Err(_would_block) => continue,
+            }
+        }
+    }
 }
