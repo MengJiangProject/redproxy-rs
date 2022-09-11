@@ -62,6 +62,18 @@ impl HttpRequest {
             .context("write error")?;
         socket.flush().await.context("flush")
     }
+    pub fn header<'a, 'b: 'a>(&'a self, name: &str, def: &'b str) -> &'a str {
+        self.headers
+            .iter()
+            .find_map(|x| {
+                if x.0.eq_ignore_ascii_case(name) {
+                    Some(x.1.as_str())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(def)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -126,6 +138,18 @@ impl HttpResponse {
         self.write_to(socket).await?;
         socket.write(body).await.context("write error")?;
         Ok(())
+    }
+    pub fn header<'a, 'b: 'a>(&'a self, name: &str, def: &'b str) -> &'a str {
+        self.headers
+            .iter()
+            .find_map(|x| {
+                if x.0.eq_ignore_ascii_case(name) {
+                    Some(x.1.as_str())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(def)
     }
 }
 
