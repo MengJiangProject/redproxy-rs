@@ -643,7 +643,7 @@ impl Context {
         Arc::make_mut(&mut self.props)
             .state
             .push((state, SystemTime::now()).into());
-        // trace!("set_state: {:?}", self.props.state);
+        trace!("set_state: id={} state={:?}", self.props.id, state);
         self
     }
 
