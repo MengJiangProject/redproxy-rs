@@ -82,8 +82,14 @@ where
 pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
     let mut ctx_lock = ctx.write().await;
     let idle_timeout = ctx_lock.idle_timeout();
-    let (client, server) = ctx_lock.take_streams().unwrap_or_else(null_stream);
-    let frames = ctx_lock.take_frames().unwrap_or_else(null_frames);
+    let (client, server) = ctx_lock.take_streams().unwrap_or_else(|| {
+        log::trace!("ctx={} using null_stream", ctx_lock);
+        null_stream()
+    });
+    let frames = ctx_lock.take_frames().unwrap_or_else(|| {
+        log::trace!("ctx={} using null_frames", ctx_lock);
+        null_frames()
+    });
     let client_stat = ctx_lock.props().client_stat.clone();
     let server_stat = ctx_lock.props().server_stat.clone();
     #[cfg(feature = "metrics")]
