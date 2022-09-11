@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use easy_error::{bail, err_msg, Error, ResultExt};
+use chashmap::CHashMap;
+use easy_error::{err_msg, Error, ResultExt};
 use log::debug;
 use quinn::{congestion, Connection, Endpoint};
 use serde::{Deserialize, Serialize};
@@ -12,14 +13,18 @@ use tokio::sync::Mutex;
 use super::ConnectorRef;
 use crate::{
     common::{
-        frames::frames_from_stream,
-        http::{HttpRequest, HttpResponse},
-        quic::{create_quic_client, QuicStream},
+        h11c::h11c_connect,
+        quic::{
+            create_quic_client, create_quic_frames, quic_frames_thread, QuicFrameSessions,
+            QuicStream,
+        },
         tls::TlsClientConfig,
     },
     context::{make_buffered_stream, ContextRef, Feature},
     GlobalState,
 };
+
+type QuicConn = (Connection, QuicFrameSessions);
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct QuicConnector {
@@ -31,10 +36,12 @@ pub struct QuicConnector {
     bind: String,
     #[serde(default = "default_bbr")]
     bbr: bool,
+    #[serde(default = "default_inline_udp")]
+    inline_udp: bool,
     #[serde(skip)]
     endpoint: Option<Endpoint>,
     #[serde(skip)]
-    connection: Mutex<Option<Arc<Connection>>>,
+    connection: Mutex<Option<QuicConn>>,
 }
 
 fn default_bind_addr() -> String {
@@ -43,6 +50,10 @@ fn default_bind_addr() -> String {
 
 fn default_bbr() -> bool {
     true
+}
+
+fn default_inline_udp() -> bool {
+    false
 }
 
 pub fn from_value(value: &serde_yaml::Value) -> Result<ConnectorRef, Error> {
@@ -79,7 +90,7 @@ impl super::Connector for QuicConnector {
         _state: Arc<GlobalState>,
         ctx: ContextRef,
     ) -> Result<(), Error> {
-        let conn = self.clone().get_connection().await?;
+        let (conn, sessions) = self.get_connection().await?;
         let remote = conn.remote_address();
         let local = self
             .endpoint
@@ -89,12 +100,14 @@ impl super::Connector for QuicConnector {
             .context("local_addr")?;
         let ret = self
             .clone()
-            .handshake(conn, ctx.clone(), remote, local)
+            .handshake(conn, sessions, ctx.clone(), remote, local)
             .await;
         match ret {
             Ok(()) => Ok(()),
             Err(e) => {
-                self.clear_connection().await;
+                if e.ctx.starts_with("quic:") {
+                    self.clear_connection().await;
+                }
                 Err(e)
             }
         }
@@ -104,7 +117,8 @@ impl super::Connector for QuicConnector {
 impl QuicConnector {
     async fn handshake(
         self: Arc<Self>,
-        conn: Arc<Connection>,
+        conn: Connection,
+        sessions: QuicFrameSessions,
         ctx: ContextRef,
         remote: SocketAddr,
         local: SocketAddr,
@@ -112,57 +126,21 @@ impl QuicConnector {
         let server: QuicStream = conn
             .open_bi()
             .await
-            .context("failed to open stream")?
+            .context("quic: failed to open bi-stream")?
             .into();
 
-        let mut server = make_buffered_stream(server);
-        let target = ctx.read().await.target();
-        let feature = ctx.read().await.feature();
-        match feature {
-            Feature::TcpForward => {
-                HttpRequest::new("CONNECT", &target)
-                    .with_header("Host", &target)
-                    .write_to(&mut server)
-                    .await?;
-                let resp = HttpResponse::read_from(&mut server).await?;
-                if resp.code != 200 {
-                    bail!("upstream server failure: {:?}", resp);
-                }
-                ctx.write()
-                    .await
-                    .set_server_stream(server)
-                    .set_local_addr(local)
-                    .set_server_addr(remote);
-            }
-            Feature::UdpForward => {
-                HttpRequest::new("POST", "/udp_channel")
-                    .with_header("Host", &target)
-                    .write_to(&mut server)
-                    .await?;
-                let resp = HttpResponse::read_from(&mut server).await?;
-                log::debug!("response: {:?}", resp);
-                if resp.code != 200 {
-                    bail!("upstream server failure: {:?}", resp);
-                }
-                let session_id = resp
-                    .headers
-                    .iter()
-                    .find(|x| x.0.eq_ignore_ascii_case("Session-Id"))
-                    .and_then(|x| x.1.parse::<u32>().ok())
-                    .unwrap_or(0);
-
-                ctx.write()
-                    .await
-                    .set_server_frames(frames_from_stream(session_id, server))
-                    .set_local_addr(local)
-                    .set_server_addr(remote);
-            }
-            x => bail!("not supported feature {:?}", x),
-        }
+        let server = make_buffered_stream(server);
+        let channel = if self.inline_udp {
+            "inline"
+        } else {
+            "quic-datagrams"
+        };
+        let frames = |id| create_quic_frames(conn, id, sessions);
+        h11c_connect(server, ctx, local, remote, channel, frames).await?;
         Ok(())
     }
 
-    async fn get_connection(self: Arc<Self>) -> Result<Arc<Connection>, Error> {
+    async fn get_connection(self: &Arc<Self>) -> Result<QuicConn, Error> {
         let mut c = self.connection.lock().await;
         if c.is_none() {
             *c = Some(self.create_connection().await?);
@@ -170,13 +148,13 @@ impl QuicConnector {
         Ok(c.clone().unwrap())
     }
 
-    async fn clear_connection(self: Arc<Self>) {
+    async fn clear_connection(&self) {
         let mut c = self.connection.lock().await;
         *c = None;
         debug!("{}: connection cleared", self.name);
     }
 
-    async fn create_connection(&self) -> Result<Arc<Connection>, Error> {
+    async fn create_connection(self: &Arc<Self>) -> Result<QuicConn, Error> {
         let remote = (self.server.clone(), self.port)
             .to_socket_addrs()
             .context("resolve")?
@@ -199,6 +177,12 @@ impl QuicConnector {
             .await
             .context("quic connect")?;
         debug!("{}: new connection to {:?}", self.name, remote);
-        Ok(Arc::new(conn.connection))
+        let sessions = Arc::new(CHashMap::new());
+        tokio::spawn(quic_frames_thread(
+            self.name.to_owned(),
+            sessions.clone(),
+            conn.datagrams,
+        ));
+        Ok((conn.connection, sessions))
     }
 }

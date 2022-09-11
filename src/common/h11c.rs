@@ -1,15 +1,72 @@
 use async_trait::async_trait;
 use easy_error::{bail, Error, ResultExt};
 use log::{debug, warn};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::{
+    net::SocketAddr,
+    sync::atomic::{AtomicU32, Ordering},
+};
 use tokio::sync::mpsc::Sender;
 
 use crate::{
     common::http::{HttpRequest, HttpResponse},
-    context::{Context, ContextCallback, ContextRef, ContextRefOps, Feature},
+    context::{Context, ContextCallback, ContextRef, ContextRefOps, Feature, IOBufStream},
 };
 
 use super::frames::{frames_from_stream, Frames};
+
+pub async fn h11c_connect(
+    mut server: IOBufStream,
+    ctx: ContextRef,
+    local: SocketAddr,
+    remote: SocketAddr,
+    frame_channel: &str,
+    frame_fn: impl FnOnce(u32) -> Frames + Sync,
+) -> Result<(), Error> {
+    let target = ctx.read().await.target();
+    let feature = ctx.read().await.feature();
+    match feature {
+        Feature::TcpForward => {
+            HttpRequest::new("CONNECT", &target)
+                .with_header("Host", &target)
+                .write_to(&mut server)
+                .await?;
+            let resp = HttpResponse::read_from(&mut server).await?;
+            if resp.code != 200 {
+                bail!("upstream server failure: {:?}", resp);
+            }
+            ctx.write()
+                .await
+                .set_server_stream(server)
+                .set_local_addr(local)
+                .set_server_addr(remote);
+        }
+        Feature::UdpForward => {
+            HttpRequest::new("CONNECT", &target)
+                .with_header("Host", &target)
+                .with_header("Proxy-Protocol", "udp")
+                .with_header("Proxy-Channel", frame_channel)
+                .write_to(&mut server)
+                .await?;
+            let resp = HttpResponse::read_from(&mut server).await?;
+            log::debug!("response: {:?}", resp);
+            if resp.code != 200 {
+                bail!("upstream server failure: {:?}", resp);
+            }
+            let session_id = resp.header("Session-Id", "0").parse().unwrap();
+            ctx.write()
+                .await
+                .set_server_frames(if frame_channel.eq_ignore_ascii_case("inline") {
+                    frames_from_stream(session_id, server)
+                } else {
+                    frame_fn(session_id)
+                })
+                .set_local_addr(local)
+                .set_server_addr(remote);
+        }
+        x => bail!("not supported feature {:?}", x),
+    };
+    Ok(())
+}
 
 static SESSION_ID: AtomicU32 = AtomicU32::new(0);
 // HTTP 1.1 CONNECT protocol handlers
@@ -25,42 +82,35 @@ where
     let mut ctx_lock = ctx.write().await;
     let socket = ctx_lock.borrow_client_stream();
     let request = HttpRequest::read_from(socket).await?;
+    log::trace!("request={:?}", request);
     if request.method.eq_ignore_ascii_case("CONNECT") {
-        ctx_lock
-            .set_target(
-                request.resource.parse().with_context(|| {
-                    format!("failed to parse target address: {}", request.resource)
-                })?,
-            )
-            .set_callback(ConnectCallback);
-    } else if request.method.eq_ignore_ascii_case("POST")
-        && request.resource.eq_ignore_ascii_case("/udp_channel")
-    {
-        let session_id = SESSION_ID.fetch_add(1, Ordering::Relaxed);
-        let channel = request
-            .headers
-            .iter()
-            .find(|x| x.0.eq_ignore_ascii_case("Proxy-Channel"))
-            .map_or("inline", |x| x.1.as_str());
-        let host = request
-            .headers
-            .iter()
-            .find(|x| x.0.eq_ignore_ascii_case("Host"))
-            .map_or("0.0.0.0:0", |x| x.1.as_str());
-        ctx_lock
-            .set_target(host.parse().with_context(|| {
-                format!("failed to parse target address: {}", request.resource)
-            })?);
-        let inline = if channel.eq_ignore_ascii_case("inline") {
-            true
-        } else {
+        let protocol = request.header("Proxy-Protocol", "tcp");
+        // let host = request.header("Host", "0.0.0.0:0");
+        let target = request
+            .resource
+            .parse()
+            .with_context(|| format!("failed to parse target address: {}", request.resource))?;
+        if protocol.eq_ignore_ascii_case("tcp") {
+            ctx_lock.set_target(target).set_callback(ConnectCallback);
+        } else if protocol.eq_ignore_ascii_case("udp") {
+            let session_id = SESSION_ID.fetch_add(1, Ordering::Relaxed);
+            let channel = request.header("Proxy-Channel", "inline");
+            let inline = channel.eq_ignore_ascii_case("inline");
             ctx_lock
-                .set_client_frames(create_frames(channel, session_id).context("create frames")?);
-            false
-        };
-        ctx_lock
-            .set_callback(FrameChannelCallback { session_id, inline })
-            .set_feature(Feature::UdpForward);
+                .set_target(target)
+                .set_callback(FrameChannelCallback { session_id, inline })
+                .set_feature(Feature::UdpForward);
+            if !inline {
+                ctx_lock.set_client_frames(
+                    create_frames(channel, session_id).context("create frames")?,
+                );
+            }
+        } else {
+            HttpResponse::new(400, "Bad Request")
+                .write_to(socket)
+                .await?;
+            bail!("Invalid request protocol: {}", protocol);
+        }
     } else {
         HttpResponse::new(400, "Bad Request")
             .write_to(socket)
@@ -99,7 +149,6 @@ impl ContextCallback for ConnectCallback {
     }
 }
 
-#[allow(dead_code)]
 struct FrameChannelCallback {
     session_id: u32,
     inline: bool,

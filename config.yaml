@@ -17,10 +17,14 @@ listeners:
   - name: tproxy
     bind: 0.0.0.0:8080
     protocol: tcp # default
+
+  # udp tproxy listener requires cap_net_admin,
+  # set with command `setcap cap_net_admin+ep redproxy-rs` or run with root user
   - name: tproxy-udp
     type: tproxy
     bind: 0.0.0.0:8080
     protocol: udp
+
   - name: udp-reverse
     type: reverse
     bind: 0.0.0.0:8053
@@ -114,7 +118,7 @@ rules:
   # - filter: request.target.type == "domain"
   #   target: loadbalance
   - filter: request.feature == "UdpForward"
-    target: http
+    target: quic
   - filter: request.source.host == "127.0.0.1"
     target: direct
   # available varibles are request: { source: string, target: {port:int, host:string, type:string }, listener: string }

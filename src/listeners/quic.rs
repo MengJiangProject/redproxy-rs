@@ -3,16 +3,14 @@ use chashmap::CHashMap;
 use easy_error::{Error, ResultExt};
 use futures_util::{StreamExt, TryFutureExt};
 use log::{debug, info, warn};
-use quinn::{congestion, Connection, Datagrams, Endpoint, Incoming, NewConnection};
+use quinn::{congestion, Endpoint, Incoming, NewConnection};
 use serde::{Deserialize, Serialize};
-use std::io::{Error as IoError, ErrorKind, Result as IoResult};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::Sender;
 
-use crate::common::frames::{Frame, FrameReader, FrameWriter, Frames};
 use crate::common::h11c::h11c_handshake;
-use crate::common::quic::{create_quic_server, QuicStream};
+use crate::common::quic::{create_quic_frames, create_quic_server, quic_frames_thread, QuicStream};
 use crate::common::tls::TlsServerConfig;
 use crate::context::{make_buffered_stream, ContextRef};
 use crate::listeners::Listener;
@@ -81,7 +79,7 @@ impl QuicListener {
                     let this = self.clone();
                     let state = state.clone();
                     let queue = queue.clone();
-                    tokio::spawn(this.client_thead(conn, source, state, queue));
+                    tokio::spawn(this.client_thread(conn, source, state, queue));
                 }
                 Err(e) => {
                     warn!("{}, Accept error: {}: cause: {:?}", self.name, e, e.cause);
@@ -90,7 +88,7 @@ impl QuicListener {
         }
         Ok(())
     }
-    async fn client_thead(
+    async fn client_thread(
         self: Arc<Self>,
         conn: NewConnection,
         source: SocketAddr,
@@ -99,7 +97,11 @@ impl QuicListener {
     ) {
         let sessions = Arc::new(CHashMap::new());
         let mut bi_streams = conn.bi_streams;
-        tokio::spawn(self.clone().frames_thread(sessions.clone(), conn.datagrams));
+        tokio::spawn(quic_frames_thread(
+            self.name.to_owned(),
+            sessions.clone(),
+            conn.datagrams,
+        ));
         let conn = conn.connection;
         while let Some(stream) = bi_streams.next().await {
             let stream = match stream {
@@ -126,89 +128,12 @@ impl QuicListener {
             let sessions = sessions.clone();
             tokio::spawn(
                 h11c_handshake(ctx, queue.clone(), |_ch, id| {
-                    Ok(create_frames(conn, id, sessions))
+                    Ok(create_quic_frames(conn, id, sessions))
                 })
                 .unwrap_or_else(move |e| {
                     warn!("{}: h11c handshake error: {}: {:?}", this.name, e, e.cause)
                 }),
             );
         }
-    }
-    async fn frames_thread(
-        self: Arc<Self>,
-        sessions: Arc<CHashMap<u32, Sender<Frame>>>,
-        mut input: Datagrams,
-    ) {
-        while let Some(frame) = input.next().await {
-            let mut buf = match frame {
-                Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                    info!("{}: QUIC connection closed", self.name);
-                    break;
-                }
-                Err(e) => {
-                    warn!("{}: QUIC connection error: {}", self.name, e);
-                    break;
-                }
-                Ok(s) => s,
-            };
-            let frame = Frame::from_buffer(&mut buf).unwrap().unwrap();
-            let sid = frame.session_id;
-            if let Some(session) = sessions.get(&sid) {
-                if let Err(e) = session.send(frame).await {
-                    warn!("frame recv error: {:?}", e.to_string())
-                }
-            }
-        }
-    }
-}
-fn create_frames(conn: Connection, id: u32, sessions: Arc<CHashMap<u32, Sender<Frame>>>) -> Frames {
-    let (tx, rx) = channel(10);
-    sessions.insert(id, tx);
-    (QuicFrameReader::new(rx), QuicFrameWriter::new(conn, id))
-}
-
-struct QuicFrameReader {
-    rx: Receiver<Frame>,
-}
-
-impl QuicFrameReader {
-    fn new(rx: Receiver<Frame>) -> Box<Self> {
-        Box::new(Self { rx })
-    }
-}
-
-#[async_trait]
-impl FrameReader for QuicFrameReader {
-    async fn read(&mut self) -> IoResult<Option<Frame>> {
-        Ok(self.rx.recv().await)
-    }
-}
-
-struct QuicFrameWriter {
-    conn: Connection,
-    session_id: u32,
-}
-
-impl QuicFrameWriter {
-    fn new(conn: Connection, session_id: u32) -> Box<Self> {
-        Box::new(Self { conn, session_id })
-    }
-}
-
-#[async_trait]
-impl FrameWriter for QuicFrameWriter {
-    async fn write(&mut self, mut frame: Frame) -> IoResult<usize> {
-        frame.session_id = self.session_id;
-        let mut buf = frame.make_header();
-        buf.extend(frame.body());
-        // let len = buf.len();
-        self.conn
-            .send_datagram(buf.freeze())
-            .map_err(|e| IoError::new(ErrorKind::Other, e))?;
-        //Ok(len)
-        todo!("this wont work, need to implement fragmention here");
-    }
-    async fn shutdown(&mut self) -> IoResult<()> {
-        Ok(())
     }
 }

@@ -1,19 +1,14 @@
 use std::{convert::TryFrom, sync::Arc};
 
 use async_trait::async_trait;
-use easy_error::{bail, err_msg, Error, ResultExt};
+use easy_error::{err_msg, Error, ResultExt};
 use log::trace;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_rustls::rustls::ServerName;
 
 use crate::{
-    common::{
-        frames::frames_from_stream,
-        http::{HttpRequest, HttpResponse},
-        keepalive::set_keepalive,
-        tls::TlsClientConfig,
-    },
+    common::{h11c::h11c_connect, keepalive::set_keepalive, tls::TlsClientConfig},
     context::{make_buffered_stream, ContextRef, Feature},
     GlobalState,
 };
@@ -70,7 +65,7 @@ impl super::Connector for HttpConnector {
         let remote = server.peer_addr().context("peer_addr")?;
         set_keepalive(&server)?;
 
-        let mut server = if let Some(connector) = tls_connector {
+        let server = if let Some(connector) = tls_connector {
             let domain = ServerName::try_from(self.server.as_str())
                 .or_else(|e| {
                     if tls_insecure {
@@ -90,49 +85,10 @@ impl super::Connector for HttpConnector {
             make_buffered_stream(server)
         };
 
-        let target = ctx.read().await.target();
-        let feature = ctx.read().await.feature();
-        match feature {
-            Feature::TcpForward => {
-                HttpRequest::new("CONNECT", &target)
-                    .with_header("Host", &target)
-                    .write_to(&mut server)
-                    .await?;
-                let resp = HttpResponse::read_from(&mut server).await?;
-                if resp.code != 200 {
-                    bail!("upstream server failure: {:?}", resp);
-                }
-                ctx.write()
-                    .await
-                    .set_server_stream(server)
-                    .set_local_addr(local)
-                    .set_server_addr(remote);
-            }
-            Feature::UdpForward => {
-                HttpRequest::new("POST", "/udp_channel")
-                    .with_header("Host", &target)
-                    .write_to(&mut server)
-                    .await?;
-                let resp = HttpResponse::read_from(&mut server).await?;
-                log::debug!("response: {:?}", resp);
-                if resp.code != 200 {
-                    bail!("upstream server failure: {:?}", resp);
-                }
-                let session_id = resp
-                    .headers
-                    .iter()
-                    .find(|x| x.0.eq_ignore_ascii_case("Session-Id"))
-                    .and_then(|x| x.1.parse::<u32>().ok())
-                    .unwrap_or(0);
-
-                ctx.write()
-                    .await
-                    .set_server_frames(frames_from_stream(session_id, server))
-                    .set_local_addr(local)
-                    .set_server_addr(remote);
-            }
-            x => bail!("not supported feature {:?}", x),
-        }
+        h11c_connect(server, ctx, local, remote, "inline", |_| {
+            panic!("not supported")
+        })
+        .await?;
         Ok(())
     }
 }
