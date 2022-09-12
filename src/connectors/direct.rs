@@ -1,7 +1,6 @@
 use std::{
     io::ErrorKind,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    os::unix::prelude::AsRawFd,
     sync::Arc,
 };
 
@@ -194,20 +193,19 @@ impl FrameWriter for DirectFrames {
     }
 }
 
-fn set_fwmark<T: AsRawFd>(sk: &T, mark: Option<u32>) -> Result<(), Error> {
-    #[cfg(target_os = "linux")]
-    {
-        use nix::sys::socket::setsockopt;
-        use nix::sys::socket::sockopt::Mark;
-        if mark.is_none() {
-            return Ok(());
-        }
-        let mark = mark.unwrap();
-        setsockopt(sk.as_raw_fd(), Mark, &mark).context("setsockopt")
+#[cfg(target_os = "linux")]
+fn set_fwmark<T: std::os::unix::prelude::AsRawFd>(sk: &T, mark: Option<u32>) -> Result<(), Error> {
+    use nix::sys::socket::setsockopt;
+    use nix::sys::socket::sockopt::Mark;
+    if mark.is_none() {
+        return Ok(());
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        log::warn!("fwmark not supported on this platform");
-        Ok(())
-    }
+    let mark = mark.unwrap();
+    setsockopt(sk.as_raw_fd(), Mark, &mark).context("setsockopt")
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_fwmark<T>(_sk: &T, _mark: Option<u32>) -> Result<(), Error> {
+    log::warn!("fwmark not supported on this platform");
+    Ok(())
 }
