@@ -9,7 +9,8 @@ use winapi::{
     ctypes::c_int,
     um::winsock2::{
         bind as win_bind, closesocket, connect as win_connect, ioctlsocket, setsockopt, socket,
-        FIONBIO, INVALID_SOCKET, SOCKET, SOCKET_ERROR, SOL_SOCKET, SO_REUSEADDR,
+        FIONBIO, INVALID_SOCKET, PF_INET, PF_INET6, SOCKET, SOCKET_ERROR, SOL_SOCKET, SO_KEEPALIVE,
+        SO_REUSEADDR,
     },
 };
 
@@ -24,9 +25,7 @@ macro_rules! syscall {
     }};
 }
 
-pub fn new_ip_socket(addr: SocketAddr, socket_type: c_int) -> IoResult<SOCKET> {
-    use winapi::um::winsock2::{PF_INET, PF_INET6};
-
+pub fn socket(addr: SocketAddr, socket_type: c_int) -> IoResult<SOCKET> {
     let domain = match addr {
         SocketAddr::V4(..) => PF_INET,
         SocketAddr::V6(..) => PF_INET6,
@@ -37,18 +36,31 @@ pub fn new_ip_socket(addr: SocketAddr, socket_type: c_int) -> IoResult<SOCKET> {
         PartialEq::eq,
         INVALID_SOCKET
     )
-    .and_then(|socket| {
-        syscall!(ioctlsocket(socket, FIONBIO, &mut 1), PartialEq::ne, 0).map(|_| socket as SOCKET)
-    })
+    .map(|_| socket as SOCKET)
 }
 
-pub fn set_reuse_addr(fd: SOCKET, reuse: bool) -> IoResult<()> {
+pub fn set_reuse_addr(fd: SOCKET, val: bool) -> IoResult<()> {
     syscall!(
         setsockopt(
             fd,
             SOL_SOCKET,
             SO_REUSEADDR,
-            &reuse as *const _ as _,
+            &val as *const _ as _,
+            std::mem::size_of::<bool>() as _,
+        ),
+        PartialEq::eq,
+        SOCKET_ERROR
+    )
+    .map(|_| ())
+}
+
+pub fn set_keepalive(fd: SOCKET, val: bool) -> IoResult<()> {
+    syscall!(
+        setsockopt(
+            fd,
+            SOL_SOCKET,
+            SO_KEEPALIVE,
+            &val as *const _ as _,
             std::mem::size_of::<bool>() as _,
         ),
         PartialEq::eq,

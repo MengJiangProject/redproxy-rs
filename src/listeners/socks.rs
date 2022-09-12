@@ -12,7 +12,7 @@ use tokio::{
 use crate::{
     common::{
         auth::AuthData,
-        keepalive::set_keepalive,
+        set_keepalive,
         socks::{PasswordAuth, SocksRequest, SocksResponse},
         tls::TlsServerConfig,
     },
@@ -157,7 +157,7 @@ impl ContextCallback for Callback {
             cmd,
             target,
         };
-        if let Some(e) = resp.write_to(socket).await.err() {
+        if let Some(e) = resp.write_to(socket.unwrap()).await.err() {
             warn!("failed to send response: {}", e)
         }
     }
@@ -166,12 +166,15 @@ impl ContextCallback for Callback {
         let cmd = 1;
         let target = ctx.target();
         let socket = ctx.borrow_client_stream();
+        if socket.is_none() {
+            return;
+        }
         let resp = SocksResponse {
             version,
             cmd,
             target,
         };
-        if let Some(e) = resp.write_to(socket).await.err() {
+        if let Some(e) = resp.write_to(socket.unwrap()).await.err() {
             warn!("failed to send response: {}", e)
         }
     }

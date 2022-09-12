@@ -68,7 +68,7 @@ impl super::Connector for QuicConnector {
     }
 
     fn features(&self) -> &[Feature] {
-        &[Feature::TcpForward, Feature::UdpForward]
+        &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
     }
 
     async fn init(&mut self) -> Result<(), Error> {

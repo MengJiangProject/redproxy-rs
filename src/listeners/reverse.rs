@@ -10,8 +10,8 @@ use tokio::sync::mpsc::Sender;
 
 use super::Listener;
 use crate::common::frames::Frame;
-use crate::common::keepalive::set_keepalive;
-use crate::common::udp::setup_udp_session;
+use crate::common::set_keepalive;
+use crate::common::udp::{setup_udp_session, udp_socket};
 use crate::context::ContextRefOps;
 use crate::context::{make_buffered_stream, ContextRef, Feature, TargetAddress};
 use crate::GlobalState;
@@ -64,8 +64,7 @@ impl Listener for ReverseProxyListener {
                 });
             }
             Protocol::Udp => {
-                let socket = UdpSocket::bind(&self.bind).await.context("bind")?;
-                set_reuse_addr(&socket, true)?;
+                let socket = udp_socket(self.bind, None, false).context("bind")?;
                 let listener = Arc::new(socket);
                 tokio::spawn(async move {
                     loop {
@@ -125,7 +124,7 @@ impl ReverseProxyListener {
             .contexts
             .create_context(self.name.to_owned(), source)
             .await;
-        let frames = setup_udp_session(self.target.clone(), self.bind, source, buf, false)
+        let frames = setup_udp_session(self.target.clone(), self.bind, source, Some(buf), false)
             .context("setup session")?;
         ctx.write()
             .await
@@ -136,19 +135,4 @@ impl ReverseProxyListener {
         ctx.enqueue(queue).await?;
         Ok(())
     }
-}
-
-#[cfg(unix)]
-fn set_reuse_addr(socket: &UdpSocket, reuse: bool) -> Result<(), Error> {
-    use nix::sys::socket::setsockopt;
-    use nix::sys::socket::sockopt::ReuseAddr;
-    use std::os::unix::prelude::AsRawFd;
-    setsockopt(socket.as_raw_fd(), ReuseAddr, &reuse).context("set_reuse_addr")
-}
-
-#[cfg(windows)]
-fn set_reuse_addr(sk: &UdpSocket, reuse: bool) -> Result<(), Error> {
-    use crate::common::windows;
-    use std::os::windows::prelude::*;
-    windows::set_reuse_addr(sk.as_raw_socket() as _, reuse).context("set_reuse_addr")
 }

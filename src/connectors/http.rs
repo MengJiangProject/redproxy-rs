@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use tokio_rustls::rustls::ServerName;
 
 use crate::{
-    common::{h11c::h11c_connect, keepalive::set_keepalive, tls::TlsClientConfig},
+    common::{h11c::h11c_connect, set_keepalive, tls::TlsClientConfig},
     context::{make_buffered_stream, ContextRef, Feature},
     GlobalState,
 };
@@ -42,7 +42,7 @@ impl super::Connector for HttpConnector {
     }
 
     fn features(&self) -> &[Feature] {
-        &[Feature::TcpForward, Feature::UdpForward]
+        &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
     }
 
     async fn connect(

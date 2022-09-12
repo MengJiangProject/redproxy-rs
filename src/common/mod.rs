@@ -1,26 +1,17 @@
 use std::net::{SocketAddr, SocketAddrV4};
 
-pub mod h11c;
-pub mod http;
-
-#[cfg(not(target_os = "windows"))]
-#[path = "keepalive-unix.rs"]
-pub mod keepalive;
-
-#[cfg(target_os = "windows")]
-#[path = "keepalive-windows.rs"]
-pub mod keepalive;
-
-#[cfg(feature = "quic")]
-pub mod quic;
-
 pub mod auth;
 pub mod dns;
 pub mod fragment;
 pub mod frames;
+pub mod h11c;
+pub mod http;
 pub mod socks;
 pub mod tls;
 pub mod udp;
+
+#[cfg(feature = "quic")]
+pub mod quic;
 
 #[cfg(windows)]
 pub mod windows;
@@ -38,11 +29,17 @@ pub fn try_map_v4_addr(addr: SocketAddr) -> SocketAddr {
     }
 }
 
-#[cfg(unix)]
-pub fn set_nonblocking(fd: i32) -> std::io::Result<()> {
-    use nix::fcntl::{fcntl, FcntlArg, OFlag};
-    let mut flags = fcntl(fd, FcntlArg::F_GETFD)?;
-    flags |= libc::O_NONBLOCK;
-    fcntl(fd, FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags)))?;
-    Ok(())
+#[cfg(not(windows))]
+pub fn set_keepalive(stream: &tokio::net::TcpStream) -> Result<(), easy_error::Error> {
+    use easy_error::ResultExt;
+    use nix::sys::socket::{setsockopt, sockopt::KeepAlive};
+    use std::os::unix::prelude::AsRawFd;
+    setsockopt(stream.as_raw_fd(), KeepAlive, &true).context("setsockopt")
+}
+
+#[cfg(windows)]
+pub fn set_keepalive(stream: &tokio::net::TcpStream) -> Result<(), easy_error::Error> {
+    use easy_error::ResultExt;
+    use std::os::windows::prelude::AsRawSocket;
+    windows::set_keepalive(stream.as_raw_socket(), true).context("setsockopt")
 }

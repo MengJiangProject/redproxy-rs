@@ -40,13 +40,22 @@ pub async fn h11c_connect(
                 .set_local_addr(local)
                 .set_server_addr(remote);
         }
-        Feature::UdpForward => {
-            HttpRequest::new("CONNECT", &target)
+        Feature::UdpForward | Feature::UdpBind => {
+            let mut request = HttpRequest::new("CONNECT", &target)
                 .with_header("Host", &target)
                 .with_header("Proxy-Protocol", "udp")
-                .with_header("Proxy-Channel", frame_channel)
-                .write_to(&mut server)
-                .await?;
+                .with_header("Proxy-Channel", frame_channel);
+            if feature == Feature::UdpBind {
+                let bind_src = ctx
+                    .read()
+                    .await
+                    .extra("udp-bind-source")
+                    .unwrap()
+                    .to_owned();
+                request = request.with_header("Udp-Bind-Source", bind_src);
+            }
+
+            request.write_to(&mut server).await?;
             let resp = HttpResponse::read_from(&mut server).await?;
             log::debug!("response: {:?}", resp);
             if resp.code != 200 {
@@ -80,7 +89,7 @@ where
     FrameFn: FnOnce(&str, u32) -> Result<FrameIO, Error> + Sync,
 {
     let mut ctx_lock = ctx.write().await;
-    let socket = ctx_lock.borrow_client_stream();
+    let socket = ctx_lock.borrow_client_stream().unwrap();
     let request = HttpRequest::read_from(socket).await?;
     log::trace!("request={:?}", request);
     if request.method.eq_ignore_ascii_case("CONNECT") {
@@ -96,9 +105,11 @@ where
             let session_id = SESSION_ID.fetch_add(1, Ordering::Relaxed);
             let channel = request.header("Proxy-Channel", "inline");
             let inline = channel.eq_ignore_ascii_case("inline");
+            let source = request.header("Udp-Bind-Source", "");
             ctx_lock
                 .set_target(target)
                 .set_callback(FrameChannelCallback { session_id, inline })
+                .set_extra("udp-bind-source", source)
                 .set_feature(Feature::UdpForward);
             if !inline {
                 ctx_lock.set_client_frames(
@@ -127,7 +138,7 @@ struct ConnectCallback;
 #[async_trait]
 impl ContextCallback for ConnectCallback {
     async fn on_connect(&self, ctx: &mut Context) {
-        let socket = ctx.borrow_client_stream();
+        let socket = ctx.borrow_client_stream().unwrap();
         if let Err(e) = HttpResponse::new(200, "Connection established")
             .write_to(socket)
             .await
@@ -137,11 +148,14 @@ impl ContextCallback for ConnectCallback {
     }
     async fn on_error(&self, ctx: &mut Context, error: Error) {
         let socket = ctx.borrow_client_stream();
+        if socket.is_none() {
+            return;
+        }
         let buf = format!("Error: {} Cause: {:?}", error, error.cause);
         if let Err(e) = HttpResponse::new(503, "Service unavailable")
             .with_header("Content-Type", "text/plain")
             .with_header("Content-Length", buf.as_bytes().len())
-            .write_with_body(socket, buf.as_bytes())
+            .write_with_body(socket.unwrap(), buf.as_bytes())
             .await
         {
             warn!("failed to send response: {}", e)
@@ -156,10 +170,14 @@ struct FrameChannelCallback {
 #[async_trait]
 impl ContextCallback for FrameChannelCallback {
     async fn on_connect(&self, ctx: &mut Context) {
-        log::trace!("on_connect callback: id={}", self.session_id);
+        log::trace!("on_connect callback: id={} ctx={}", self.session_id, ctx);
         let mut stream = ctx.take_client_stream();
         if let Err(e) = HttpResponse::new(200, "Connection established")
             .with_header("Session-Id", self.session_id.to_string())
+            .with_header(
+                "Udp-Bind-Address",
+                ctx.extra("udp-bind-address").unwrap_or(""),
+            )
             .write_to(&mut stream)
             .await
         {
@@ -172,11 +190,14 @@ impl ContextCallback for FrameChannelCallback {
     }
     async fn on_error(&self, ctx: &mut Context, error: Error) {
         let socket = ctx.borrow_client_stream();
+        if socket.is_none() {
+            return;
+        }
         let buf = format!("Error: {} Cause: {:?}", error, error.cause);
         if let Err(e) = HttpResponse::new(503, "Service unavailable")
             .with_header("Content-Type", "text/plain")
             .with_header("Content-Length", buf.as_bytes().len())
-            .write_with_body(socket, buf.as_bytes())
+            .write_with_body(socket.unwrap(), buf.as_bytes())
             .await
         {
             warn!("failed to send response: {}", e)
