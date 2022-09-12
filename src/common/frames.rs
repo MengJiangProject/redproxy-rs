@@ -161,7 +161,7 @@ impl Fragmentable for Frame {
     }
 }
 
-pub type Frames = (Box<dyn FrameReader>, Box<dyn FrameWriter>);
+pub type FrameIO = (Box<dyn FrameReader>, Box<dyn FrameWriter>);
 
 #[async_trait]
 pub trait FrameReader: Send + Sync {
@@ -174,7 +174,7 @@ pub trait FrameWriter: Send + Sync {
     async fn shutdown(&mut self) -> IoResult<()>;
 }
 
-pub fn frames_from_stream<T>(session_id: u32, stream: T) -> Frames
+pub fn frames_from_stream<T>(session_id: u32, stream: T) -> FrameIO
 where
     T: AsyncRead + AsyncWrite + Sync + Send + 'static,
 {

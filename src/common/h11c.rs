@@ -12,7 +12,7 @@ use crate::{
     context::{Context, ContextCallback, ContextRef, ContextRefOps, Feature, IOBufStream},
 };
 
-use super::frames::{frames_from_stream, Frames};
+use super::frames::{frames_from_stream, FrameIO};
 
 pub async fn h11c_connect(
     mut server: IOBufStream,
@@ -20,7 +20,7 @@ pub async fn h11c_connect(
     local: SocketAddr,
     remote: SocketAddr,
     frame_channel: &str,
-    frame_fn: impl FnOnce(u32) -> Frames + Sync,
+    frame_fn: impl FnOnce(u32) -> FrameIO + Sync,
 ) -> Result<(), Error> {
     let target = ctx.read().await.target();
     let feature = ctx.read().await.feature();
@@ -77,7 +77,7 @@ pub async fn h11c_handshake<FrameFn>(
     create_frames: FrameFn,
 ) -> Result<(), Error>
 where
-    FrameFn: FnOnce(&str, u32) -> Result<Frames, Error> + Sync,
+    FrameFn: FnOnce(&str, u32) -> Result<FrameIO, Error> + Sync,
 {
     let mut ctx_lock = ctx.write().await;
     let socket = ctx_lock.borrow_client_stream();

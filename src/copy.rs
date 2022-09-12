@@ -1,5 +1,5 @@
 use crate::{
-    common::frames::{Frame, FrameReader, FrameWriter, Frames},
+    common::frames::{Frame, FrameIO, FrameReader, FrameWriter},
     context::{make_buffered_stream, ContextRef, ContextState, ContextStatistics, IOBufStream},
 };
 use async_trait::async_trait;
@@ -144,7 +144,7 @@ pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
 }
 
 use std::io::Result as IoResult;
-fn null_frames() -> (Frames, Frames) {
+fn null_frames() -> (FrameIO, FrameIO) {
     (
         (Box::new(NullFrames), Box::new(NullFrames)),
         (Box::new(NullFrames), Box::new(NullFrames)),

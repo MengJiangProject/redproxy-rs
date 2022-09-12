@@ -8,7 +8,7 @@ use std::os::unix::prelude::FromRawFd;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 
-use super::frames::{Frame, FrameReader, FrameWriter, Frames};
+use super::frames::{Frame, FrameIO, FrameReader, FrameWriter};
 use super::set_nonblocking;
 use crate::context::TargetAddress;
 
@@ -18,7 +18,7 @@ pub fn setup_udp_session(
     remote: SocketAddr,
     first_frame: Frame,
     transparent: bool,
-) -> IoResult<Frames> {
+) -> IoResult<FrameIO> {
     log::trace!("setup_udp_session local: {:?} remote: {:?}", local, remote);
     let local: SockaddrStorage = local.into();
     let remote: SockaddrStorage = remote.into();
