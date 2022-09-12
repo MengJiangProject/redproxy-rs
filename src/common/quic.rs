@@ -17,7 +17,7 @@ use tokio_rustls::rustls;
 
 use super::{
     fragment::Fragments,
-    frames::{Frame, FrameReader, FrameWriter, Frames},
+    frames::{Frame, FrameIO, FrameReader, FrameWriter},
     tls::{TlsClientConfig, TlsServerConfig},
 };
 
@@ -125,7 +125,7 @@ pub fn create_quic_frames(
     conn: Connection,
     id: u32,
     sessions: Arc<CHashMap<u32, Sender<Frame>>>,
-) -> Frames {
+) -> FrameIO {
     let (tx, rx) = channel(10);
     sessions.insert(id, tx);
     (QuicFrameReader::new(rx), QuicFrameWriter::new(conn, id))

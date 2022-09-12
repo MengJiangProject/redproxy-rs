@@ -15,7 +15,7 @@ use super::ConnectorRef;
 use crate::{
     common::{
         dns::{AddressFamily, DnsConfig},
-        frames::{Frame, FrameReader, FrameWriter, Frames},
+        frames::{Frame, FrameIO, FrameReader, FrameWriter},
         keepalive::set_keepalive,
     },
     context::{make_buffered_stream, ContextRef, Feature, TargetAddress},
@@ -135,7 +135,7 @@ impl super::Connector for DirectConnector {
 }
 
 use std::io::Result as IoResult;
-fn setup_session(socket: UdpSocket, target: SocketAddr, dns: Arc<DnsConfig>) -> Frames {
+fn setup_session(socket: UdpSocket, target: SocketAddr, dns: Arc<DnsConfig>) -> FrameIO {
     let socket = Arc::new(socket);
     let frames = DirectFrames {
         socket,

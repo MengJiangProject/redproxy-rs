@@ -1,4 +1,4 @@
-use crate::{access_log::AccessLog, common::frames::Frames};
+use crate::{access_log::AccessLog, common::frames::FrameIO};
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
 use log::trace;
@@ -487,8 +487,8 @@ pub struct Context {
     props: Arc<ContextProps>,
     client_stream: Option<IOBufStream>,
     server_stream: Option<IOBufStream>,
-    client_frames: Option<Frames>,
-    server_frames: Option<Frames>,
+    client_frames: Option<FrameIO>,
+    server_frames: Option<FrameIO>,
     callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
     state: Arc<GlobalState>,
 }
@@ -550,17 +550,17 @@ impl Context {
         ))
     }
 
-    pub fn set_client_frames(&mut self, frames: Frames) -> &mut Self {
+    pub fn set_client_frames(&mut self, frames: FrameIO) -> &mut Self {
         self.client_frames = Some(frames);
         self
     }
 
-    pub fn set_server_frames(&mut self, frames: Frames) -> &mut Self {
+    pub fn set_server_frames(&mut self, frames: FrameIO) -> &mut Self {
         self.server_frames = Some(frames);
         self
     }
 
-    pub fn take_frames(&mut self) -> Option<(Frames, Frames)> {
+    pub fn take_frames(&mut self) -> Option<(FrameIO, FrameIO)> {
         if self.client_frames.is_none() || self.server_frames.is_none() {
             return None;
         }
