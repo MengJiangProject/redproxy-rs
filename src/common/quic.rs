@@ -1,10 +1,14 @@
-use std::{pin::Pin, sync::Arc};
-
 use async_trait::async_trait;
 use chashmap::CHashMap;
 use easy_error::{Error, ResultExt};
 use futures::StreamExt;
 use quinn::{ClientConfig, Connection, Datagrams, RecvStream, SendStream, ServerConfig};
+use std::{
+    io::{Error as IoError, ErrorKind, Result as IoResult},
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::mpsc::{channel, Receiver, Sender},
@@ -12,6 +16,7 @@ use tokio::{
 use tokio_rustls::rustls;
 
 use super::{
+    fragment::Fragments,
     frames::{Frame, FrameReader, FrameWriter, Frames},
     tls::{TlsClientConfig, TlsServerConfig},
 };
@@ -136,8 +141,6 @@ impl QuicFrameReader {
     }
 }
 
-use std::io::Result as IoResult;
-
 #[async_trait]
 impl FrameReader for QuicFrameReader {
     async fn read(&mut self) -> IoResult<Option<Frame>> {
@@ -150,11 +153,16 @@ impl FrameReader for QuicFrameReader {
 struct QuicFrameWriter {
     conn: Connection,
     session_id: u32,
+    frame_id: u16,
 }
 
 impl QuicFrameWriter {
     fn new(conn: Connection, session_id: u32) -> Box<Self> {
-        Box::new(Self { conn, session_id })
+        Box::new(Self {
+            conn,
+            session_id,
+            frame_id: 0,
+        })
     }
 }
 
@@ -162,20 +170,27 @@ impl QuicFrameWriter {
 impl FrameWriter for QuicFrameWriter {
     async fn write(&mut self, mut frame: Frame) -> IoResult<usize> {
         frame.session_id = self.session_id;
-        let mut buf = frame.make_header();
-        buf.extend(frame.body());
-        let len = buf.len();
-        let max_len = self.conn.max_datagram_size().unwrap_or_default();
-        if len > max_len {
-            log::warn!("frame too large: {} > {}, dropping.", len, max_len);
-            return Ok(len);
+        log::trace!(
+            "quic send_datagram: sid={} len={}",
+            frame.session_id,
+            frame.len()
+        );
+        let mtu = self.conn.max_datagram_size();
+        if mtu.is_none() {
+            return Err(IoError::new(
+                ErrorKind::Unsupported,
+                "Datagram not allowed for this connection",
+            ));
         }
-        log::trace!("quic send_datagram: {:?}", frame);
-        if let Err(e) = self.conn.send_datagram(buf.freeze()) {
-            log::warn!("quic send_datagram error: {}", e);
+        let fragments = Fragments::make_fragments(mtu.unwrap(), &mut self.frame_id, frame);
+        let mut len = 0;
+        for fragment in fragments {
+            len += fragment.len();
+            self.conn
+                .send_datagram(fragment)
+                .map_err(|e| IoError::new(ErrorKind::Other, e.to_string()))?;
         }
         Ok(len)
-        // todo!("this wont work, need to implement fragmention here");
     }
     async fn shutdown(&mut self) -> IoResult<()> {
         Ok(())
@@ -184,32 +199,35 @@ impl FrameWriter for QuicFrameWriter {
 
 pub type QuicFrameSessions = Arc<CHashMap<u32, Sender<Frame>>>;
 pub async fn quic_frames_thread(name: String, sessions: QuicFrameSessions, mut input: Datagrams) {
-    while let Some(frame) = input.next().await {
-        let mut buf = match frame {
-            Err(e) => {
-                log::warn!("{}: QUIC connection error: {}", name, e);
-                break;
-            }
-            Ok(s) => s,
-        };
-        let frame = Frame::from_buffer(&mut buf);
-        if frame.is_err() {
-            continue;
-        }
-        let frame = frame.unwrap();
-        if frame.is_none() {
-            continue;
-        }
-        let frame = frame.unwrap();
-        let sid = frame.session_id;
-        log::trace!("quic recv_datagram: {:?}", frame);
-        if let Some(session) = sessions.get(&sid) {
-            if session.is_closed() || session.send(frame).await.is_err() {
-                drop(session);
-                sessions.remove(&sid);
-            } else {
-                log::trace!("quic recv error: sid={}", sid);
-            }
+    let mut f: Fragments<Frame> = Fragments::new(Duration::from_secs(5));
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        let next = input.next();
+        tokio::select! {
+            _ = interval.tick() => {
+                f.timer()
+            },
+            Some(frame) = next => {
+                if let Err(e) = frame {
+                    log::warn!("{}: QUIC connection error: {}", name, e);
+                    break;
+                }
+                let frame = f.reassemble(frame.unwrap());
+                if frame.is_none() {
+                    continue;
+                }
+                let frame = frame.unwrap();
+                let sid = frame.session_id;
+                if let Some(session) = sessions.get(&sid) {
+                    if session.is_closed() || session.send(frame).await.is_err() {
+                        drop(session);
+                        sessions.remove(&sid);
+                    } else {
+                        log::trace!("quic recv error: sid={}", sid);
+                    }
+                }
+            },
+            else => break,
         }
     }
 }
