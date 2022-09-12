@@ -85,7 +85,7 @@ impl super::Connector for HttpConnector {
             make_buffered_stream(server)
         };
 
-        h11c_connect(server, ctx, local, remote, "inline", |_| {
+        h11c_connect(server, ctx, local, remote, "inline", |_| async {
             panic!("not supported")
         })
         .await?;

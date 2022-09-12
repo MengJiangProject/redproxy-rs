@@ -5,7 +5,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use chashmap::CHashMap;
+use chashmap_async::CHashMap;
 use easy_error::{bail, Error, ResultExt};
 use log::{debug, trace};
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,7 @@ use crate::{
     GlobalState,
 };
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct DirectConnector {
     name: String,
     bind: Option<IpAddr>,
@@ -130,6 +130,7 @@ impl super::Connector for DirectConnector {
                 } else {
                     self.udp_binds
                         .get(&source)
+                        .await
                         .map(|x| x.to_owned())
                         .unwrap_or_else(|| SocketAddr::new(local, 0))
                 };
@@ -145,7 +146,7 @@ impl super::Connector for DirectConnector {
                     .set_extra("udp-bind-address", local.to_string());
 
                 if !source.is_empty() {
-                    self.udp_binds.insert(source, local);
+                    self.udp_binds.insert(source, local).await;
                 }
                 trace!("connected to {:?}", target);
             }
