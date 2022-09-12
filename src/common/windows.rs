@@ -8,8 +8,8 @@ use winapi::shared::ws2ipdef::{SOCKADDR_IN6_LH_u, SOCKADDR_IN6_LH};
 use winapi::{
     ctypes::c_int,
     um::winsock2::{
-        bind as win_bind, closesocket, connect as win_connect, ioctlsocket, setsockopt, socket,
-        FIONBIO, INVALID_SOCKET, PF_INET, PF_INET6, SOCKET, SOCKET_ERROR, SOL_SOCKET, SO_KEEPALIVE,
+        bind as win_bind, closesocket, connect as win_connect, setsockopt, socket as win_socket,
+        INVALID_SOCKET, PF_INET, PF_INET6, SOCKET, SOCKET_ERROR, SOL_SOCKET, SO_KEEPALIVE,
         SO_REUSEADDR,
     },
 };
@@ -32,11 +32,11 @@ pub fn socket(addr: SocketAddr, socket_type: c_int) -> IoResult<SOCKET> {
     };
 
     syscall!(
-        socket(domain, socket_type, 0),
+        win_socket(domain, socket_type, 0),
         PartialEq::eq,
         INVALID_SOCKET
     )
-    .map(|_| socket as SOCKET)
+    .map(|x| x as SOCKET)
 }
 
 pub fn set_reuse_addr(fd: SOCKET, val: bool) -> IoResult<()> {
