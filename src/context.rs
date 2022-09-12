@@ -328,12 +328,13 @@ impl Display for ContextProps {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "id={} l={} c={} s={} t={}",
+            "id={} l={} c={} s={} t={} f={}",
             self.id,
             self.listener,
             self.connector.as_deref().unwrap_or("<null>"),
             self.source,
-            self.target
+            self.target,
+            self.request_feature,
         )
     }
 }
@@ -532,8 +533,8 @@ impl Context {
         self
     }
 
-    pub fn borrow_client_stream(&mut self) -> &mut IOBufStream {
-        self.client_stream.as_mut().unwrap()
+    pub fn borrow_client_stream(&mut self) -> Option<&mut IOBufStream> {
+        self.client_stream.as_mut()
     }
 
     pub fn take_client_stream(&mut self) -> IOBufStream {
@@ -620,6 +621,10 @@ impl Context {
             .extra
             .insert(key.to_string(), val.to_string());
         self
+    }
+
+    pub fn extra(&self, key: &str) -> Option<&str> {
+        self.props.extra.get(key).map(|v| v.as_str())
     }
 
     // Get state of the context.

@@ -9,7 +9,7 @@ use tokio_rustls::rustls::ServerName;
 
 use crate::{
     common::{
-        keepalive::set_keepalive,
+        set_keepalive,
         socks::{PasswordAuth, SocksRequest, SocksResponse},
         tls::TlsClientConfig,
     },

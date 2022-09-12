@@ -23,7 +23,11 @@ impl HttpRequest {
         }
     }
     pub fn with_header<T1: ToString, T2: ToString>(mut self, k: T1, v: T2) -> Self {
-        self.headers.push((k.to_string(), v.to_string()));
+        let k = k.to_string();
+        let v = v.to_string();
+        if !v.is_empty() {
+            self.headers.push((k, v));
+        }
         self
     }
     pub async fn read_from(socket: Reader<'_>) -> Result<Self, Error> {
@@ -95,7 +99,11 @@ impl HttpResponse {
     }
     #[allow(dead_code)]
     pub fn with_header<T1: ToString, T2: ToString>(mut self, k: T1, v: T2) -> Self {
-        self.headers.push((k.to_string(), v.to_string()));
+        let k = k.to_string();
+        let v = v.to_string();
+        if !v.is_empty() {
+            self.headers.push((k, v));
+        }
         self
     }
     pub async fn read_from(socket: Reader<'_>) -> Result<Self, Error> {

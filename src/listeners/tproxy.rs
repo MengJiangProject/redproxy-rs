@@ -25,10 +25,7 @@ use std::{
 use tokio::{io::unix::AsyncFd, net::TcpListener, sync::mpsc::Sender};
 
 use crate::{
-    common::{
-        frames::Frame, keepalive::set_keepalive, set_nonblocking, try_map_v4_addr,
-        udp::setup_udp_session,
-    },
+    common::{frames::Frame, set_keepalive, try_map_v4_addr, udp::setup_udp_session},
     context::{make_buffered_stream, ContextRef, ContextRefOps, Feature, TargetAddress},
     GlobalState,
 };
@@ -163,12 +160,14 @@ impl TProxyListener {
             .contexts
             .create_context(self.name.to_owned(), src)
             .await;
-        let frames = setup_udp_session(dst.into(), dst, src, buf, true).context("setup session")?;
+        let frames =
+            setup_udp_session(dst.into(), dst, src, Some(buf), true).context("setup session")?;
         ctx.write()
             .await
             .set_target(dst.into())
-            .set_feature(Feature::UdpForward)
+            .set_feature(Feature::UdpBind)
             .set_idle_timeout(state.timeouts.udp)
+            .set_extra("udp-bind-source", src)
             .set_client_frames(frames);
         ctx.enqueue(queue).await?;
         Ok(())
@@ -273,4 +272,12 @@ impl TproxyUdpSocket {
             }
         }
     }
+}
+
+pub fn set_nonblocking(fd: i32) -> std::io::Result<()> {
+    use nix::fcntl::{fcntl, FcntlArg, OFlag};
+    let mut flags = fcntl(fd, FcntlArg::F_GETFD)?;
+    flags |= libc::O_NONBLOCK;
+    fcntl(fd, FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags)))?;
+    Ok(())
 }

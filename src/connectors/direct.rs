@@ -5,6 +5,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use chashmap::CHashMap;
 use easy_error::{bail, Error, ResultExt};
 use log::{debug, trace};
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,8 @@ use crate::{
     common::{
         dns::{AddressFamily, DnsConfig},
         frames::{Frame, FrameIO, FrameReader, FrameWriter},
-        keepalive::set_keepalive,
+        set_keepalive,
+        udp::udp_socket,
     },
     context::{make_buffered_stream, ContextRef, Feature, TargetAddress},
     GlobalState,
@@ -30,6 +32,8 @@ pub struct DirectConnector {
     fwmark: Option<u32>,
     #[serde(default = "default_keepalive")]
     keepalive: bool,
+    #[serde(skip)]
+    udp_binds: Arc<CHashMap<String, SocketAddr>>,
 }
 
 fn default_keepalive() -> bool {
@@ -62,7 +66,7 @@ impl super::Connector for DirectConnector {
     }
 
     fn features(&self) -> &[Feature] {
-        &[Feature::TcpForward, Feature::UdpForward]
+        &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
     }
 
     async fn connect(
@@ -107,7 +111,7 @@ impl super::Connector for DirectConnector {
                     .set_server_addr(remote);
                 trace!("connected to {:?}", target);
             }
-            Feature::UdpForward => {
+            Feature::UdpForward | Feature::UdpBind => {
                 let local = if let Some(bind) = self.bind {
                     bind
                 } else if remote.is_ipv4() {
@@ -115,16 +119,34 @@ impl super::Connector for DirectConnector {
                 } else {
                     IpAddr::V6(Ipv6Addr::UNSPECIFIED)
                 };
-                let local = SocketAddr::new(local, 0);
-                let server = UdpSocket::bind(local).await.context("bind")?;
-                // server.connect(remote).await.context("connect")?;
+                let source = ctx
+                    .read()
+                    .await
+                    .extra("udp-bind-source")
+                    .unwrap_or("")
+                    .to_owned();
+                let local = if source.is_empty() {
+                    SocketAddr::new(local, 0)
+                } else {
+                    self.udp_binds
+                        .get(&source)
+                        .map(|x| x.to_owned())
+                        .unwrap_or_else(|| SocketAddr::new(local, 0))
+                };
+
+                let server = udp_socket(local, Some(remote), false).context("setup socket")?;
                 let local = server.local_addr().context("local_addr")?;
                 set_fwmark(&server, self.fwmark)?;
                 ctx.write()
                     .await
                     .set_server_frames(setup_session(server, remote, self.dns.clone()))
                     .set_local_addr(local)
-                    .set_server_addr(remote);
+                    .set_server_addr(remote)
+                    .set_extra("udp-bind-address", local.to_string());
+
+                if !source.is_empty() {
+                    self.udp_binds.insert(source, local);
+                }
                 trace!("connected to {:?}", target);
             }
             x => bail!("not supported feature {:?}", x),
@@ -156,11 +178,8 @@ impl FrameReader for DirectFrames {
     async fn read(&mut self) -> IoResult<Option<Frame>> {
         loop {
             let mut frame = Frame::new();
-            let (_, source) = frame.recv_from(&self.socket).await?;
+            frame.recv_from(&self.socket).await?;
             log::trace!("read udp frame: {:?}", frame);
-            if self.target.ip().is_unspecified() || self.target == source {
-                return Ok(Some(frame));
-            }
         }
     }
 }
@@ -194,7 +213,10 @@ impl FrameWriter for DirectFrames {
 }
 
 #[cfg(target_os = "linux")]
-fn set_fwmark<T: std::os::unix::prelude::AsRawFd>(sk: &T, mark: Option<u32>) -> Result<(), Error> {
+pub fn set_fwmark<T: std::os::unix::prelude::AsRawFd>(
+    sk: &T,
+    mark: Option<u32>,
+) -> Result<(), Error> {
     use nix::sys::socket::setsockopt;
     use nix::sys::socket::sockopt::Mark;
     if mark.is_none() {
@@ -205,7 +227,7 @@ fn set_fwmark<T: std::os::unix::prelude::AsRawFd>(sk: &T, mark: Option<u32>) -> 
 }
 
 #[cfg(not(target_os = "linux"))]
-fn set_fwmark<T>(_sk: &T, _mark: Option<u32>) -> Result<(), Error> {
+pub fn set_fwmark<T>(_sk: &T, _mark: Option<u32>) -> Result<(), Error> {
     log::warn!("fwmark not supported on this platform");
     Ok(())
 }
