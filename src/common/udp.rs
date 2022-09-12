@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use nix::sys::socket::sockopt::{IpTransparent, ReuseAddr};
+use nix::sys::socket::sockopt::ReuseAddr;
 use nix::sys::socket::{bind, connect, setsockopt, socket, SockaddrLike, SockaddrStorage};
 use nix::sys::socket::{SockFlag, SockProtocol, SockType};
 use std::io::Result as IoResult;
@@ -12,6 +12,7 @@ use super::frames::{Frame, FrameIO, FrameReader, FrameWriter};
 use super::set_nonblocking;
 use crate::context::TargetAddress;
 
+#[cfg(unix)]
 pub fn setup_udp_session(
     target: TargetAddress,
     local: SocketAddr,
@@ -25,13 +26,17 @@ pub fn setup_udp_session(
     let fd = socket(
         local.family().unwrap(),
         SockType::Datagram,
-        SockFlag::SOCK_CLOEXEC,
+        SockFlag::empty(),
         SockProtocol::Udp,
     )?;
     set_nonblocking(fd)?;
     setsockopt(fd, ReuseAddr, &true)?;
-    if transparent {
-        setsockopt(fd, IpTransparent, &true)?;
+    #[cfg(any(target_os = "android", target_os = "linux"))]
+    {
+        use nix::sys::socket::sockopt::IpTransparent;
+        if transparent {
+            setsockopt(fd, IpTransparent, &true)?;
+        }
     }
     bind(fd, &local)?;
     connect(fd, &remote)?;
