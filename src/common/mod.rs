@@ -41,5 +41,5 @@ pub fn set_keepalive(stream: &tokio::net::TcpStream) -> Result<(), easy_error::E
 pub fn set_keepalive(stream: &tokio::net::TcpStream) -> Result<(), easy_error::Error> {
     use easy_error::ResultExt;
     use std::os::windows::prelude::AsRawSocket;
-    windows::set_keepalive(stream.as_raw_socket(), true).context("setsockopt")
+    windows::set_keepalive(stream.as_raw_socket() as _, true).context("setsockopt")
 }
