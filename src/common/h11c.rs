@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use easy_error::{bail, Error, ResultExt};
+use futures::Future;
 use log::{debug, warn};
 use std::{
     net::SocketAddr,
@@ -14,14 +15,18 @@ use crate::{
 
 use super::frames::{frames_from_stream, FrameIO};
 
-pub async fn h11c_connect(
+pub async fn h11c_connect<T1, T2>(
     mut server: IOBufStream,
     ctx: ContextRef,
     local: SocketAddr,
     remote: SocketAddr,
     frame_channel: &str,
-    frame_fn: impl FnOnce(u32) -> FrameIO + Sync,
-) -> Result<(), Error> {
+    frame_fn: T1,
+) -> Result<(), Error>
+where
+    T1: FnOnce(u32) -> T2 + Sync,
+    T2: Future<Output = FrameIO>,
+{
     let target = ctx.read().await.target();
     let feature = ctx.read().await.feature();
     match feature {
@@ -67,7 +72,7 @@ pub async fn h11c_connect(
                 .set_server_frames(if frame_channel.eq_ignore_ascii_case("inline") {
                     frames_from_stream(session_id, server)
                 } else {
-                    frame_fn(session_id)
+                    frame_fn(session_id).await
                 })
                 .set_local_addr(local)
                 .set_server_addr(remote);
@@ -80,13 +85,14 @@ pub async fn h11c_connect(
 static SESSION_ID: AtomicU32 = AtomicU32::new(0);
 // HTTP 1.1 CONNECT protocol handlers
 // used by http and quic listeners and connectors
-pub async fn h11c_handshake<FrameFn>(
+pub async fn h11c_handshake<FrameFn, T2>(
     ctx: ContextRef,
     queue: Sender<ContextRef>,
     create_frames: FrameFn,
 ) -> Result<(), Error>
 where
-    FrameFn: FnOnce(&str, u32) -> Result<FrameIO, Error> + Sync,
+    FrameFn: FnOnce(&str, u32) -> T2 + Sync,
+    T2: Future<Output = Result<FrameIO, Error>>,
 {
     let mut ctx_lock = ctx.write().await;
     let socket = ctx_lock.borrow_client_stream().unwrap();
@@ -113,7 +119,9 @@ where
                 .set_feature(Feature::UdpForward);
             if !inline {
                 ctx_lock.set_client_frames(
-                    create_frames(channel, session_id).context("create frames")?,
+                    create_frames(channel, session_id)
+                        .await
+                        .context("create frames")?,
                 );
             }
         } else {

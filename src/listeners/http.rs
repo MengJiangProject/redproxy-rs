@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{err_msg, Error, ResultExt};
+use easy_error::{bail, Error, ResultExt};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -67,7 +67,7 @@ impl HttpListener {
                     tokio::spawn(async move {
                         let res = match this.create_context(state, source, socket).await {
                             Ok(ctx) => {
-                                h11c_handshake(ctx, queue, |_, _| Err(err_msg("not supported")))
+                                h11c_handshake(ctx, queue, |_, _| async { bail!("not supported") })
                                     .await
                             }
                             Err(e) => Err(e),

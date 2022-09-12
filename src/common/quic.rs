@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chashmap::CHashMap;
+use chashmap_async::CHashMap;
 use easy_error::{Error, ResultExt};
 use futures::StreamExt;
 use quinn::{ClientConfig, Connection, Datagrams, RecvStream, SendStream, ServerConfig};
@@ -121,13 +121,13 @@ impl AsyncWrite for QuicStream {
     }
 }
 
-pub fn create_quic_frames(
+pub async fn create_quic_frames(
     conn: Connection,
     id: u32,
     sessions: Arc<CHashMap<u32, Sender<Frame>>>,
 ) -> FrameIO {
     let (tx, rx) = channel(10);
-    sessions.insert(id, tx);
+    sessions.insert(id, tx).await;
     (QuicFrameReader::new(rx), QuicFrameWriter::new(conn, id))
 }
 
@@ -218,10 +218,10 @@ pub async fn quic_frames_thread(name: String, sessions: QuicFrameSessions, mut i
                 }
                 let frame = frame.unwrap();
                 let sid = frame.session_id;
-                if let Some(session) = sessions.get(&sid) {
+                if let Some(session) = sessions.get(&sid).await {
                     if session.is_closed() || session.send(frame).await.is_err() {
                         drop(session);
-                        sessions.remove(&sid);
+                        sessions.remove(&sid).await;
                     } else {
                         log::trace!("quic recv error: sid={}", sid);
                     }

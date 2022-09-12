@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chashmap::CHashMap;
+use chashmap_async::CHashMap;
 use easy_error::{Error, ResultExt};
 use futures_util::{StreamExt, TryFutureExt};
 use log::{debug, info, warn};
@@ -127,8 +127,8 @@ impl QuicListener {
             let conn = conn.clone();
             let sessions = sessions.clone();
             tokio::spawn(
-                h11c_handshake(ctx, queue.clone(), |_ch, id| {
-                    Ok(create_quic_frames(conn, id, sessions))
+                h11c_handshake(ctx, queue.clone(), |_ch, id| async move {
+                    Ok(create_quic_frames(conn, id, sessions).await)
                 })
                 .unwrap_or_else(move |e| {
                     warn!("{}: h11c handshake error: {}: {:?}", this.name, e, e.cause)

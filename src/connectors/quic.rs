@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chashmap::CHashMap;
+use chashmap_async::CHashMap;
 use easy_error::{err_msg, Error, ResultExt};
 use log::debug;
 use quinn::{congestion, Connection, Endpoint};
@@ -26,7 +26,7 @@ use crate::{
 
 type QuicConn = (Connection, QuicFrameSessions);
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct QuicConnector {
     name: String,
     server: String,
