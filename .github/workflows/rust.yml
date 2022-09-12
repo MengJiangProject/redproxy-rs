@@ -139,7 +139,6 @@ jobs:
           args: --workspace --all-features
 
   build-corss:
-    if: ${{ github.event_name == 'release' }}
     needs: [build, test, fmt, clippy, check]
     name: ${{ matrix.job.os }} (${{ matrix.job.target }})
     runs-on: ${{ matrix.job.os }}
