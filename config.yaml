@@ -109,6 +109,7 @@ connectors:
   - name: quic
     server: 192.168.100.1
     port: 7081
+    inline_udp: false # inline udp connection means to use reliable streams instead of unreliable datagrams for udp forwarding, default: false
     tls:
       insecure: true
 
