@@ -1,11 +1,14 @@
 use crate::context::TargetAddress;
 use async_trait::async_trait;
+use bytes::buf::Chain;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::boxed::Box;
 use std::io::{Error as IoError, ErrorKind, Result as IoResult};
 use std::net::SocketAddr;
 use tokio::io::{split, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::UdpSocket;
+
+use super::fragment::Fragmentable;
 
 const MAGIC: u32 = 0x5250464d; // &[u8] = b"RPFM";
 const ATYP_IPV4: u8 = 1u8;
@@ -57,52 +60,41 @@ impl Frame {
 
     /*
         Serialized buffer format:
-        MAGIC: [u8;4] = b"UDPF";
+        MAGIC: [u8;4] = b"RPFM";
         SESSID: u32
         ATTR_LEN: u16
         BODY_LEN: u16
         ATTR: [T: u8, L:u8, V: [u8]]
         BODY: [u8]
     */
-    // Try to read from buffer, return None if frame in buffer is incomplete,
-    pub fn from_buffer_mut(buf: &mut BytesMut) -> IoResult<Option<Self>> {
-        if buf.len() < 12 {
+    // Try to read frame header,
+    // return expected buffer length or None if buffer is too short for headers,
+    pub fn read_head(mut buf: impl Buf) -> IoResult<Option<usize>> {
+        if buf.remaining() < 12 {
             return Ok(None);
         }
-        let mut head = &buf[0..12];
-        let magic = head.get_u32();
+        let magic = buf.get_u32();
         if magic != MAGIC {
             return Err(IoError::new(
                 ErrorKind::Other,
                 format!("Invalid magic: {:?}", magic),
             ));
         }
-        let session_id = head.get_u32();
-        let attr_len = head.get_u16() as usize;
-        let body_len = head.get_u16() as usize;
-        if buf.len() < 12 + attr_len + body_len {
-            return Ok(None);
-        }
-        buf.advance(12);
-        let attr = buf.split_to(attr_len).freeze();
-        let body = buf.split_to(body_len).freeze();
-        let mut frame = Self::from_body(body);
-        if let Err(e) = frame.parse_attr(attr) {
-            return Err(e);
-        }
-        frame.session_id = session_id;
-        Ok(Some(frame))
+        let _session_id = buf.get_u32();
+        let attr_len = buf.get_u16() as usize;
+        let body_len = buf.get_u16() as usize;
+        Ok(Some(12 + attr_len + body_len))
     }
-
-    pub fn from_buffer(buf: &mut Bytes) -> IoResult<Option<Self>> {
+    // Read frame from buffer
+    pub fn from_buffer(mut buf: Bytes) -> IoResult<Self> {
         if buf.len() < 12 {
-            return Ok(None);
+            return Err(IoError::new(ErrorKind::InvalidData, "Buffer too short"));
         }
         let mut head = &buf[0..12];
         let magic = head.get_u32();
         if magic != MAGIC {
             return Err(IoError::new(
-                ErrorKind::Other,
+                ErrorKind::InvalidData,
                 format!("Invalid magic: {:?}", magic),
             ));
         }
@@ -110,7 +102,14 @@ impl Frame {
         let attr_len = head.get_u16() as usize;
         let body_len = head.get_u16() as usize;
         if buf.len() < 12 + attr_len + body_len {
-            return Ok(None);
+            return Err(IoError::new(
+                ErrorKind::InvalidData,
+                format!(
+                    "Truncated frame: expecting {:?} bytes , got {:?}",
+                    12 + attr_len + body_len,
+                    buf.len()
+                ),
+            ));
         }
         buf.advance(12);
         let attr = buf.split_to(attr_len);
@@ -120,7 +119,7 @@ impl Frame {
             return Err(e);
         }
         frame.session_id = session_id;
-        Ok(Some(frame))
+        Ok(frame)
     }
 
     pub fn make_header(&self) -> BytesMut {
@@ -147,6 +146,18 @@ impl Frame {
         output.write_all(&self.body).await?;
         output.flush().await?;
         Ok(head.len() + self.body.len())
+    }
+}
+
+impl Fragmentable for Frame {
+    type Buffer = Chain<BytesMut, Bytes>;
+    fn as_buffer(&self) -> Self::Buffer {
+        let head = self.make_header();
+        head.chain(self.body.clone())
+    }
+
+    fn from_buffer(buf: Bytes) -> Option<Self> {
+        Frame::from_buffer(buf).ok()
     }
 }
 
@@ -195,9 +206,13 @@ where
     async fn read(&mut self) -> IoResult<Option<Frame>> {
         loop {
             if let Some(buf) = self.remaining.as_mut() {
-                if let Some(ret) = Frame::from_buffer_mut(buf)? {
+                if let Some(ret) = Frame::read_head(&buf[..])? {
                     log::trace!("read frame from stream: {:?}", ret);
-                    return Ok(Some(ret));
+                    if buf.len() >= ret {
+                        let buf = buf.split_to(ret).freeze();
+                        let ret = Frame::from_buffer(buf).unwrap();
+                        return Ok(Some(ret));
+                    }
                 }
             } else {
                 self.remaining = Some(BytesMut::with_capacity(65536 * 2));
@@ -324,14 +339,20 @@ fn encode_address(buf: &mut BytesMut, addr: Option<&TargetAddress>) {
 mod tests {
     use super::*;
     #[test]
+    fn test_read_head() {
+        let raw = b"RPFM\x00\x00\x00\x01\x00\x08\x00\x02\x01\x06\x01\x02\x03\x04\x00\x01abcdef";
+        let data = Bytes::from(&raw[..]);
+        let len = Frame::read_head(data).unwrap().unwrap();
+        assert_eq!(len, 22);
+    }
+    #[test]
     fn test_buffers() {
         let raw = b"RPFM\x00\x00\x00\x01\x00\x08\x00\x02\x01\x06\x01\x02\x03\x04\x00\x01abcdef";
-        let mut data = BytesMut::from(&raw[..]);
-        let pkt = Frame::from_buffer_mut(&mut data).unwrap().unwrap();
+        let data = Bytes::from(&raw[..]);
+        let pkt = Frame::from_buffer(data).unwrap();
         assert_eq!(pkt.body(), &Bytes::from_static(b"ab"));
         assert_eq!(pkt.session_id, 1);
         assert_eq!(pkt.addr, Some("1.2.3.4:1".parse().unwrap()));
-        assert_eq!(data, Bytes::from_static(b"cdef"));
         let header = pkt.make_header();
         assert_eq!(header, raw[0..20]);
     }

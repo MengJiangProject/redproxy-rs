@@ -18,6 +18,7 @@ pub mod quic;
 
 pub mod auth;
 pub mod dns;
+pub mod fragment;
 pub mod frames;
 pub mod socks;
 pub mod tls;
