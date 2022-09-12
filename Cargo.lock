@@ -1220,6 +1220,7 @@ dependencies = [
  "tower-http",
  "trust-dns-resolver",
  "webpki-roots",
+ "winapi",
  "yaml-rust",
 ]
 

@@ -1,12 +1,9 @@
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
 use log::{debug, error, info};
-use nix::sys::socket::setsockopt;
-use nix::sys::socket::sockopt::ReuseAddr;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::net::SocketAddr;
-use std::os::unix::prelude::AsRawFd;
 use std::sync::Arc;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc::Sender;
@@ -68,8 +65,7 @@ impl Listener for ReverseProxyListener {
             }
             Protocol::Udp => {
                 let socket = UdpSocket::bind(&self.bind).await.context("bind")?;
-                setsockopt(socket.as_raw_fd(), ReuseAddr, &true)
-                    .context("setsockopt(ReuseAddr)")?;
+                set_reuse_addr(&socket, true).context("setsockopt(ReuseAddr)")?;
                 let listener = Arc::new(socket);
                 tokio::spawn(async move {
                     loop {
@@ -140,4 +136,21 @@ impl ReverseProxyListener {
         ctx.enqueue(queue).await?;
         Ok(())
     }
+}
+
+use std::io::Result as IoResult;
+
+#[cfg(unix)]
+fn set_reuse_addr(socket: UdpSocket, reuse: bool) -> IoResult<()> {
+    use nix::sys::socket::setsockopt;
+    use nix::sys::socket::sockopt::ReuseAddr;
+    use std::os::unix::prelude::AsRawFd;
+    setsockopt(socket.as_raw_fd(), ReuseAddr, &true)
+}
+
+#[cfg(windows)]
+fn set_reuse_addr(sk: &UdpSocket, reuse: bool) -> IoResult<()> {
+    use crate::common::windows;
+    use std::os::windows::prelude::*;
+    windows::set_reuse_addr(sk.as_raw_socket() as _, reuse)
 }

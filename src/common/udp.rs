@@ -1,15 +1,10 @@
 use async_trait::async_trait;
-use nix::sys::socket::sockopt::ReuseAddr;
-use nix::sys::socket::{bind, connect, setsockopt, socket, SockaddrLike, SockaddrStorage};
-use nix::sys::socket::{SockFlag, SockProtocol, SockType};
 use std::io::Result as IoResult;
 use std::net::SocketAddr;
-use std::os::unix::prelude::FromRawFd;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 
 use super::frames::{Frame, FrameIO, FrameReader, FrameWriter};
-use super::set_nonblocking;
 use crate::context::TargetAddress;
 
 #[cfg(unix)]
@@ -20,6 +15,12 @@ pub fn setup_udp_session(
     first_frame: Frame,
     transparent: bool,
 ) -> IoResult<FrameIO> {
+    use super::set_nonblocking;
+    use nix::sys::socket::sockopt::ReuseAddr;
+    use nix::sys::socket::{bind, connect, setsockopt, socket, SockaddrLike, SockaddrStorage};
+    use nix::sys::socket::{SockFlag, SockProtocol, SockType};
+    use std::os::unix::prelude::FromRawFd;
+
     log::trace!("setup_udp_session local: {:?} remote: {:?}", local, remote);
     let local: SockaddrStorage = local.into();
     let remote: SockaddrStorage = remote.into();
@@ -42,6 +43,35 @@ pub fn setup_udp_session(
     connect(fd, &remote)?;
 
     let socket = unsafe { std::net::UdpSocket::from_raw_fd(fd) };
+    let socket = UdpSocket::from_std(socket)?;
+    let socket = Arc::new(socket);
+    Ok((
+        UdpFrameReader::new(target, socket.clone(), first_frame),
+        UdpFrameWriter::new(socket),
+    ))
+}
+
+#[cfg(windows)]
+pub fn setup_udp_session(
+    target: TargetAddress,
+    local: SocketAddr,
+    remote: SocketAddr,
+    first_frame: Frame,
+    _transparent: bool,
+) -> IoResult<FrameIO> {
+    use std::os::windows::prelude::FromRawSocket;
+
+    use winapi::um::winsock2::SOCK_DGRAM;
+
+    use crate::common::windows::{bind, connect, new_ip_socket, set_reuse_addr};
+
+    log::trace!("setup_udp_session local: {:?} remote: {:?}", local, remote);
+    let fd = new_ip_socket(local, SOCK_DGRAM)?;
+    set_reuse_addr(fd, true)?;
+    bind(fd, local)?;
+    connect(fd, remote)?;
+
+    let socket = unsafe { std::net::UdpSocket::from_raw_socket(fd as _) };
     let socket = UdpSocket::from_std(socket)?;
     let socket = Arc::new(socket);
     Ok((
