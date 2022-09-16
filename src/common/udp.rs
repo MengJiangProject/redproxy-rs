@@ -22,7 +22,8 @@ pub fn udp_socket(
 
         log::trace!("udp_socket local: {:?} remote: {:?}", local, remote);
         let local: SockaddrStorage = local.into();
-        let remote: Option<SockaddrStorage> = remote.map(Into::into);
+        let remote: Option<SockaddrStorage> =
+            remote.filter(|x| !x.ip().is_unspecified()).map(Into::into);
         let fd = socket(
             local.family().unwrap(),
             SockType::Datagram,
@@ -41,8 +42,10 @@ pub fn udp_socket(
                 log::warn!("ip transparent not implemented")
             }
         }
+        log::trace!("bind({})", local);
         bind(fd, &local)?;
         if let Some(remote) = remote {
+            log::trace!("connect({})", remote);
             connect(fd, &remote)?;
         }
 

@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use bytes::BytesMut;
-use easy_error::{Error, ResultExt};
+use chashmap_async::CHashMap;
+use easy_error::{err_msg, Error, ResultExt};
 use log::{debug, error, info, trace};
+use lru::LruCache;
 use nix::{
     cmsg_space,
     sys::socket::{
@@ -18,26 +20,46 @@ use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::{
     io::IoSliceMut,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6},
+    num::NonZeroUsize,
     os::unix::prelude::{AsRawFd, RawFd},
     sync::Arc,
 };
-use tokio::{io::unix::AsyncFd, net::TcpListener, sync::mpsc::Sender};
+use std::{io::Result as IoResult, net::SocketAddrV4};
+use tokio::{
+    io::unix::AsyncFd,
+    net::{TcpListener, UdpSocket},
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Mutex,
+    },
+};
 
 use crate::{
-    common::{frames::Frame, set_keepalive, try_map_v4_addr, udp::setup_udp_session},
-    context::{make_buffered_stream, ContextRef, ContextRefOps, Feature, TargetAddress},
+    common::{
+        frames::{Frame, FrameReader, FrameWriter},
+        set_keepalive, try_map_v4_addr,
+        udp::udp_socket,
+    },
+    context::{
+        make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps, Feature,
+        TargetAddress,
+    },
     GlobalState,
 };
 
 use super::Listener;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct TProxyListener {
     name: String,
     bind: SocketAddr,
     #[serde(default = "default_protocol")]
     protocol: Protocol,
+    #[serde(default = "default_max_udp_socket")]
+    max_udp_socket: usize,
+    #[serde(skip)]
+    inner: Option<Arc<Internals>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -47,8 +69,17 @@ pub enum Protocol {
     Udp,
 }
 
+struct Internals {
+    sessions: CHashMap<SocketAddr, Session>,
+    sockets: Mutex<LruCache<SocketAddr, UdpSocket>>,
+}
+
 fn default_protocol() -> Protocol {
     Protocol::Tcp
+}
+
+fn default_max_udp_socket() -> usize {
+    128
 }
 
 pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
@@ -58,6 +89,19 @@ pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
 
 #[async_trait]
 impl Listener for TProxyListener {
+    async fn init(&mut self) -> Result<(), Error> {
+        self.inner = Some(
+            Internals {
+                sessions: Default::default(),
+                sockets: Mutex::new(LruCache::new(
+                    NonZeroUsize::new(self.max_udp_socket)
+                        .ok_or_else(|| err_msg("max_udp_socket must greater than zero"))?,
+                )),
+            }
+            .into(),
+        );
+        Ok(())
+    }
     async fn listen(
         self: Arc<Self>,
         state: Arc<GlobalState>,
@@ -154,22 +198,40 @@ impl TProxyListener {
         buf.truncate(size);
         let mut buf = Frame::from_body(buf.freeze());
         buf.addr = Some(dst.into());
-        debug!("{}: recv from {:?} length: {}", self.name, src, size);
 
-        let ctx = state
-            .contexts
-            .create_context(self.name.to_owned(), src)
-            .await;
-        let frames =
-            setup_udp_session(dst.into(), dst, src, Some(buf), true).context("setup session")?;
-        ctx.write()
-            .await
-            .set_target(dst.into())
-            .set_feature(Feature::UdpBind)
-            .set_idle_timeout(state.timeouts.udp)
-            .set_extra("udp-bind-source", src)
-            .set_client_frames(frames);
-        ctx.enqueue(queue).await?;
+        trace!("{}: recv from {:?} length: {}", self.name, src, size);
+        let inner = self.inner.as_ref().unwrap();
+        if !inner.sessions.contains_key(&src).await {
+            let (tx, rx) = channel(100);
+            let r = TproxyReader::new(rx);
+            let w = TproxyWriter::new(src, inner.clone());
+            inner.sessions.insert(src, Session::new(src, tx)).await;
+            let target = if dst.is_ipv4() {
+                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
+            } else {
+                SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0))
+            }
+            .into();
+            let ctx = state
+                .contexts
+                .create_context(self.name.to_owned(), src)
+                .await;
+            ctx.write()
+                .await
+                .set_target(target)
+                .set_feature(Feature::UdpBind)
+                .set_idle_timeout(state.timeouts.udp)
+                .set_callback(TproxyCallback::new(src, inner.clone()))
+                .set_extra("udp-bind-source", src)
+                .set_client_frames((r, w));
+            ctx.enqueue(queue).await?;
+        }
+        if let Some(mut session) = inner.sessions.get_mut(&src).await {
+            session
+                .add_frame(buf)
+                .await
+                .context("setup session failed")?;
+        }
         Ok(())
     }
 }
@@ -182,6 +244,14 @@ fn ntohl(x: u32) -> u32 {
 #[inline]
 fn ntohs(x: u16) -> u16 {
     u16::from_be(x)
+}
+
+pub fn set_nonblocking(fd: i32) -> std::io::Result<()> {
+    use nix::fcntl::{fcntl, FcntlArg, OFlag};
+    let mut flags = fcntl(fd, FcntlArg::F_GETFD)?;
+    flags |= libc::O_NONBLOCK;
+    fcntl(fd, FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags)))?;
+    Ok(())
 }
 
 pub struct TproxyUdpSocket {
@@ -274,10 +344,98 @@ impl TproxyUdpSocket {
     }
 }
 
-pub fn set_nonblocking(fd: i32) -> std::io::Result<()> {
-    use nix::fcntl::{fcntl, FcntlArg, OFlag};
-    let mut flags = fcntl(fd, FcntlArg::F_GETFD)?;
-    flags |= libc::O_NONBLOCK;
-    fcntl(fd, FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags)))?;
-    Ok(())
+struct Session {
+    source: SocketAddr,
+    queue: Sender<Frame>,
+}
+
+impl Session {
+    fn new(source: SocketAddr, queue: Sender<Frame>) -> Self {
+        Self { source, queue }
+    }
+    async fn add_frame(&mut self, frame: Frame) -> IoResult<()> {
+        if self.queue.try_send(frame).is_err() {
+            log::warn!("buffer overflow: src={}, dropping.", self.source)
+        }
+        Ok(())
+    }
+}
+
+struct TproxyReader {
+    queue: Receiver<Frame>,
+}
+
+impl TproxyReader {
+    fn new(queue: Receiver<Frame>) -> Box<Self> {
+        Self { queue }.into()
+    }
+}
+
+impl Drop for TproxyReader {
+    fn drop(&mut self) {
+        trace!("Tproxy reader dropped");
+    }
+}
+
+#[async_trait]
+impl FrameReader for TproxyReader {
+    async fn read(&mut self) -> IoResult<Option<Frame>> {
+        Ok(self.queue.recv().await)
+    }
+}
+
+struct TproxyWriter {
+    client: SocketAddr,
+    inner: Arc<Internals>,
+}
+
+impl TproxyWriter {
+    fn new(client: SocketAddr, inner: Arc<Internals>) -> Box<Self> {
+        Self { inner, client }.into()
+    }
+}
+
+#[async_trait]
+impl FrameWriter for TproxyWriter {
+    async fn write(&mut self, frame: Frame) -> IoResult<usize> {
+        let src = frame
+            .addr
+            .as_ref()
+            .and_then(|x| x.as_socket_addr())
+            .unwrap();
+        let mut sockets = self.inner.sockets.lock().await;
+        let socket = if let Some(socket) = sockets.get(&src) {
+            socket
+        } else {
+            let socket = udp_socket(src, None, true)?;
+            sockets.get_or_insert(src, || socket)
+        };
+        socket.send_to(frame.body(), self.client).await?;
+        Ok(frame.len())
+    }
+    async fn shutdown(&mut self) -> IoResult<()> {
+        self.inner.sessions.remove(&self.client).await;
+        Ok(())
+    }
+}
+
+struct TproxyCallback {
+    client: SocketAddr,
+    inner: Arc<Internals>,
+}
+
+impl TproxyCallback {
+    fn new(client: SocketAddr, inner: Arc<Internals>) -> Self {
+        Self { client, inner }
+    }
+}
+
+#[async_trait]
+impl ContextCallback for TproxyCallback {
+    async fn on_error(&self, _ctx: &mut Context, _error: Error) {
+        self.inner.sessions.remove(&self.client).await;
+    }
+    async fn on_finish(&self, _ctx: &mut Context) {
+        self.inner.sessions.remove(&self.client).await;
+    }
 }
