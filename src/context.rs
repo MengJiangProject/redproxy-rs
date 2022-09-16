@@ -62,6 +62,12 @@ impl TargetAddress {
             _ => unreachable!(),
         }
     }
+    pub fn as_socket_addr(&self) -> Option<SocketAddr> {
+        match self {
+            Self::SocketAddr(x) => Some(*x),
+            _ => None,
+        }
+    }
     pub fn host(&self) -> String {
         match self {
             Self::DomainPort(x, _) => x.to_owned(),
@@ -648,7 +654,7 @@ impl Context {
         Arc::make_mut(&mut self.props)
             .state
             .push((state, SystemTime::now()).into());
-        trace!("set_state: id={} state={:?}", self.props.id, state);
+        log::debug!("set_state: ctx={} state={:?}", self.props, state);
         self
     }
 

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use easy_error::{bail, Error, ResultExt};
 use futures::Future;
-use log::{debug, warn};
+use log::{trace, warn};
 use std::{
     net::SocketAddr,
     sync::atomic::{AtomicU32, Ordering},
@@ -27,6 +27,7 @@ where
     T1: FnOnce(u32) -> T2 + Sync,
     T2: Future<Output = FrameIO>,
 {
+    log::trace!("h11c_connect: channel={}", frame_channel);
     let target = ctx.read().await.target();
     let feature = ctx.read().await.feature();
     match feature {
@@ -62,7 +63,7 @@ where
 
             request.write_to(&mut server).await?;
             let resp = HttpResponse::read_from(&mut server).await?;
-            log::debug!("response: {:?}", resp);
+            log::trace!("response: {:?}", resp);
             if resp.code != 200 {
                 bail!("upstream server failure: {:?}", resp);
             }
@@ -114,9 +115,15 @@ where
             let source = request.header("Udp-Bind-Source", "");
             ctx_lock
                 .set_target(target)
-                .set_callback(FrameChannelCallback { session_id, inline })
-                .set_extra("udp-bind-source", source)
-                .set_feature(Feature::UdpForward);
+                .set_callback(FrameChannelCallback { session_id, inline });
+            if source.is_empty() {
+                ctx_lock.set_feature(Feature::UdpForward);
+            } else {
+                ctx_lock
+                    .set_extra("udp-bind-source", source)
+                    .set_feature(Feature::UdpBind);
+            }
+
             if !inline {
                 ctx_lock.set_client_frames(
                     create_frames(channel, session_id)
@@ -136,7 +143,7 @@ where
             .await?;
         bail!("Invalid request method: {}", request.method);
     }
-    debug!("Request: {:?}", ctx_lock);
+    trace!("Request: {:?}", ctx_lock);
     drop(ctx_lock);
     ctx.enqueue(&queue).await?;
     Ok(())
