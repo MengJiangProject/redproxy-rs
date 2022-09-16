@@ -4,6 +4,7 @@ use easy_error::{Error, ResultExt};
 use futures::StreamExt;
 use quinn::{ClientConfig, Connection, Datagrams, RecvStream, SendStream, ServerConfig};
 use std::{
+    convert::TryInto,
     io::{Error as IoError, ErrorKind, Result as IoResult},
     pin::Pin,
     sync::Arc,
@@ -24,17 +25,18 @@ use super::{
 pub const ALPN_QUIC_HTTP11C: &[&[u8]] = &[b"h11c"]; //this is not regular HTTP3 connection, it uses HTTP1.1 CONNECT instead.
 
 pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig, Error> {
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config.max_concurrent_uni_streams(0u8.into());
-
     let (certs, key) = tls.certs()?;
-
     let mut server_crypto = rustls::ServerConfig::builder()
         .with_safe_defaults()
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .context("load certificate")?;
     server_crypto.alpn_protocols = ALPN_QUIC_HTTP11C.iter().map(|&x| x.into()).collect();
+
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.max_concurrent_uni_streams(0u8.into());
+    transport_config.keep_alive_interval(Some(Duration::from_secs(30)));
+    transport_config.max_idle_timeout(Some(Duration::from_secs(3600).try_into().unwrap()));
 
     let mut cfg = ServerConfig::with_crypto(Arc::new(server_crypto));
     cfg.transport = Arc::new(transport_config);
@@ -62,7 +64,14 @@ pub fn create_quic_client(tls: &TlsClientConfig) -> Result<ClientConfig, Error> 
             .dangerous()
             .set_certificate_verifier(tls.insecure_verifier());
     }
-    let cfg = ClientConfig::new(Arc::new(client_crypto));
+
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.max_concurrent_uni_streams(0u8.into());
+    transport_config.keep_alive_interval(Some(Duration::from_secs(30)));
+    transport_config.max_idle_timeout(Some(Duration::from_secs(3600).try_into().unwrap()));
+
+    let mut cfg = ClientConfig::new(Arc::new(client_crypto));
+    cfg.transport = Arc::new(transport_config);
     Ok(cfg)
 }
 
@@ -222,7 +231,6 @@ pub async fn quic_frames_thread(name: String, sessions: QuicFrameSessions, mut i
                     if session.is_closed() || session.send(frame).await.is_err() {
                         drop(session);
                         sessions.remove(&sid).await;
-                    } else {
                         log::trace!("quic recv error: sid={}", sid);
                     }
                 }
