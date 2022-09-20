@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::io::Result as IoResult;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::UdpSocket;
+use tokio::{net::UdpSocket, sync::mpsc};
 
 use super::frames::{Frame, FrameIO, FrameReader, FrameWriter};
 use crate::context::TargetAddress;
@@ -75,17 +75,20 @@ pub fn udp_socket(
     UdpSocket::from_std(socket)
 }
 
+pub type Receiver = mpsc::Receiver<Frame>;
+pub type Sender = mpsc::Sender<Frame>;
+
 pub fn setup_udp_session(
     target: TargetAddress,
     local: SocketAddr,
     remote: SocketAddr,
-    first_frame: Option<Frame>,
+    extra_frame: Receiver,
     transparent: bool,
 ) -> IoResult<FrameIO> {
     let socket = udp_socket(local, Some(remote), transparent)?;
     let socket = Arc::new(socket);
     Ok((
-        UdpFrameReader::new(target, socket.clone(), first_frame),
+        UdpFrameReader::new(target, socket.clone(), extra_frame),
         UdpFrameWriter::new(socket),
     ))
 }
@@ -93,15 +96,15 @@ pub fn setup_udp_session(
 struct UdpFrameReader {
     socket: Arc<UdpSocket>,
     target: TargetAddress,
-    first_frame: Option<Frame>,
+    extra_frame: Receiver,
 }
 
 impl UdpFrameReader {
-    fn new(target: TargetAddress, socket: Arc<UdpSocket>, first_frame: Option<Frame>) -> Box<Self> {
+    fn new(target: TargetAddress, socket: Arc<UdpSocket>, extra_frame: Receiver) -> Box<Self> {
         Self {
             target,
             socket,
-            first_frame,
+            extra_frame,
         }
         .into()
     }
@@ -110,13 +113,14 @@ impl UdpFrameReader {
 #[async_trait]
 impl FrameReader for UdpFrameReader {
     async fn read(&mut self) -> IoResult<Option<Frame>> {
-        if self.first_frame.is_some() {
-            return Ok(self.first_frame.take());
-        }
         let mut buf = Frame::new();
-        buf.recv_from(&self.socket).await?;
-        buf.addr = Some(self.target.clone());
-        Ok(Some(buf))
+        tokio::select! {
+            Some(f) = self.extra_frame.recv() => Ok(Some(f)),
+            _ = buf.recv_from(&self.socket) => {
+                buf.addr = Some(self.target.clone());
+                Ok(Some(buf))
+            }
+        }
     }
 }
 

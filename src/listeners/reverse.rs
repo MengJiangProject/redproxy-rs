@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use chashmap_async::CHashMap;
 use easy_error::{Error, ResultExt};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
@@ -6,23 +7,25 @@ use serde_yaml::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, UdpSocket};
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{channel, Sender};
 
 use super::Listener;
 use crate::common::frames::Frame;
 use crate::common::set_keepalive;
-use crate::common::udp::{setup_udp_session, udp_socket};
-use crate::context::ContextRefOps;
-use crate::context::{make_buffered_stream, ContextRef, Feature, TargetAddress};
+use crate::common::udp::{self, setup_udp_session, udp_socket};
+use crate::context::{make_buffered_stream, Context, ContextRef, Feature, TargetAddress};
+use crate::context::{ContextCallback, ContextRefOps};
 use crate::GlobalState;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct ReverseProxyListener {
     name: String,
     bind: SocketAddr,
     target: TargetAddress,
     #[serde(default = "default_protocol")]
     protocol: Protocol,
+    #[serde(skip)]
+    sessions: Arc<CHashMap<SocketAddr, udp::Sender>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -120,19 +123,47 @@ impl ReverseProxyListener {
         let source = crate::common::try_map_v4_addr(source);
         debug!("{}: recv from {:?} length: {}", self.name, source, size);
 
-        let ctx = state
-            .contexts
-            .create_context(self.name.to_owned(), source)
-            .await;
-        let frames = setup_udp_session(self.target.clone(), self.bind, source, Some(buf), false)
-            .context("setup session")?;
-        ctx.write()
-            .await
-            .set_target(self.target.clone())
-            .set_feature(Feature::UdpForward)
-            .set_idle_timeout(state.timeouts.udp)
-            .set_client_frames(frames);
-        ctx.enqueue(queue).await?;
+        if let Some(tx) = self.sessions.get(&source).await {
+            tx.send(buf).await.context("send")?;
+        } else {
+            let (tx, rx) = channel(100);
+            let io = setup_udp_session(self.target.clone(), self.bind, source, rx, false)
+                .context("setup session")?;
+            self.sessions.insert(source, tx).await;
+            let ctx = state
+                .contexts
+                .create_context(self.name.to_owned(), source)
+                .await;
+            ctx.write()
+                .await
+                .set_target(self.target.clone())
+                .set_feature(Feature::UdpForward)
+                .set_idle_timeout(state.timeouts.udp)
+                .set_callback(ReverseCallback::new(source, self.sessions.clone()))
+                .set_client_frames(io);
+            ctx.enqueue(queue).await?;
+        }
         Ok(())
+    }
+}
+
+struct ReverseCallback {
+    client: SocketAddr,
+    sessions: Arc<CHashMap<SocketAddr, udp::Sender>>,
+}
+
+impl ReverseCallback {
+    fn new(client: SocketAddr, sessions: Arc<CHashMap<SocketAddr, udp::Sender>>) -> Self {
+        Self { client, sessions }
+    }
+}
+
+#[async_trait]
+impl ContextCallback for ReverseCallback {
+    async fn on_error(&self, _ctx: &mut Context, _error: Error) {
+        self.sessions.remove(&self.client).await;
+    }
+    async fn on_finish(&self, _ctx: &mut Context) {
+        self.sessions.remove(&self.client).await;
     }
 }
