@@ -220,7 +220,12 @@ impl TProxyListener {
                 .create_context(self.name.to_owned(), src)
                 .await;
             let (tx, rx) = channel(100);
-            inner.sessions.insert(key, Session::new(src, tx)).await;
+            let mut session = Session::new(src, tx);
+            session
+                .add_frame(buf)
+                .await
+                .context("setup session failed")?;
+            inner.sessions.insert(key, session).await;
             if self.udp_full_cone {
                 let r = TproxyReader::new(rx);
                 let w = TproxyWriter::new(src, inner.clone());
