@@ -177,16 +177,16 @@ struct DirectFrames {
 #[async_trait]
 impl FrameReader for DirectFrames {
     async fn read(&mut self) -> IoResult<Option<Frame>> {
-        loop {
-            let mut frame = Frame::new();
-            let (_, source) = frame.recv_from(&self.socket).await?;
-            log::trace!("read udp frame: {:?}", frame);
-            if self.target.ip().is_unspecified() || self.target == source {
-                return Ok(Some(frame));
-            } else {
-                log::debug!("received unexpected udp frame from {:?}, dropping", source)
-            }
-        }
+        // loop {
+        let mut frame = Frame::new();
+        let (_, _source) = frame.recv_from(&self.socket).await?;
+        log::trace!("read udp frame: {:?}", frame);
+        // if self.target.ip().is_unspecified() || self.target == source {
+        return Ok(Some(frame));
+        // } else {
+        //     log::debug!("received unexpected udp frame from {:?}, dropping", source)
+        // }
+        // }
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "redproxy-rs"
-version = "0.7.0"
+version = "0.8.0"
 authors = ["Bearice Ren <bearice@icybear.net>"]
 edition = "2021"
 default-run = "redproxy-rs"

@@ -39,7 +39,7 @@ use crate::{
     common::{
         frames::{Frame, FrameReader, FrameWriter},
         set_keepalive, try_map_v4_addr,
-        udp::udp_socket,
+        udp::{setup_udp_session, udp_socket},
     },
     context::{
         make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps, Feature,
@@ -58,6 +58,8 @@ pub struct TProxyListener {
     protocol: Protocol,
     #[serde(default = "default_max_udp_socket")]
     max_udp_socket: usize,
+    #[serde(default)]
+    udp_full_cone: bool,
     #[serde(skip)]
     inner: Option<Arc<Internals>>,
 }
@@ -70,7 +72,7 @@ pub enum Protocol {
 }
 
 struct Internals {
-    sessions: CHashMap<SocketAddr, Session>,
+    sessions: CHashMap<(SocketAddr, SocketAddr), Session>,
     sockets: Mutex<LruCache<SocketAddr, UdpSocket>>,
 }
 
@@ -185,6 +187,7 @@ impl TProxyListener {
         ctx.enqueue(queue).await?;
         Ok(())
     }
+
     async fn udp_accept(
         self: &Arc<Self>,
         listener: &TproxyUdpSocket,
@@ -201,37 +204,54 @@ impl TProxyListener {
 
         trace!("{}: recv from {:?} length: {}", self.name, src, size);
         let inner = self.inner.as_ref().unwrap();
-        if !inner.sessions.contains_key(&src).await {
-            let (tx, rx) = channel(100);
-            let r = TproxyReader::new(rx);
-            let w = TproxyWriter::new(src, inner.clone());
-            inner.sessions.insert(src, Session::new(src, tx)).await;
-            let target = if dst.is_ipv4() {
-                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
-            } else {
-                SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0))
-            }
-            .into();
-            let ctx = state
-                .contexts
-                .create_context(self.name.to_owned(), src)
-                .await;
-            ctx.write()
-                .await
-                .set_target(target)
-                .set_feature(Feature::UdpBind)
-                .set_idle_timeout(state.timeouts.udp)
-                .set_callback(TproxyCallback::new(src, inner.clone()))
-                .set_extra("udp-bind-source", src)
-                .set_client_frames((r, w));
-            ctx.enqueue(queue).await?;
-        }
-        if let Some(mut session) = inner.sessions.get_mut(&src).await {
+        let key = if self.udp_full_cone {
+            (src, src)
+        } else {
+            (src, dst)
+        };
+        if let Some(mut session) = inner.sessions.get_mut(&key).await {
             session
                 .add_frame(buf)
                 .await
                 .context("setup session failed")?;
+        } else {
+            let ctx = state
+                .contexts
+                .create_context(self.name.to_owned(), src)
+                .await;
+            let (tx, rx) = channel(100);
+            inner.sessions.insert(key, Session::new(src, tx)).await;
+            if self.udp_full_cone {
+                let r = TproxyReader::new(rx);
+                let w = TproxyWriter::new(src, inner.clone());
+                let target = if dst.is_ipv4() {
+                    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
+                } else {
+                    SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0))
+                }
+                .into();
+                ctx.write()
+                    .await
+                    .set_target(target)
+                    .set_feature(Feature::UdpBind)
+                    .set_extra("udp-bind-source", src)
+                    .set_client_frames((r, w));
+            } else {
+                let frames =
+                    setup_udp_session(dst.into(), dst, src, rx, true).context("setup session")?;
+                ctx.write()
+                    .await
+                    .set_target(dst.into())
+                    .set_feature(Feature::UdpForward)
+                    .set_client_frames(frames);
+            }
+            ctx.write()
+                .await
+                .set_callback(TproxyCallback::new(key, inner.clone()))
+                .set_idle_timeout(state.timeouts.udp);
+            ctx.enqueue(queue).await?;
         }
+
         Ok(())
     }
 }
@@ -254,7 +274,7 @@ pub fn set_nonblocking(fd: i32) -> std::io::Result<()> {
     Ok(())
 }
 
-pub struct TproxyUdpSocket {
+struct TproxyUdpSocket {
     inner: AsyncFd<RawFd>,
 }
 
@@ -414,28 +434,29 @@ impl FrameWriter for TproxyWriter {
         Ok(frame.len())
     }
     async fn shutdown(&mut self) -> IoResult<()> {
-        self.inner.sessions.remove(&self.client).await;
+        let key = (self.client, self.client);
+        self.inner.sessions.remove(&key).await;
         Ok(())
     }
 }
 
 struct TproxyCallback {
-    client: SocketAddr,
+    key: (SocketAddr, SocketAddr),
     inner: Arc<Internals>,
 }
 
 impl TproxyCallback {
-    fn new(client: SocketAddr, inner: Arc<Internals>) -> Self {
-        Self { client, inner }
+    fn new(key: (SocketAddr, SocketAddr), inner: Arc<Internals>) -> Self {
+        Self { key, inner }
     }
 }
 
 #[async_trait]
 impl ContextCallback for TproxyCallback {
     async fn on_error(&self, _ctx: &mut Context, _error: Error) {
-        self.inner.sessions.remove(&self.client).await;
+        self.inner.sessions.remove(&self.key).await;
     }
     async fn on_finish(&self, _ctx: &mut Context) {
-        self.inner.sessions.remove(&self.client).await;
+        self.inner.sessions.remove(&self.key).await;
     }
 }

@@ -24,6 +24,12 @@ listeners:
     type: tproxy
     bind: 0.0.0.0:8080
     protocol: udp
+    # default: false, whether use full cone NAT or restrictive NAT,
+    # full cone NAT is slower and unable to filter with dst address,
+    # restrictive NAT is a little faster and able to filter with dst address
+    udp_full_cone: false
+    # default: 128, only applies for full cone NAT, controls how many sockets to be cached for sending udp replies.
+    udp_max_socket: 256
 
   - name: udp-reverse
     type: reverse
