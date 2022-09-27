@@ -709,7 +709,6 @@ impl ContextRefOps for ContextRef {
     }
     async fn on_finish(&self) {
         let mut inner = self.write().await;
-        inner.set_state(ContextState::Connected);
         if let Some(cb) = inner.callback.clone() {
             cb.on_finish(&mut inner).await
         }
