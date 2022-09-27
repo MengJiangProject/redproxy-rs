@@ -200,6 +200,7 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
         .await
         .set_state(ContextState::ServerConnecting)
         .set_connector(connector.name().to_owned());
+    let props = ctx.read().await.props().clone();
     if let Err(e) = connector.connect(state.clone(), ctx.clone()).await {
         warn!(
             "failed to connect to upstream: {} cause: {:?} \nctx: {}",
