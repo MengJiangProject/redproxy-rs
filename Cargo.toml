@@ -67,3 +67,9 @@ mime_guess = "2.0.4"
 
 [workspace]
 members = ["milu"]
+
+[profile.release]
+panic = 'abort'
+
+[profile.dev]
+panic = 'abort'
