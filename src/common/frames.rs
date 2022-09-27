@@ -115,9 +115,7 @@ impl Frame {
         let attr = buf.split_to(attr_len);
         let body = buf.split_to(body_len);
         let mut frame = Self::from_body(body);
-        if let Err(e) = frame.parse_attr(attr) {
-            return Err(e);
-        }
+        frame.parse_attr(attr)?;
         frame.session_id = session_id;
         Ok(frame)
     }
