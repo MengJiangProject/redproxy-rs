@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::{
     io::IoSliceMut,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6},
     num::NonZeroUsize,
     os::unix::prelude::{AsRawFd, RawFd},
     sync::Arc,
@@ -198,6 +198,12 @@ impl TProxyListener {
         let (size, src, dst) = listener.recv_msg(&mut buf).await.context("accept")?;
         let src = try_map_v4_addr(src);
         let dst = try_map_v4_addr(dst);
+        if match dst.ip() {
+            IpAddr::V4(ip) => ip.is_multicast() || ip.is_broadcast(),
+            IpAddr::V6(ip) => ip.is_multicast() || is_link_local(ip),
+        } {
+            return Ok(());
+        }
         buf.truncate(size);
         let mut buf = Frame::from_body(buf.freeze());
         buf.addr = Some(dst.into());
@@ -259,6 +265,11 @@ impl TProxyListener {
 
         Ok(())
     }
+}
+
+fn is_link_local(ip: Ipv6Addr) -> bool {
+    let octets = ip.octets();
+    octets[0] == 0xfe && octets[1] & 0xc0 == 0x80
 }
 
 #[inline]
