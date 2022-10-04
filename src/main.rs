@@ -1,3 +1,4 @@
+use clap::{builder::PossibleValuesParser, value_parser};
 use config::Timeouts;
 use context::{ContextRef, ContextState, GlobalState as ContextGlobalState};
 use easy_error::{err_msg, Error, Terminator};
@@ -68,28 +69,37 @@ async fn main() -> Result<(), Terminator> {
             clap::Arg::new("config")
                 .short('c')
                 .long("config")
-                .help("config filename")
+                .help("Config filename")
                 .default_value("config.yaml")
-                .takes_value(true),
+                .value_parser(value_parser!(String))
+                .num_args(1),
         )
         .arg(
             clap::Arg::new("log-level")
                 .short('l')
                 .long("log")
-                .help("set log level")
-                .possible_values(&["erro", "warn", "info", "debug", "trace"])
-                .takes_value(true),
+                .help("Set log level")
+                .value_parser(PossibleValuesParser::new([
+                    "erro", "warn", "info", "debug", "trace",
+                ]))
+                .num_args(1),
         )
         .arg(
             clap::Arg::new("config-check")
                 .short('t')
                 .long("test")
-                .help("load and check config file then exits"),
+                .help("Load and check config file then exits"),
         )
         .get_matches();
-    let config = args.value_of("config").unwrap_or("config.yaml");
-    let config_test = args.is_present("config-check");
-    let log_level = args.value_of("log-level").unwrap_or("info");
+    let config = args
+        .get_one("config")
+        .map(String::as_str)
+        .unwrap_or("config.yaml");
+    let config_test = args.contains_id("config-check");
+    let log_level = args
+        .get_one("log-level")
+        .map(String::as_str)
+        .unwrap_or("info");
     env_logger::init_from_env(env_logger::Env::default().default_filter_or(log_level));
 
     let cfg = config::Config::load(config).await?;
