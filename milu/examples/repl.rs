@@ -1,3 +1,4 @@
+use clap::value_parser;
 use easy_error::{ResultExt, Terminator};
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::error::ReadlineError;
@@ -7,6 +8,7 @@ use rustyline::validate::{self, MatchingBracketValidator, Validator};
 use rustyline::{Cmd, CompletionType, Config, Context, EditMode, Editor, KeyEvent};
 use rustyline_derive::Helper;
 use std::borrow::Cow::{self, Borrowed, Owned};
+use std::path::PathBuf;
 
 use milu::parser;
 use milu::script::Evaluatable;
@@ -85,9 +87,14 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 fn main() -> Result<(), Terminator> {
     let args = clap::Command::new("milu-repl")
         .version(VERSION)
-        .arg(clap::Arg::new("INPUT").help("filename").index(1))
+        .arg(
+            clap::Arg::new("INPUT")
+                .help("filename")
+                .value_parser(value_parser!(PathBuf))
+                .index(1),
+        )
         .get_matches();
-    let input = args.value_of("INPUT");
+    let input = args.get_one("INPUT").map(PathBuf::as_path);
     if let Some(i) = input {
         let buf = std::fs::read(i)?;
         let buf = String::from_utf8(buf)?;
