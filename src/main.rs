@@ -1,5 +1,5 @@
 use clap::{builder::PossibleValuesParser, value_parser};
-use config::Timeouts;
+use config::{IoParams, Timeouts};
 use context::{ContextRef, ContextState, GlobalState as ContextGlobalState};
 use easy_error::{err_msg, Error, Terminator};
 use log::{info, warn};
@@ -35,6 +35,7 @@ pub struct GlobalState {
     timeouts: Timeouts,
     #[cfg(feature = "metrics")]
     metrics: Option<Arc<MetricsServer>>,
+    io_params: IoParams,
 }
 
 impl GlobalState {
@@ -134,6 +135,7 @@ async fn main() -> Result<(), Terminator> {
         }
 
         st_mut.set_rules(rules::from_config(&cfg.rules)?).await?;
+        st_mut.io_params = cfg.io_params;
     }
 
     for l in state.listeners.values() {
@@ -222,7 +224,7 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
     }
 
     ctx.on_connect().await;
-    if let Err(e) = copy_bidi(ctx.clone()).await {
+    if let Err(e) = copy_bidi(ctx.clone(), &state.io_params).await {
         warn!(
             "error in io thread: {} \ncause: {:?} \nctx: {}",
             e,

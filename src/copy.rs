@@ -1,10 +1,15 @@
 use crate::{
     common::frames::{FrameReader, FrameWriter},
+    config::IoParams,
     context::{ContextRef, ContextState, ContextStatistics, IOBufStream},
 };
+use bytes::BytesMut;
 use easy_error::{err_msg, Error, ResultExt};
+use futures::{future::BoxFuture, FutureExt};
 use std::{io::Result as IoResult, sync::Arc, time::Duration};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::io::{
+    unix::AsyncFd, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf,
+};
 
 #[cfg(feature = "metrics")]
 lazy_static::lazy_static! {
@@ -22,10 +27,33 @@ lazy_static::lazy_static! {
     .unwrap();
 }
 
+#[cfg(target_os = "linux")]
+use std::os::unix::prelude::OwnedFd;
+#[cfg(target_os = "linux")]
+fn has_raw_fd(stream: &dyn crate::context::IOStream) -> bool {
+    use tokio::net::TcpStream;
+    stream.as_any().is::<TcpStream>()
+}
+#[cfg(target_os = "linux")]
+fn into_owned_fd(stream: Box<dyn crate::context::IOStream>) -> OwnedFd {
+    use tokio::net::TcpStream;
+    let stream = stream.into_any().downcast::<TcpStream>().unwrap();
+    let std_fd = stream.into_std().unwrap();
+    std_fd.into()
+}
+
+#[cfg(not(target_os = "linux"))]
+type OwnedFd = i32;
+#[cfg(not(target_os = "linux"))]
+fn as_raw_fd(_stream: &dyn crate::context::IOStream) -> Option<RawFd> {
+    None
+}
+
 struct SrcHalf<T> {
     name: &'static str,
     stream: Option<ReadHalf<T>>,
     frames: Option<Box<dyn FrameReader>>,
+    rawfd: Option<AsyncFd<OwnedFd>>,
 }
 
 impl<T> SrcHalf<T> {
@@ -34,14 +62,16 @@ impl<T> SrcHalf<T> {
             name,
             stream: None,
             frames: None,
+            rawfd: None,
         }
     }
 }
 
 struct DstHalf<T> {
+    name: &'static str,
     stream: Option<WriteHalf<T>>,
     frames: Option<Box<dyn FrameWriter>>,
-    name: &'static str,
+    rawfd: Option<AsyncFd<OwnedFd>>,
 }
 
 impl<T> DstHalf<T> {
@@ -50,11 +80,13 @@ impl<T> DstHalf<T> {
             name,
             stream: None,
             frames: None,
+            rawfd: None,
         }
     }
 }
 
 async fn copy_half<S, D>(
+    params: &IoParams,
     mut src: SrcHalf<S>,
     mut dst: DstHalf<D>,
     stat: Arc<ContextStatistics>,
@@ -66,12 +98,67 @@ where
     S: AsyncRead,
     D: AsyncWrite,
 {
-    let mut sbuf = [0u8; 65536];
+    let mut sbuf = BytesMut::zeroed(params.buffer_size);
     let have_stream = src.stream.is_some() && dst.stream.is_some();
     let have_frames = src.frames.is_some() && dst.frames.is_some();
+    let have_rawfd = src.rawfd.is_some() && dst.rawfd.is_some();
+
+    trait SpliceFn {
+        fn call(&mut self) -> BoxFuture<'_, IoResult<usize>>;
+    }
+    type BoxSpliceFn = Box<dyn SpliceFn + Send>;
+    struct NullFn;
+    impl SpliceFn for NullFn {
+        fn call(&mut self) -> BoxFuture<'_, IoResult<usize>> {
+            unreachable!()
+        }
+    }
+    #[cfg(target_os = "linux")]
+    let (mut pipe_read, mut pipe_write): (Box<dyn SpliceFn + Send>, Box<dyn SpliceFn + Send>) =
+        if have_rawfd {
+            use tokio_pipe::{PipeRead, PipeWrite};
+            enum Pipe {
+                Read(PipeWrite),
+                Write(PipeRead),
+            }
+            struct PipeFn {
+                fd: AsyncFd<OwnedFd>,
+                pipe: Pipe,
+                bufsz: usize,
+            }
+            impl SpliceFn for PipeFn {
+                fn call(&mut self) -> BoxFuture<'_, IoResult<usize>> {
+                    match &mut self.pipe {
+                        Pipe::Read(pipe) => {
+                            pipe.splice_from(&mut self.fd, None, self.bufsz).boxed()
+                        }
+                        Pipe::Write(pipe) => {
+                            pipe.splice_to(&self.fd, None, self.bufsz, true).boxed()
+                        }
+                    }
+                }
+            }
+            let pipe = tokio_pipe::pipe().context("pipe")?;
+            (
+                Box::new(PipeFn {
+                    fd: src.rawfd.unwrap(),
+                    pipe: Pipe::Read(pipe.1),
+                    bufsz: params.buffer_size,
+                }),
+                Box::new(PipeFn {
+                    fd: dst.rawfd.unwrap(),
+                    pipe: Pipe::Write(pipe.0),
+                    bufsz: params.buffer_size,
+                }),
+            )
+        } else {
+            (Box::new(NullFn), Box::new(NullFn))
+        };
+    #[cfg(not(target_os = "linux"))]
+    let pipe_fn = (Box::new(NullFn), Box::new(NullFn));
     loop {
         tokio::select! {
-            ret = src.stream.as_mut().unwrap().read(&mut sbuf), if have_stream => {
+            ret = async {src.stream.as_mut().unwrap().read(&mut sbuf).await}, if have_stream => {
                 let len = ret.with_context(|| format!("read from {}", src.name))?;
                 if len > 0 {
                     dst.stream.as_mut().unwrap().write_all(&sbuf[..len]).await.with_context(|| format!("write to {}", dst.name))?;
@@ -83,7 +170,7 @@ where
                     break;
                 }
             }
-            ret = src.frames.as_mut().unwrap().read(), if have_frames => {
+            ret = async {src.frames.as_mut().unwrap().read().await}, if have_frames => {
                 let fbuf = ret.with_context(|| format!("read frame from {}", src.name))?;
                 if let Some(fbuf) = fbuf {
                     let len = dst.frames.as_mut().unwrap().write(fbuf).await.with_context(|| format!("write frame to {}", dst.name))?;
@@ -96,21 +183,36 @@ where
                 }
 
             }
+            ret = async {pipe_read.call().await}, if have_rawfd => {
+                let len = ret.with_context(|| format!("pipe_read from {}", src.name))?;
+                if len > 0 {
+                    let a = pipe_write.call();
+                    a.await.with_context(|| format!("pipe_write to {}", dst.name))?;
+                    stat.incr_sent_bytes(len);
+                    #[cfg(feature = "metrics")]
+                    counter.inc_by(len as u64);
+                } else {
+                    break;
+                }
+            }
+            else => {
+                break;
+            }
         }
     }
 
-    dst.stream
-        .as_mut()
-        .unwrap()
-        .shutdown()
-        .await
-        .with_context(|| format!("shutdown {})", dst.name))?;
-    dst.frames
-        .as_mut()
-        .unwrap()
-        .shutdown()
-        .await
-        .with_context(|| format!("shutdown frame {})", dst.name))?;
+    if let Some(mut s) = dst.stream {
+        s.shutdown()
+            .await
+            .with_context(|| format!("shutdown {})", dst.name))?;
+    }
+
+    if let Some(mut s) = dst.frames {
+        s.shutdown()
+            .await
+            .with_context(|| format!("shutdown frame {})", dst.name))?;
+    }
+
     Ok(())
 }
 
@@ -121,7 +223,7 @@ async fn drain_buffers(from: &mut IOBufStream, to: &mut IOBufStream) -> IoResult
     }
     to.flush().await
 }
-pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
+pub async fn copy_bidi(ctx: ContextRef, params: &IoParams) -> Result<(), Error> {
     let mut ctx_lock = ctx.write().await;
     let idle_timeout = ctx_lock.idle_timeout();
     let streams = ctx_lock.take_streams();
@@ -151,12 +253,21 @@ pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
         let client = client.into_inner().into_inner();
         let server = server.into_inner().into_inner();
 
-        let (csr, csw) = tokio::io::split(client);
-        csrc.stream = Some(csr);
-        cdst.stream = Some(csw);
-        let (ssr, ssw) = tokio::io::split(server);
-        ssrc.stream = Some(ssr);
-        sdst.stream = Some(ssw);
+        if has_raw_fd(&*client) && has_raw_fd(&*server) && params.use_splice {
+            let craw = into_owned_fd(client);
+            let sraw = into_owned_fd(server);
+            csrc.rawfd = Some(AsyncFd::new(craw.try_clone().unwrap()).unwrap());
+            cdst.rawfd = Some(AsyncFd::new(craw).unwrap());
+            ssrc.rawfd = Some(AsyncFd::new(sraw.try_clone().unwrap()).unwrap());
+            sdst.rawfd = Some(AsyncFd::new(sraw).unwrap());
+        } else {
+            let (csr, csw) = tokio::io::split(client);
+            csrc.stream = Some(csr);
+            cdst.stream = Some(csw);
+            let (ssr, ssw) = tokio::io::split(server);
+            ssrc.stream = Some(ssr);
+            sdst.stream = Some(ssw);
+        }
     }
 
     if let Some((client, server)) = frames {
@@ -169,6 +280,7 @@ pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
     }
 
     let copy_c2s = copy_half(
+        params,
         csrc,
         sdst,
         client_stat.clone(),
@@ -176,6 +288,7 @@ pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
         IO_BYTES_CLIENT.with_label_values(&[client_label.as_str()]),
     );
     let copy_s2c = copy_half(
+        params,
         ssrc,
         cdst,
         server_stat.clone(),

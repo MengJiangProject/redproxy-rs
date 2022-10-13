@@ -19,6 +19,24 @@ pub struct Config {
     pub access_log: Option<AccessLog>,
     #[serde(default)]
     pub timeouts: Timeouts,
+    #[serde(default)]
+    pub io_params: IoParams,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct IoParams {
+    pub buffer_size: usize,
+    pub use_splice: bool,
+}
+
+impl Default for IoParams {
+    fn default() -> Self {
+        Self {
+            buffer_size: 65536,
+            use_splice: true,
+        }
+    }
 }
 
 impl Config {
