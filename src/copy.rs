@@ -5,11 +5,9 @@ use crate::{
 };
 use bytes::BytesMut;
 use easy_error::{err_msg, Error, ResultExt};
-use futures::{future::BoxFuture, FutureExt};
+use futures::future::BoxFuture;
 use std::{io::Result as IoResult, sync::Arc, time::Duration};
-use tokio::io::{
-    unix::AsyncFd, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf,
-};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 
 #[cfg(feature = "metrics")]
 lazy_static::lazy_static! {
@@ -30,6 +28,8 @@ lazy_static::lazy_static! {
 #[cfg(target_os = "linux")]
 use std::os::unix::prelude::OwnedFd;
 #[cfg(target_os = "linux")]
+use tokio::io::unix::AsyncFd;
+#[cfg(target_os = "linux")]
 fn has_raw_fd(stream: &dyn crate::context::IOStream) -> bool {
     use tokio::net::TcpStream;
     stream.as_any().is::<TcpStream>()
@@ -45,8 +45,10 @@ fn into_owned_fd(stream: Box<dyn crate::context::IOStream>) -> OwnedFd {
 #[cfg(not(target_os = "linux"))]
 type OwnedFd = i32;
 #[cfg(not(target_os = "linux"))]
-fn as_raw_fd(_stream: &dyn crate::context::IOStream) -> Option<RawFd> {
-    None
+type AsyncFd<T> = Option<T>;
+#[cfg(not(target_os = "linux"))]
+fn has_raw_fd(_stream: &dyn crate::context::IOStream) -> bool {
+    false
 }
 
 struct SrcHalf<T> {
@@ -119,6 +121,7 @@ where
     }
     #[cfg(target_os = "linux")]
     let mut pipe_fn: Box<dyn SpliceFn + Send> = if have_rawfd {
+        use futures::FutureExt;
         use tokio_pipe::{PipeRead, PipeWrite};
         struct PipeFn {
             sfd: AsyncFd<OwnedFd>,
@@ -150,7 +153,7 @@ where
         Box::new(NullFn)
     };
     #[cfg(not(target_os = "linux"))]
-    let pipe_fn = Box::new(NullFn);
+    let mut pipe_fn = Box::new(NullFn);
     loop {
         tokio::select! {
             ret = async {src.stream.as_mut().unwrap().read(&mut sbuf).await}, if have_stream => {
@@ -250,12 +253,15 @@ pub async fn copy_bidi(ctx: ContextRef, params: &IoParams) -> Result<(), Error> 
         let server = server.into_inner().into_inner();
 
         if has_raw_fd(&*client) && has_raw_fd(&*server) && params.use_splice {
-            let craw = into_owned_fd(client);
-            let sraw = into_owned_fd(server);
-            csrc.rawfd = Some(AsyncFd::new(craw.try_clone().unwrap()).unwrap());
-            cdst.rawfd = Some(AsyncFd::new(craw).unwrap());
-            ssrc.rawfd = Some(AsyncFd::new(sraw.try_clone().unwrap()).unwrap());
-            sdst.rawfd = Some(AsyncFd::new(sraw).unwrap());
+            #[cfg(target_os = "linux")]
+            {
+                let craw = into_owned_fd(client);
+                let sraw = into_owned_fd(server);
+                csrc.rawfd = Some(AsyncFd::new(craw.try_clone().unwrap()).unwrap());
+                cdst.rawfd = Some(AsyncFd::new(craw).unwrap());
+                ssrc.rawfd = Some(AsyncFd::new(sraw.try_clone().unwrap()).unwrap());
+                sdst.rawfd = Some(AsyncFd::new(sraw).unwrap());
+            }
         } else {
             let (csr, csw) = tokio::io::split(client);
             csrc.stream = Some(csr);
