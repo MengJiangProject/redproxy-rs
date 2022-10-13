@@ -63,6 +63,7 @@ impl TargetAddress {
             _ => unreachable!(),
         }
     }
+    #[allow(dead_code)]
     pub fn as_socket_addr(&self) -> Option<SocketAddr> {
         match self {
             Self::SocketAddr(x) => Some(*x),
