@@ -214,12 +214,18 @@ impl UnixTimestamp for SystemTime {
 
 pub trait IOStream: AsyncRead + AsyncWrite + Send + Sync + Unpin {
     fn as_any(&self) -> &dyn Any;
+    fn into_any(self: Box<Self>) -> Box<dyn Any>;
 }
 impl<T> IOStream for T
 where
     T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
 {
+    // used to check if underlying stream is TcpStream, since specicalization is unstable, we have to use dyn Any instead.
+    // TODO: should use specicalization when it's ready.
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
     }
 }

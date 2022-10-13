@@ -1,6 +1,11 @@
 apiVersion: v1alpha
 kind: ProxyDefinition
 
+# fine tuning the io parameters, following are default values and you dont have to change it unless you know what you are doing
+ioParams:
+  bufferSize: 65536
+  useSplice: true
+
 metrics:
   # api prefix, defaults to "/api"
   # api_prefix: /api
