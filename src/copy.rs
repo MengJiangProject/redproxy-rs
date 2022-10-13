@@ -104,58 +104,53 @@ where
     let have_rawfd = src.rawfd.is_some() && dst.rawfd.is_some();
 
     trait SpliceFn {
-        fn call(&mut self) -> BoxFuture<'_, IoResult<usize>>;
+        fn read(&mut self) -> BoxFuture<'_, IoResult<usize>>;
+        fn write(&mut self, more: bool) -> BoxFuture<'_, IoResult<usize>>;
     }
     type BoxSpliceFn = Box<dyn SpliceFn + Send>;
     struct NullFn;
     impl SpliceFn for NullFn {
-        fn call(&mut self) -> BoxFuture<'_, IoResult<usize>> {
+        fn read(&mut self) -> BoxFuture<'_, IoResult<usize>> {
+            unreachable!()
+        }
+        fn write(&mut self, _more: bool) -> BoxFuture<'_, IoResult<usize>> {
             unreachable!()
         }
     }
     #[cfg(target_os = "linux")]
-    let (mut pipe_read, mut pipe_write): (Box<dyn SpliceFn + Send>, Box<dyn SpliceFn + Send>) =
-        if have_rawfd {
-            use tokio_pipe::{PipeRead, PipeWrite};
-            enum Pipe {
-                Read(PipeWrite),
-                Write(PipeRead),
+    let mut pipe_fn: Box<dyn SpliceFn + Send> = if have_rawfd {
+        use tokio_pipe::{PipeRead, PipeWrite};
+        struct PipeFn {
+            sfd: AsyncFd<OwnedFd>,
+            dfd: AsyncFd<OwnedFd>,
+            pipe: (PipeRead, PipeWrite),
+            bufsz: usize,
+        }
+        impl SpliceFn for PipeFn {
+            fn read(&mut self) -> BoxFuture<'_, IoResult<usize>> {
+                self.pipe
+                    .1
+                    .splice_from(&mut self.sfd, None, self.bufsz)
+                    .boxed()
             }
-            struct PipeFn {
-                fd: AsyncFd<OwnedFd>,
-                pipe: Pipe,
-                bufsz: usize,
+            fn write(&mut self, more: bool) -> BoxFuture<'_, IoResult<usize>> {
+                self.pipe
+                    .0
+                    .splice_to(&self.dfd, None, self.bufsz, more)
+                    .boxed()
             }
-            impl SpliceFn for PipeFn {
-                fn call(&mut self) -> BoxFuture<'_, IoResult<usize>> {
-                    match &mut self.pipe {
-                        Pipe::Read(pipe) => {
-                            pipe.splice_from(&mut self.fd, None, self.bufsz).boxed()
-                        }
-                        Pipe::Write(pipe) => {
-                            pipe.splice_to(&self.fd, None, self.bufsz, true).boxed()
-                        }
-                    }
-                }
-            }
-            let pipe = tokio_pipe::pipe().context("pipe")?;
-            (
-                Box::new(PipeFn {
-                    fd: src.rawfd.unwrap(),
-                    pipe: Pipe::Read(pipe.1),
-                    bufsz: params.buffer_size,
-                }),
-                Box::new(PipeFn {
-                    fd: dst.rawfd.unwrap(),
-                    pipe: Pipe::Write(pipe.0),
-                    bufsz: params.buffer_size,
-                }),
-            )
-        } else {
-            (Box::new(NullFn), Box::new(NullFn))
-        };
+        }
+        Box::new(PipeFn {
+            sfd: src.rawfd.unwrap(),
+            dfd: dst.rawfd.unwrap(),
+            pipe: tokio_pipe::pipe().context("pipe")?,
+            bufsz: params.buffer_size,
+        })
+    } else {
+        Box::new(NullFn)
+    };
     #[cfg(not(target_os = "linux"))]
-    let pipe_fn = (Box::new(NullFn), Box::new(NullFn));
+    let pipe_fn = Box::new(NullFn);
     loop {
         tokio::select! {
             ret = async {src.stream.as_mut().unwrap().read(&mut sbuf).await}, if have_stream => {
@@ -183,10 +178,11 @@ where
                 }
 
             }
-            ret = async {pipe_read.call().await}, if have_rawfd => {
+            ret = async {pipe_fn.read().await}, if have_rawfd => {
                 let len = ret.with_context(|| format!("pipe_read from {}", src.name))?;
                 if len > 0 {
-                    let a = pipe_write.call();
+                    log::debug!("pipe_read {} bytes, more_data?={}", len, len >= params.buffer_size);
+                    let a = pipe_fn.write(len >= params.buffer_size);
                     a.await.with_context(|| format!("pipe_write to {}", dst.name))?;
                     stat.incr_sent_bytes(len);
                     #[cfg(feature = "metrics")]
