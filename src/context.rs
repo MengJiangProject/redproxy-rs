@@ -4,6 +4,7 @@ use easy_error::{Error, ResultExt};
 use log::trace;
 use serde::{de::Visitor, ser::SerializeStruct, Deserialize, Serialize};
 use std::{
+    any::Any,
     collections::{HashMap, LinkedList},
     fmt::{Debug, Display},
     io::Error as IoError,
@@ -18,7 +19,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite, BufStream},
+    io::{AsyncRead, AsyncWrite, BufReader, BufWriter},
     net::lookup_host,
     sync::{mpsc::Sender, Mutex, RwLock},
 };
@@ -211,12 +212,21 @@ impl UnixTimestamp for SystemTime {
     }
 }
 
-pub trait IOStream: AsyncRead + AsyncWrite + Send + Sync + Unpin {}
-impl<T> IOStream for T where T: AsyncRead + AsyncWrite + Send + Sync + Unpin {}
-pub type IOBufStream = BufStream<Box<dyn IOStream>>;
+pub trait IOStream: AsyncRead + AsyncWrite + Send + Sync + Unpin {
+    fn as_any(&self) -> &dyn Any;
+}
+impl<T> IOStream for T
+where
+    T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+{
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+pub type IOBufStream = BufReader<BufWriter<Box<dyn IOStream>>>;
 
 pub fn make_buffered_stream<T: IOStream + 'static>(stream: T) -> IOBufStream {
-    BufStream::new(Box::new(stream))
+    BufReader::new(BufWriter::new(Box::new(stream)))
 }
 
 #[async_trait]
