@@ -1,17 +1,10 @@
 use crate::{
-    common::frames::{Frame, FrameIO, FrameReader, FrameWriter},
-    context::{make_buffered_stream, ContextRef, ContextState, ContextStatistics, IOBufStream},
+    common::frames::{FrameReader, FrameWriter},
+    context::{ContextRef, ContextState, ContextStatistics, IOBufStream},
 };
-use async_trait::async_trait;
 use easy_error::{err_msg, Error, ResultExt};
-use futures::{Future, FutureExt};
-use std::{
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-    time::Duration,
-};
-use tokio::io::{duplex, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use std::{io::Result as IoResult, sync::Arc, time::Duration};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 
 #[cfg(feature = "metrics")]
 lazy_static::lazy_static! {
@@ -29,25 +22,60 @@ lazy_static::lazy_static! {
     .unwrap();
 }
 
-async fn copy_stream<T>(
-    (mut rs, mut rf, rn): (ReadHalf<T>, Box<dyn FrameReader>, &'static str),
-    (mut ws, mut wf, wn): (WriteHalf<T>, Box<dyn FrameWriter>, &'static str),
+struct SrcHalf<T> {
+    name: &'static str,
+    stream: Option<ReadHalf<T>>,
+    frames: Option<Box<dyn FrameReader>>,
+}
+
+impl<T> SrcHalf<T> {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            stream: None,
+            frames: None,
+        }
+    }
+}
+
+struct DstHalf<T> {
+    stream: Option<WriteHalf<T>>,
+    frames: Option<Box<dyn FrameWriter>>,
+    name: &'static str,
+}
+
+impl<T> DstHalf<T> {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            stream: None,
+            frames: None,
+        }
+    }
+}
+
+async fn copy_half<S, D>(
+    mut src: SrcHalf<S>,
+    mut dst: DstHalf<D>,
     stat: Arc<ContextStatistics>,
     #[cfg(feature = "metrics")] counter: prometheus::core::GenericCounter<
         prometheus::core::AtomicU64,
     >,
 ) -> Result<(), Error>
 where
-    T: AsyncRead + AsyncWrite,
+    S: AsyncRead,
+    D: AsyncWrite,
 {
     let mut sbuf = [0u8; 65536];
+    let have_stream = src.stream.is_some() && dst.stream.is_some();
+    let have_frames = src.frames.is_some() && dst.frames.is_some();
     loop {
         tokio::select! {
-            ret = rs.read(&mut sbuf) => {
-                let len = ret.with_context(|| format!("read from {}", rn))?;
+            ret = src.stream.as_mut().unwrap().read(&mut sbuf), if have_stream => {
+                let len = ret.with_context(|| format!("read from {}", src.name))?;
                 if len > 0 {
-                    ws.write_all(&sbuf[..len]).await.with_context(|| format!("write to {}", wn))?;
-                    ws.flush().await.with_context(|| format!("flush {} buffer", wn))?;
+                    dst.stream.as_mut().unwrap().write_all(&sbuf[..len]).await.with_context(|| format!("write to {}", dst.name))?;
+                    dst.stream.as_mut().unwrap().flush().await.with_context(|| format!("flush {} buffer", dst.name))?;
                     stat.incr_sent_bytes(len);
                     #[cfg(feature = "metrics")]
                     counter.inc_by(len as u64);
@@ -55,10 +83,10 @@ where
                     break;
                 }
             }
-            ret = rf.read() => {
-                let fbuf = ret.with_context(|| format!("read frame from {}", rn))?;
+            ret = src.frames.as_mut().unwrap().read(), if have_frames => {
+                let fbuf = ret.with_context(|| format!("read frame from {}", src.name))?;
                 if let Some(fbuf) = fbuf {
-                    let len = wf.write(fbuf).await.with_context(|| format!("write frame to {}", wn))?;
+                    let len = dst.frames.as_mut().unwrap().write(fbuf).await.with_context(|| format!("write frame to {}", dst.name))?;
                     stat.incr_sent_bytes(len);
                     stat.incr_sent_frames(1);
                     #[cfg(feature = "metrics")]
@@ -71,25 +99,33 @@ where
         }
     }
 
-    ws.shutdown()
+    dst.stream
+        .as_mut()
+        .unwrap()
+        .shutdown()
         .await
-        .with_context(|| format!("shutdown {})", wn))?;
-    wf.shutdown()
+        .with_context(|| format!("shutdown {})", dst.name))?;
+    dst.frames
+        .as_mut()
+        .unwrap()
+        .shutdown()
         .await
-        .with_context(|| format!("shutdown frame {})", wn))?;
+        .with_context(|| format!("shutdown frame {})", dst.name))?;
     Ok(())
+}
+
+async fn drain_buffers(from: &mut IOBufStream, to: &mut IOBufStream) -> IoResult<()> {
+    let left_over = from.buffer();
+    if !left_over.is_empty() {
+        to.write_all(left_over).await?;
+    }
+    to.flush().await
 }
 pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
     let mut ctx_lock = ctx.write().await;
     let idle_timeout = ctx_lock.idle_timeout();
-    let (client, server) = ctx_lock.take_streams().unwrap_or_else(|| {
-        log::trace!("ctx={} using null_stream", ctx_lock);
-        null_stream()
-    });
-    let frames = ctx_lock.take_frames().unwrap_or_else(|| {
-        log::trace!("ctx={} using null_frames", ctx_lock);
-        null_frames()
-    });
+    let streams = ctx_lock.take_streams();
+    let frames = ctx_lock.take_frames();
     let client_stat = ctx_lock.props().client_stat.clone();
     let server_stat = ctx_lock.props().server_stat.clone();
     #[cfg(feature = "metrics")]
@@ -98,20 +134,50 @@ pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
     let server_label = ctx_lock.props().connector.as_ref().unwrap().clone();
     drop(ctx_lock);
 
-    let (csr, csw) = tokio::io::split(client);
-    let (ssr, ssw) = tokio::io::split(server);
-    let (cfr, cfw) = frames.0;
-    let (sfr, sfw) = frames.1;
-    let copy_c2s = copy_stream(
-        (csr, cfr, "client"),
-        (ssw, sfw, "server"),
+    let mut csrc = SrcHalf::new("client");
+    let mut ssrc = SrcHalf::new("server");
+    let mut cdst = DstHalf::new("client");
+    let mut sdst = DstHalf::new("server");
+    if let Some((mut client, mut server)) = streams {
+        // Drain any buffers that may haven't been consumed or flushed.
+        drain_buffers(&mut client, &mut server)
+            .await
+            .context("failed to drain client buffers")?;
+        drain_buffers(&mut server, &mut client)
+            .await
+            .context("failed to drain server buffers")?;
+
+        // Get the naked streams without buffers.
+        let client = client.into_inner().into_inner();
+        let server = server.into_inner().into_inner();
+
+        let (csr, csw) = tokio::io::split(client);
+        csrc.stream = Some(csr);
+        cdst.stream = Some(csw);
+        let (ssr, ssw) = tokio::io::split(server);
+        ssrc.stream = Some(ssr);
+        sdst.stream = Some(ssw);
+    }
+
+    if let Some((client, server)) = frames {
+        let (cfr, cfw) = client;
+        csrc.frames = Some(cfr);
+        cdst.frames = Some(cfw);
+        let (sfr, sfw) = server;
+        ssrc.frames = Some(sfr);
+        sdst.frames = Some(sfw);
+    }
+
+    let copy_c2s = copy_half(
+        csrc,
+        sdst,
         client_stat.clone(),
         #[cfg(feature = "metrics")]
         IO_BYTES_CLIENT.with_label_values(&[client_label.as_str()]),
     );
-    let copy_s2c = copy_stream(
-        (ssr, sfr, "server"),
-        (csw, cfw, "client"),
+    let copy_s2c = copy_half(
+        ssrc,
+        cdst,
         server_stat.clone(),
         #[cfg(feature = "metrics")]
         IO_BYTES_SERVER.with_label_values(&[server_label.as_str()]),
@@ -141,48 +207,4 @@ pub async fn copy_bidi(ctx: ContextRef) -> Result<(), Error> {
         }
     }
     Ok(())
-}
-
-use std::io::Result as IoResult;
-fn null_frames() -> (FrameIO, FrameIO) {
-    (
-        (Box::new(NullFrames), Box::new(NullFrames)),
-        (Box::new(NullFrames), Box::new(NullFrames)),
-    )
-}
-
-fn null_stream() -> (IOBufStream, IOBufStream) {
-    let (a, b) = duplex(1);
-    (make_buffered_stream(a), make_buffered_stream(b))
-}
-
-struct NullFrames;
-impl FrameReader for NullFrames {
-    fn read<'life0, 'async_trait>(
-        &'life0 mut self,
-    ) -> Pin<Box<(dyn futures::Future<Output = IoResult<Option<Frame>>> + Send + 'async_trait)>>
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        struct Never;
-        impl Future for Never {
-            type Output = IoResult<Option<Frame>>;
-
-            fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-                Poll::Pending
-            }
-        }
-        Never.boxed()
-    }
-}
-#[async_trait]
-impl FrameWriter for NullFrames {
-    async fn write(&mut self, _frame: Frame) -> IoResult<usize> {
-        Ok(0)
-    }
-
-    async fn shutdown(&mut self) -> IoResult<()> {
-        Ok(())
-    }
 }
