@@ -180,9 +180,7 @@ where
             ret = async {pipe_fn.read().await}, if have_rawfd => {
                 let len = ret.with_context(|| format!("pipe_read from {}", src.name))?;
                 if len > 0 {
-                    // log::debug!("pipe_read {} bytes, more_data?={}", len, len >= params.buffer_size);
-                    let a = pipe_fn.write(len >= params.buffer_size);
-                    a.await.with_context(|| format!("pipe_write to {}", dst.name))?;
+                    pipe_fn.write(len >= params.buffer_size).await.with_context(|| format!("pipe_write to {}", dst.name))?;
                     stat.incr_sent_bytes(len);
                     #[cfg(feature = "metrics")]
                     counter.inc_by(len as u64);
