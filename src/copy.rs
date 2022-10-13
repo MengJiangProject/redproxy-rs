@@ -121,32 +121,28 @@ where
     }
     #[cfg(target_os = "linux")]
     let mut pipe_fn: Box<dyn SpliceFn + Send> = if have_rawfd {
+        use crate::common::splice::{async_splice, pipe};
         use futures::FutureExt;
-        use tokio_pipe::{PipeRead, PipeWrite};
+
         struct PipeFn {
             sfd: AsyncFd<OwnedFd>,
             dfd: AsyncFd<OwnedFd>,
-            pipe: (PipeRead, PipeWrite),
+            pipe: (AsyncFd<OwnedFd>, AsyncFd<OwnedFd>),
             bufsz: usize,
         }
         impl SpliceFn for PipeFn {
             fn read(&mut self) -> BoxFuture<'_, IoResult<usize>> {
-                self.pipe
-                    .1
-                    .splice_from(&mut self.sfd, None, self.bufsz)
-                    .boxed()
+                async_splice(&mut self.sfd, &self.pipe.1, self.bufsz, false).boxed()
             }
             fn write(&mut self, more: bool) -> BoxFuture<'_, IoResult<usize>> {
-                self.pipe
-                    .0
-                    .splice_to(&self.dfd, None, self.bufsz, more)
-                    .boxed()
+                async_splice(&mut self.pipe.0, &self.dfd, self.bufsz, more).boxed()
             }
         }
+
         Box::new(PipeFn {
             sfd: src.rawfd.unwrap(),
             dfd: dst.rawfd.unwrap(),
-            pipe: tokio_pipe::pipe().context("pipe")?,
+            pipe: pipe().context("pipe")?,
             bufsz: params.buffer_size,
         })
     } else {
@@ -184,7 +180,7 @@ where
             ret = async {pipe_fn.read().await}, if have_rawfd => {
                 let len = ret.with_context(|| format!("pipe_read from {}", src.name))?;
                 if len > 0 {
-                    log::debug!("pipe_read {} bytes, more_data?={}", len, len >= params.buffer_size);
+                    // log::debug!("pipe_read {} bytes, more_data?={}", len, len >= params.buffer_size);
                     let a = pipe_fn.write(len >= params.buffer_size);
                     a.await.with_context(|| format!("pipe_write to {}", dst.name))?;
                     stat.incr_sent_bytes(len);
