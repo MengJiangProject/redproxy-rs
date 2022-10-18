@@ -8,6 +8,19 @@ use crate::context::TargetAddress;
 pub trait RW: AsyncBufRead + AsyncWriteExt + Send + Sync + Unpin {}
 impl<T> RW for T where T: AsyncBufRead + AsyncWriteExt + Send + Sync + Unpin {}
 
+pub const SOCKS_VER_4: u8 = 4u8;
+pub const SOCKS_VER_5: u8 = 5u8;
+pub const SOCKS_CMD_CONNECT: u8 = 1u8;
+pub const SOCKS_CMD_BIND: u8 = 2u8;
+pub const SOCKS_CMD_UDP_ASSOCIATE: u8 = 3u8;
+pub const SOCKS_ATYP_INET4: u8 = 1u8;
+pub const SOCKS_ATYP_DOMAIN: u8 = 3u8;
+pub const SOCKS_ATYP_INET6: u8 = 4u8;
+pub const SOCKS_AUTH_NONE: u8 = 0u8;
+pub const SOCKS_AUTH_USRPWD: u8 = 2u8;
+pub const SOCKS_REPLY_OK: u8 = 0u8;
+pub const SOCKS_REPLY_GENERAL_FAILURE: u8 = 1u8;
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct SocksRequest<T> {
     pub version: u8,
@@ -38,8 +51,8 @@ impl<T> SocksRequest<T> {
     ) -> Result<Self, Error> {
         let version = socket.read_u8().await.context("read ver")?;
         match version {
-            4 => Self::read_v4(socket, auth).await,
-            5 => Self::read_v5(socket, auth).await,
+            SOCKS_VER_4 => Self::read_v4(socket, auth).await,
+            SOCKS_VER_5 => Self::read_v5(socket, auth).await,
             _ => bail!("Unknown socks version: {}", version),
         }
     }
@@ -59,7 +72,7 @@ impl<T> SocksRequest<T> {
         };
         let auth = auth.auth_v4(client_id).await?;
         Ok(Self {
-            version: 4,
+            version: SOCKS_VER_4,
             cmd,
             target,
             auth,
@@ -82,7 +95,10 @@ impl<T> SocksRequest<T> {
 
         // authentication
         let method = method.unwrap();
-        socket.write(&[5, method]).await.context("write")?;
+        socket
+            .write(&[SOCKS_VER_5, method])
+            .await
+            .context("write")?;
         socket.flush().await.context("flush")?;
         let auth = auth.auth_v5(method, socket).await?;
 
@@ -92,17 +108,17 @@ impl<T> SocksRequest<T> {
         let _rsv = socket.read_u8().await.context("read")?;
         let atype = socket.read_u8().await.context("read addr type")?;
         let target = match atype {
-            1 => {
+            SOCKS_ATYP_INET4 => {
                 let dst = socket.read_u32().await.context("read dst")?;
                 let dport = socket.read_u16().await.context("read port")?;
                 (dst, dport).into()
             }
-            3 => {
+            SOCKS_ATYP_DOMAIN => {
                 let domain = read_length_and_string(socket).await?;
                 let dport = socket.read_u16().await.context("read port")?;
                 TargetAddress::DomainPort(domain, dport)
             }
-            4 => {
+            SOCKS_ATYP_INET6 => {
                 let mut dst = [0u8; 16];
                 socket.read_exact(&mut dst).await.context("read domain")?;
                 let dport = socket.read_u16().await.context("read port")?;
@@ -123,8 +139,8 @@ impl<T> SocksRequest<T> {
         auth: A,
     ) -> Result<(), Error> {
         match self.version {
-            4 => self.write_v4(socket, auth).await,
-            5 => self.write_v5(socket, auth).await,
+            SOCKS_VER_4 => self.write_v4(socket, auth).await,
+            SOCKS_VER_5 => self.write_v5(socket, auth).await,
             _ => bail!("not supported version: {}", self.version),
         }?;
         socket.flush().await.context("flush")
@@ -192,11 +208,11 @@ impl<T> SocksRequest<T> {
             TargetAddress::DomainPort(domain, port) => {
                 let mut x = Vec::from(domain.as_bytes());
                 x.insert(0, x.len() as u8);
-                (3u8, x, *port)
+                (SOCKS_ATYP_DOMAIN, x, *port)
             }
             TargetAddress::SocketAddr(a) => match a.ip() {
-                IpAddr::V6(v6) => (4u8, v6.octets().into(), a.port()),
-                IpAddr::V4(v4) => (1u8, v4.octets().into(), a.port()),
+                IpAddr::V6(v6) => (SOCKS_ATYP_INET6, v6.octets().into(), a.port()),
+                IpAddr::V4(v4) => (SOCKS_ATYP_INET4, v4.octets().into(), a.port()),
             },
             _ => unreachable!(),
         };
@@ -228,7 +244,7 @@ impl SocksAuthServer<()> for NoAuth {
 #[async_trait]
 impl SocksAuthClient<()> for NoAuth {
     fn supported_methods(&self, _: &()) -> &[u8] {
-        &[0]
+        &[SOCKS_AUTH_NONE]
     }
     async fn auth_v4(&self, _: &()) -> Result<String, Error> {
         Ok("NoAuth".into())
@@ -262,10 +278,10 @@ impl PasswordAuth {
 #[async_trait]
 impl SocksAuthServer<Option<(String, String)>> for PasswordAuth {
     fn select_method(&self, methods: &[u8]) -> Option<u8> {
-        if methods.contains(&0) && !self.required {
-            Some(0)
-        } else if methods.contains(&2) {
-            Some(2)
+        if methods.contains(&SOCKS_AUTH_NONE) && !self.required {
+            Some(SOCKS_AUTH_NONE)
+        } else if methods.contains(&SOCKS_AUTH_USRPWD) {
+            Some(SOCKS_AUTH_USRPWD)
         } else {
             None
         }
@@ -279,8 +295,8 @@ impl SocksAuthServer<Option<(String, String)>> for PasswordAuth {
         socket: &mut IO,
     ) -> Result<Option<(String, String)>, Error> {
         match method {
-            0 => Ok(None),
-            2 => {
+            SOCKS_AUTH_NONE => Ok(None),
+            SOCKS_AUTH_USRPWD => {
                 let _ver = socket.read_u8().await.context("auth version")?;
                 let user = read_length_and_string(socket).await?;
                 let pass = read_length_and_string(socket).await?;
@@ -298,9 +314,9 @@ impl SocksAuthServer<Option<(String, String)>> for PasswordAuth {
 impl SocksAuthClient<Option<(String, String)>> for PasswordAuth {
     fn supported_methods(&self, data: &Option<(String, String)>) -> &[u8] {
         if data.is_some() {
-            &[0, 2]
+            &[SOCKS_AUTH_NONE, SOCKS_AUTH_USRPWD]
         } else {
-            &[0]
+            &[SOCKS_AUTH_NONE]
         }
     }
 
@@ -316,8 +332,8 @@ impl SocksAuthClient<Option<(String, String)>> for PasswordAuth {
         socket: &mut IO,
     ) -> Result<(), Error> {
         match method {
-            0 => Ok(()),
-            2 => {
+            SOCKS_AUTH_NONE => Ok(()),
+            SOCKS_AUTH_USRPWD => {
                 let (user, pass) = data.as_ref().unwrap();
                 socket.write_u8(1).await.context("auth version")?;
                 socket
@@ -333,7 +349,7 @@ impl SocksAuthClient<Option<(String, String)>> for PasswordAuth {
                 socket.flush().await.context("auth")?;
                 let _ver = socket.read_u8().await.context("auth result")?;
                 let result = socket.read_u8().await.context("auth result")?;
-                if result == 0 {
+                if result == SOCKS_REPLY_OK {
                     Ok(())
                 } else {
                     bail!("authenication failed")
@@ -379,17 +395,17 @@ impl SocksResponse {
         let atype = socket.read_u8().await.context("read addr type")?;
         // trace!("ver:{} cmd:{} atype:{}", version, cmd, atype);
         let target = match atype {
-            1 => {
+            SOCKS_ATYP_INET4 => {
                 let dst = socket.read_u32().await.context("read dst")?;
                 let dport = socket.read_u16().await.context("read port")?;
                 (dst, dport).into()
             }
-            3 => {
+            SOCKS_ATYP_DOMAIN => {
                 let domain = read_length_and_string(socket).await?;
                 let dport = socket.read_u16().await.context("read port")?;
                 TargetAddress::DomainPort(domain, dport)
             }
-            4 => {
+            SOCKS_ATYP_INET6 => {
                 let mut dst = [0u8; 16];
                 socket.read_exact(&mut dst).await.context("read domain")?;
                 let dport = socket.read_u16().await.context("read port")?;
@@ -405,8 +421,8 @@ impl SocksResponse {
     }
     pub async fn write_to<IO: RW>(&self, socket: &mut IO) -> Result<(), Error> {
         match self.version {
-            4 => self.write_v4(socket).await,
-            5 => self.write_v5(socket).await,
+            SOCKS_VER_4 => self.write_v4(socket).await,
+            SOCKS_VER_5 => self.write_v5(socket).await,
             _ => bail!("not supported version: {}", self.version),
         }?;
         socket.flush().await.context("flush")
@@ -416,12 +432,12 @@ impl SocksResponse {
         let cmd = if self.cmd == 0 { 90 } else { 91 }; //map v5 response code to v4
         socket.write_u8(cmd).await.context("cmd")?;
         let (dst, dport) = match &self.target {
-            TargetAddress::DomainPort(_, port) => ([0u8, 0, 0, 1], *port),
+            TargetAddress::DomainPort(_, port) => ([0, 0, 0, 1], *port),
             TargetAddress::SocketAddr(a) => {
                 if let IpAddr::V4(v4) = a.ip() {
                     (v4.octets(), a.port())
                 } else {
-                    ([0, 0, 0, 1], a.port())
+                    bail!("ipv6 not supported in socks4: {}", self.target)
                 }
             }
             _ => unreachable!(),
@@ -436,13 +452,14 @@ impl SocksResponse {
         socket.write_u8(0).await.context("write")?;
         let (t, addr, port) = match &self.target {
             TargetAddress::DomainPort(domain, port) => {
-                let mut x = Vec::from(domain.as_bytes());
-                x.insert(0, x.len() as u8);
-                (3u8, x, *port)
+                let bytes = domain.as_bytes();
+                let mut x = vec![bytes.len() as u8];
+                x.extend(bytes);
+                (SOCKS_ATYP_DOMAIN, x, *port)
             }
             TargetAddress::SocketAddr(a) => match a.ip() {
-                IpAddr::V6(v6) => (4u8, v6.octets().into(), a.port()),
-                IpAddr::V4(v4) => (1u8, v4.octets().into(), a.port()),
+                IpAddr::V6(v6) => (SOCKS_ATYP_INET6, v6.octets().into(), a.port()),
+                IpAddr::V4(v4) => (SOCKS_ATYP_INET4, v4.octets().into(), a.port()),
             },
             _ => unreachable!(),
         };

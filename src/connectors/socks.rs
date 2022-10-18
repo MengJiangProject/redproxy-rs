@@ -10,7 +10,7 @@ use tokio_rustls::rustls::ServerName;
 use crate::{
     common::{
         set_keepalive,
-        socks::{PasswordAuth, SocksRequest, SocksResponse},
+        socks::{PasswordAuth, SocksRequest, SocksResponse, SOCKS_CMD_CONNECT, SOCKS_REPLY_OK},
         tls::TlsClientConfig,
     },
     context::{make_buffered_stream, ContextRef},
@@ -107,13 +107,13 @@ impl super::Connector for SocksConnector {
             .map(|auth| (auth.username, auth.password));
         let req = SocksRequest {
             version: self.version,
-            cmd: 1,
+            cmd: SOCKS_CMD_CONNECT,
             target: ctx.read().await.target(),
             auth,
         };
         req.write_to(&mut server, PasswordAuth::optional()).await?;
         let resp = SocksResponse::read_from(&mut server).await?;
-        if resp.cmd != 0 {
+        if resp.cmd != SOCKS_REPLY_OK {
             bail!("upstream server failure: {:?}", resp.cmd);
         }
         ctx.write()

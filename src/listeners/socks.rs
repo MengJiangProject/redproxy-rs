@@ -13,7 +13,9 @@ use crate::{
     common::{
         auth::AuthData,
         set_keepalive,
-        socks::{PasswordAuth, SocksRequest, SocksResponse},
+        socks::{
+            PasswordAuth, SocksRequest, SocksResponse, SOCKS_REPLY_GENERAL_FAILURE, SOCKS_REPLY_OK,
+        },
         tls::TlsServerConfig,
     },
     context::{make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps},
@@ -149,7 +151,7 @@ struct Callback {
 impl ContextCallback for Callback {
     async fn on_connect(&self, ctx: &mut Context) {
         let version = self.version;
-        let cmd = 0;
+        let cmd = SOCKS_REPLY_OK;
         let target = ctx.target();
         let socket = ctx.borrow_client_stream();
         let resp = SocksResponse {
@@ -163,7 +165,7 @@ impl ContextCallback for Callback {
     }
     async fn on_error(&self, ctx: &mut Context, _error: Error) {
         let version = self.version;
-        let cmd = 1;
+        let cmd = SOCKS_REPLY_GENERAL_FAILURE;
         let target = ctx.target();
         let socket = ctx.borrow_client_stream();
         if socket.is_none() {
