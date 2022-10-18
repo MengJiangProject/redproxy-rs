@@ -136,13 +136,15 @@ impl<T> SocksRequest<T> {
     ) -> Result<(), Error> {
         socket.write_u8(self.version).await.context("version")?;
         socket.write_u8(self.cmd).await.context("cmd")?;
-        let (dst, dport) = match &self.target {
-            TargetAddress::DomainPort(_, port) => ([0u8, 0, 0, 1], *port),
+        let (dst, dport, target) = match &self.target {
+            TargetAddress::DomainPort(domain, port) => {
+                ([0, 0, 0, 1], *port, Some(domain.as_bytes()))
+            }
             TargetAddress::SocketAddr(a) => {
                 if let IpAddr::V4(v4) = a.ip() {
-                    (v4.octets(), a.port())
+                    (v4.octets(), a.port(), None)
                 } else {
-                    ([0, 0, 0, 1], a.port())
+                    bail!("ipv6 not supported in socks4: {}", self.target)
                 }
             }
             _ => unreachable!(),
@@ -152,6 +154,10 @@ impl<T> SocksRequest<T> {
         let cid = auth.auth_v4(&self.auth).await?;
         socket.write(cid.as_bytes()).await.context("cid")?;
         socket.write_u8(0).await.context("cid")?;
+        if let Some(target) = target {
+            socket.write(target).await.context("target")?;
+            socket.write_u8(0).await.context("target")?;
+        }
         Ok(())
     }
     pub async fn write_v5<IO: RW, A: SocksAuthClient<T>>(
@@ -299,7 +305,8 @@ impl SocksAuthClient<Option<(String, String)>> for PasswordAuth {
     }
 
     async fn auth_v4(&self, data: &Option<(String, String)>) -> Result<String, Error> {
-        Ok(format!("{:?}", data))
+        data.as_ref()
+            .map_or_else(|| Ok("".to_owned()), |(user, _)| Ok(user.to_owned()))
     }
 
     async fn auth_v5<IO: RW>(
@@ -544,6 +551,24 @@ mod tests {
                 .unwrap(),
             output
         );
+    }
+    #[test(tokio::test)]
+    async fn write_request_v4a() {
+        let output = [
+            4, 1, 0, 5, 0, 0, 0, 1, b'a', b'b', b'c', 0, b'x', b'y', b'z', 0,
+        ];
+        let input = SocksRequest {
+            version: 4,
+            cmd: 1,
+            target: "xyz:5".parse().unwrap(),
+            auth: Some(("abc".to_string(), "".to_string())),
+        };
+        let stream = Builder::new().write(&output).build();
+        let mut stream = BufReader::new(stream);
+        input
+            .write_to(&mut stream, PasswordAuth::required())
+            .await
+            .unwrap();
     }
     #[test(tokio::test)]
     async fn write_request_v5() {
