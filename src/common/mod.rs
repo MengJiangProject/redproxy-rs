@@ -1,4 +1,4 @@
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
 
 pub mod auth;
 pub mod dns;
@@ -45,4 +45,12 @@ pub fn set_keepalive(stream: &tokio::net::TcpStream) -> Result<(), easy_error::E
     use easy_error::ResultExt;
     use std::os::windows::prelude::AsRawSocket;
     windows::set_keepalive(stream.as_raw_socket() as _, true).context("setsockopt")
+}
+
+pub fn into_unspecified(source: SocketAddr) -> SocketAddr {
+    if source.is_ipv4() {
+        SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)
+    } else {
+        SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0)
+    }
 }

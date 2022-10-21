@@ -18,14 +18,14 @@ use nix::{
 };
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
+use std::io::Result as IoResult;
 use std::{
     io::IoSliceMut,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     num::NonZeroUsize,
     os::unix::prelude::{AsRawFd, RawFd},
     sync::Arc,
 };
-use std::{io::Result as IoResult, net::SocketAddrV4};
 use tokio::{
     io::unix::AsyncFd,
     net::{TcpListener, UdpSocket},
@@ -38,7 +38,7 @@ use tokio::{
 use crate::{
     common::{
         frames::{Frame, FrameReader, FrameWriter},
-        set_keepalive, try_map_v4_addr,
+        into_unspecified, set_keepalive, try_map_v4_addr,
         udp::{setup_udp_session, udp_socket},
     },
     context::{
@@ -235,12 +235,7 @@ impl TProxyListener {
             if self.udp_full_cone {
                 let r = TproxyReader::new(rx);
                 let w = TproxyWriter::new(src, inner.clone());
-                let target = if dst.is_ipv4() {
-                    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
-                } else {
-                    SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0))
-                }
-                .into();
+                let target = into_unspecified(dst).into();
                 ctx.write()
                     .await
                     .set_target(target)

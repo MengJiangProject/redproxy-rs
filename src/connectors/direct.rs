@@ -1,6 +1,6 @@
 use std::{
     io::ErrorKind,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, SocketAddr},
     sync::Arc,
 };
 
@@ -16,7 +16,7 @@ use crate::{
     common::{
         dns::{AddressFamily, DnsConfig},
         frames::{Frame, FrameIO, FrameReader, FrameWriter},
-        set_keepalive,
+        into_unspecified, set_keepalive,
         udp::udp_socket,
     },
     context::{make_buffered_stream, ContextRef, Feature, TargetAddress},
@@ -113,11 +113,9 @@ impl super::Connector for DirectConnector {
             }
             Feature::UdpForward | Feature::UdpBind => {
                 let local = if let Some(bind) = self.bind {
-                    bind
-                } else if remote.is_ipv4() {
-                    IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+                    SocketAddr::new(bind, 0)
                 } else {
-                    IpAddr::V6(Ipv6Addr::UNSPECIFIED)
+                    into_unspecified(remote)
                 };
                 let source = ctx
                     .read()
@@ -126,13 +124,13 @@ impl super::Connector for DirectConnector {
                     .unwrap_or("")
                     .to_owned();
                 let local = if source.is_empty() {
-                    SocketAddr::new(local, 0)
+                    local
                 } else {
                     self.udp_binds
                         .get(&source)
                         .await
                         .map(|x| x.to_owned())
-                        .unwrap_or_else(|| SocketAddr::new(local, 0))
+                        .unwrap_or(local)
                 };
 
                 let server = udp_socket(local, Some(remote), false).context("setup socket")?;
