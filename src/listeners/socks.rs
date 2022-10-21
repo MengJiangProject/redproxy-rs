@@ -169,7 +169,10 @@ impl SocksListener {
                 }
                 let local = into_unspecified(source);
                 let remote = if self.enforce_udp_client {
-                    request.target.as_socket_addr()
+                    request
+                        .target
+                        .as_socket_addr()
+                        .filter(|x| !x.ip().is_unspecified())
                 } else {
                     None
                 };
