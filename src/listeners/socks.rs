@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use easy_error::{err_msg, Error, ResultExt};
 use futures::TryFutureExt;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::{
@@ -26,14 +26,21 @@ use crate::{
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SocksListener {
     name: String,
     bind: SocketAddr,
     tls: Option<TlsServerConfig>,
     #[serde(default)]
     auth: AuthData,
+    #[serde(default = "default_allow_udp")]
+    allow_udp: bool,
     #[serde(default)]
     enforce_udp_client: bool,
+}
+
+fn default_allow_udp() -> bool {
+    true
 }
 
 pub fn from_value(value: &serde_yaml::Value) -> Result<Box<dyn Listener>, Error> {
@@ -155,6 +162,11 @@ impl SocksListener {
                 debug!("not supported cmd: {:?}", request.cmd);
             }
             SOCKS_CMD_UDP_ASSOCIATE => {
+                if !self.allow_udp {
+                    ctx.on_error(err_msg("not supported")).await;
+                    debug!("udp not allowed");
+                    return Ok(());
+                }
                 let local = into_unspecified(source);
                 let remote = if self.enforce_udp_client {
                     request.target.as_socket_addr()
