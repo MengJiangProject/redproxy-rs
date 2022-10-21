@@ -24,6 +24,7 @@ use crate::{
 };
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DirectConnector {
     name: String,
     bind: Option<IpAddr>,

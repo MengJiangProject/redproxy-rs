@@ -51,6 +51,7 @@ use crate::{
 use super::Listener;
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TProxyListener {
     name: String,
     bind: SocketAddr,

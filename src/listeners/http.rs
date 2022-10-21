@@ -15,6 +15,7 @@ use crate::listeners::Listener;
 use crate::GlobalState;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct HttpListener {
     name: String,
     bind: SocketAddr,

@@ -16,6 +16,7 @@ use crate::{
 use super::ConnectorRef;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct HttpConnector {
     name: String,
     server: String,
