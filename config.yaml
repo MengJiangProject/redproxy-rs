@@ -33,9 +33,9 @@ listeners:
     # full cone NAT is slower and unable to filter with dst address,
     # restrictive NAT is a little faster and able to filter with dst address
     # NOTE: socks5 upstreams only supports full cone NAT
-    udp_full_cone: false
+    udpFullCone: false
     # default: 128, only applies for full cone NAT, controls how many sockets to be cached for sending udp replies.
-    udp_max_socket: 256
+    udpMaxSocket: 256
 
   - name: udp-reverse
     type: reverse
@@ -57,7 +57,7 @@ listeners:
   - name: socks
     bind: 0.0.0.0:1080
     allowUdp: true
-    enforceUdpClient: false
+    enforceUdpClient: false # refs RFC1928 page 6 "The server MAY use this information to limit access to the association."
     auth:
       # required means client MUST send username,
       # if it's false, user/pass is still asked from client but not check agaist following list
