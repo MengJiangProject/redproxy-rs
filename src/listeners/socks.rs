@@ -12,13 +12,15 @@ use tokio::{
 use crate::{
     common::{
         auth::AuthData,
-        set_keepalive,
+        into_unspecified, set_keepalive,
         socks::{
-            PasswordAuth, SocksRequest, SocksResponse, SOCKS_REPLY_GENERAL_FAILURE, SOCKS_REPLY_OK,
+            frames::setup_udp_session, PasswordAuth, SocksRequest, SocksResponse, SOCKS_CMD_BIND,
+            SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE, SOCKS_REPLY_GENERAL_FAILURE,
+            SOCKS_REPLY_OK,
         },
         tls::TlsServerConfig,
     },
-    context::{make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps},
+    context::{make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps, Feature},
     listeners::Listener,
     GlobalState,
 };
@@ -30,6 +32,8 @@ pub struct SocksListener {
     tls: Option<TlsServerConfig>,
     #[serde(default)]
     auth: AuthData,
+    #[serde(default)]
+    enforce_udp_client: bool,
 }
 
 pub fn from_value(value: &serde_yaml::Value) -> Result<Box<dyn Listener>, Error> {
@@ -125,26 +129,66 @@ impl SocksListener {
 
         ctx.write()
             .await
-            .set_target(request.target)
             .set_extra(
                 "user",
                 request.auth.as_ref().map(|a| a.0.as_str()).unwrap_or(""),
             )
             .set_callback(Callback {
+                cmd: request.cmd,
                 version: request.version,
+                local_addr: None,
             })
             .set_client_stream(socket);
-        if self.auth.check(&request.auth).await {
-            ctx.enqueue(&queue).await?;
-        } else {
+
+        if !self.auth.check(&request.auth).await {
             ctx.on_error(err_msg("not authencated")).await;
             debug!("client not authencated: {:?}", request.auth);
+            return Ok(());
+        }
+        match request.cmd {
+            SOCKS_CMD_CONNECT => {
+                ctx.write().await.set_target(request.target);
+                ctx.enqueue(&queue).await?;
+            }
+            SOCKS_CMD_BIND => {
+                ctx.on_error(err_msg("not supported")).await;
+                debug!("not supported cmd: {:?}", request.cmd);
+            }
+            SOCKS_CMD_UDP_ASSOCIATE => {
+                let local = into_unspecified(source);
+                let remote = if self.enforce_udp_client {
+                    request.target.as_socket_addr()
+                } else {
+                    None
+                };
+                let (local_addr, frames) = setup_udp_session(local, remote)
+                    .await
+                    .context("setup_udp_session")?;
+                ctx.write()
+                    .await
+                    .set_feature(Feature::UdpForward)
+                    .set_client_frames(frames)
+                    .set_callback(Callback {
+                        cmd: request.cmd,
+                        version: request.version,
+                        local_addr: Some(local_addr),
+                    })
+                    .set_idle_timeout(state.timeouts.udp);
+                ctx.enqueue(&queue).await?;
+            }
+            _ => {
+                ctx.on_error(err_msg("unknown cmd")).await;
+                debug!("unknown cmd: {:?}", request.cmd);
+            }
         }
         Ok(())
     }
 }
+
 struct Callback {
+    cmd: u8,
     version: u8,
+    local_addr: Option<SocketAddr>,
 }
 
 #[async_trait]
@@ -152,7 +196,11 @@ impl ContextCallback for Callback {
     async fn on_connect(&self, ctx: &mut Context) {
         let version = self.version;
         let cmd = SOCKS_REPLY_OK;
-        let target = ctx.target();
+        let target = if self.cmd == SOCKS_CMD_UDP_ASSOCIATE {
+            self.local_addr.unwrap().into()
+        } else {
+            ctx.target()
+        };
         let socket = ctx.borrow_client_stream();
         let resp = SocksResponse {
             version,

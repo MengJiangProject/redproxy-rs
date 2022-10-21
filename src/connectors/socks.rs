@@ -9,11 +9,14 @@ use tokio_rustls::rustls::ServerName;
 
 use crate::{
     common::{
-        set_keepalive,
-        socks::{PasswordAuth, SocksRequest, SocksResponse, SOCKS_CMD_CONNECT, SOCKS_REPLY_OK},
+        into_unspecified, set_keepalive,
+        socks::{
+            frames::setup_udp_session, PasswordAuth, SocksRequest, SocksResponse,
+            SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE, SOCKS_REPLY_OK,
+        },
         tls::TlsClientConfig,
     },
-    context::{make_buffered_stream, ContextRef},
+    context::{make_buffered_stream, ContextRef, Feature},
     GlobalState,
 };
 
@@ -100,14 +103,19 @@ impl super::Connector for SocksConnector {
         } else {
             make_buffered_stream(server)
         };
-
+        let feature = ctx.read().await.feature();
+        let cmd = match feature {
+            Feature::UdpBind => SOCKS_CMD_UDP_ASSOCIATE,
+            Feature::TcpForward => SOCKS_CMD_CONNECT,
+            _ => bail!("unknown supported feature: {:?}", feature),
+        };
         let auth = self
             .auth
             .to_owned()
             .map(|auth| (auth.username, auth.password));
         let req = SocksRequest {
             version: self.version,
-            cmd: SOCKS_CMD_CONNECT,
+            cmd,
             target: ctx.read().await.target(),
             auth,
         };
@@ -121,6 +129,17 @@ impl super::Connector for SocksConnector {
             .set_server_stream(server)
             .set_local_addr(local)
             .set_server_addr(remote);
+        if feature == Feature::UdpBind {
+            let remote = resp
+                .target
+                .as_socket_addr()
+                .ok_or_else(|| err_msg("bad bind address"))?;
+            let local = into_unspecified(remote);
+            let (_, frames) = setup_udp_session(local, Some(remote))
+                .await
+                .context("setup_udp_session")?;
+            ctx.write().await.set_server_frames(frames);
+        }
         Ok(())
     }
 }
