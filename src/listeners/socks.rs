@@ -125,7 +125,7 @@ impl SocksListener {
             required: self.auth.required,
         };
         let request = SocksRequest::read_from(&mut socket, auth_server).await?;
-        trace!("request {:?}", request);
+        debug!("request {:?}", request);
 
         ctx.write()
             .await
@@ -161,11 +161,13 @@ impl SocksListener {
                 } else {
                     None
                 };
+                let target = into_unspecified(local).into();
                 let (local_addr, frames) = setup_udp_session(local, remote)
                     .await
                     .context("setup_udp_session")?;
                 ctx.write()
                     .await
+                    .set_target(target)
                     .set_feature(Feature::UdpForward)
                     .set_client_frames(frames)
                     .set_callback(Callback {
