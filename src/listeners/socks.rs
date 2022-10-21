@@ -214,7 +214,7 @@ impl ContextCallback for Callback {
     async fn on_error(&self, ctx: &mut Context, _error: Error) {
         let version = self.version;
         let cmd = SOCKS_REPLY_GENERAL_FAILURE;
-        let target = ctx.target();
+        let target = "0.0.0.0:0".parse().unwrap();
         let socket = ctx.borrow_client_stream();
         if socket.is_none() {
             return;
