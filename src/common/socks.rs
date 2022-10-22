@@ -868,7 +868,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_decode_frame() {
         let input = Bytes::from_static(&[
-            5, 3, 0, 1, // ver 5 cmd 1 resv 0 type 4
+            5, 3, 0, 1, // ver 5 cmd 1 resv 0 type 1
             1, 1, 1, 1, // ipv4 address 1.1.1.1
             0, 53, // port 53
             1, 2, 3, 4, // data
