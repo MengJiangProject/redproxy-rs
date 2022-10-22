@@ -141,7 +141,6 @@ impl SocksListener {
                 request.auth.as_ref().map(|a| a.0.as_str()).unwrap_or(""),
             )
             .set_callback(Callback {
-                cmd: request.cmd,
                 version: request.version,
                 local_addr: None,
             })
@@ -186,7 +185,6 @@ impl SocksListener {
                     .set_feature(Feature::UdpForward)
                     .set_client_frames(frames)
                     .set_callback(Callback {
-                        cmd: request.cmd,
                         version: request.version,
                         local_addr: Some(local_addr),
                     })
@@ -203,7 +201,6 @@ impl SocksListener {
 }
 
 struct Callback {
-    cmd: u8,
     version: u8,
     local_addr: Option<SocketAddr>,
 }
@@ -213,11 +210,7 @@ impl ContextCallback for Callback {
     async fn on_connect(&self, ctx: &mut Context) {
         let version = self.version;
         let cmd = SOCKS_REPLY_OK;
-        let target = if self.cmd == SOCKS_CMD_UDP_ASSOCIATE {
-            self.local_addr.unwrap().into()
-        } else {
-            ctx.target()
-        };
+        let target = self.local_addr.map_or_else(|| ctx.target(), |x| x.into());
         let socket = ctx.borrow_client_stream();
         let resp = SocksResponse {
             version,
