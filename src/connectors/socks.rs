@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, sync::Arc};
+use std::{convert::TryFrom, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error, ResultExt};
@@ -131,12 +131,15 @@ impl super::Connector for SocksConnector {
             .set_local_addr(local)
             .set_server_addr(remote);
         if feature == Feature::UdpBind {
-            let remote = resp
+            let mut udp_remote = resp
                 .target
                 .as_socket_addr()
                 .ok_or_else(|| err_msg("bad bind address"))?;
-            let local = into_unspecified(remote);
-            let (_, frames) = setup_udp_session(local, Some(remote))
+            if udp_remote.ip().is_unspecified() {
+                udp_remote = SocketAddr::new(remote.ip(), udp_remote.port());
+            }
+            let udp_local = into_unspecified(remote);
+            let (_, frames) = setup_udp_session(udp_local, Some(udp_remote))
                 .await
                 .context("setup_udp_session")?;
             ctx.write().await.set_server_frames(frames);
