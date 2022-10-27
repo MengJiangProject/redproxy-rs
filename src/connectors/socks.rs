@@ -56,7 +56,7 @@ impl super::Connector for SocksConnector {
     }
 
     fn features(&self) -> &[Feature] {
-        &[Feature::TcpForward, Feature::UdpBind]
+        &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
     }
 
     async fn init(&mut self) -> Result<(), Error> {
@@ -110,7 +110,7 @@ impl super::Connector for SocksConnector {
         };
         let feature = ctx.read().await.feature();
         let cmd = match feature {
-            Feature::UdpBind => SOCKS_CMD_UDP_ASSOCIATE,
+            Feature::UdpBind | Feature::UdpForward => SOCKS_CMD_UDP_ASSOCIATE,
             Feature::TcpForward => SOCKS_CMD_CONNECT,
             _ => bail!("unknown supported feature: {:?}", feature),
         };
@@ -134,7 +134,7 @@ impl super::Connector for SocksConnector {
             .set_server_stream(server)
             .set_local_addr(local)
             .set_server_addr(remote);
-        if feature == Feature::UdpBind {
+        if feature == Feature::UdpBind || feature == Feature::UdpForward {
             let mut udp_remote = resp
                 .target
                 .as_socket_addr()
