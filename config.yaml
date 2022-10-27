@@ -58,6 +58,7 @@ listeners:
     bind: 0.0.0.0:1080
     allowUdp: true
     enforceUdpClient: false # refs RFC1928 page 6 "The server MAY use this information to limit access to the association."
+    # overrideUdpAddress: 127.0.0.1 # override ip address returned to client, useful if your server is behind NAT
     auth:
       # required means client MUST send username,
       # if it's false, user/pass is still asked from client but not check agaist following list

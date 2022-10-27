@@ -3,7 +3,10 @@ use easy_error::{err_msg, Error, ResultExt};
 use futures::TryFutureExt;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc::Sender,
@@ -37,6 +40,8 @@ pub struct SocksListener {
     allow_udp: bool,
     #[serde(default)]
     enforce_udp_client: bool,
+    #[serde(default)]
+    override_udp_address: Option<IpAddr>,
 }
 
 fn default_allow_udp() -> bool {
@@ -116,6 +121,7 @@ impl SocksListener {
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
     ) -> Result<(), Error> {
+        let local_addr = socket.local_addr().context("local_addr")?;
         set_keepalive(&socket)?;
         let tls_acceptor = self.tls.as_ref().map(|options| options.acceptor());
         let mut socket = if let Some(acceptor) = tls_acceptor {
@@ -142,7 +148,7 @@ impl SocksListener {
             )
             .set_callback(Callback {
                 version: request.version,
-                local_addr: None,
+                listen_addr: None,
             })
             .set_client_stream(socket);
 
@@ -176,9 +182,16 @@ impl SocksListener {
                     None
                 };
                 let target = into_unspecified(local).into();
-                let (local_addr, frames) = setup_udp_session(local, remote)
+                let (mut listen_addr, frames) = setup_udp_session(local, remote)
                     .await
                     .context("setup_udp_session")?;
+
+                if let Some(override_addr) = self.override_udp_address {
+                    listen_addr = SocketAddr::new(override_addr, listen_addr.port());
+                } else if listen_addr.ip().is_unspecified() {
+                    listen_addr = SocketAddr::new(local_addr.ip(), listen_addr.port());
+                }
+
                 ctx.write()
                     .await
                     .set_target(target)
@@ -186,7 +199,7 @@ impl SocksListener {
                     .set_client_frames(frames)
                     .set_callback(Callback {
                         version: request.version,
-                        local_addr: Some(local_addr),
+                        listen_addr: Some(listen_addr),
                     })
                     .set_idle_timeout(state.timeouts.udp);
                 ctx.enqueue(&queue).await?;
@@ -202,7 +215,7 @@ impl SocksListener {
 
 struct Callback {
     version: u8,
-    local_addr: Option<SocketAddr>,
+    listen_addr: Option<SocketAddr>,
 }
 
 #[async_trait]
@@ -210,7 +223,7 @@ impl ContextCallback for Callback {
     async fn on_connect(&self, ctx: &mut Context) {
         let version = self.version;
         let cmd = SOCKS_REPLY_OK;
-        let target = self.local_addr.map_or_else(|| ctx.target(), |x| x.into());
+        let target = self.listen_addr.map_or_else(|| ctx.target(), |x| x.into());
         let socket = ctx.borrow_client_stream();
         let resp = SocksResponse {
             version,
