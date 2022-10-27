@@ -55,6 +55,10 @@ impl super::Connector for SocksConnector {
         self.name.as_str()
     }
 
+    fn features(&self) -> &[Feature] {
+        &[Feature::TcpForward, Feature::UdpBind]
+    }
+
     async fn init(&mut self) -> Result<(), Error> {
         if let Some(Err(e)) = self.tls.as_mut().map(TlsClientConfig::init) {
             return Err(e);
