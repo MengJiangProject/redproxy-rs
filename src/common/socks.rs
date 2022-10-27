@@ -605,6 +605,25 @@ pub mod frames {
                 let dport = body.get_u16();
                 (dst, dport).into()
             }
+            SOCKS_ATYP_DOMAIN => {
+                if body.is_empty() {
+                    return Err(IoError::new(
+                        std::io::ErrorKind::InvalidData,
+                        "frame too short",
+                    ));
+                }
+                let len = body.get_u8() as usize;
+                if body.len() < len + 2 {
+                    return Err(IoError::new(
+                        std::io::ErrorKind::InvalidData,
+                        "frame too short",
+                    ));
+                }
+                let domain = String::from_utf8(body.split_to(len).to_vec())
+                    .map_err(|e| IoError::new(std::io::ErrorKind::InvalidData, e))?;
+                let dport = body.get_u16();
+                (domain, dport).into()
+            }
             _ => {
                 return Err(IoError::new(
                     std::io::ErrorKind::InvalidData,
@@ -633,6 +652,19 @@ pub mod frames {
                     body.put_u16(a.port());
                 }
             },
+            Some(TargetAddress::DomainPort(domain, port)) => {
+                let bytes = domain.as_bytes();
+                if bytes.len() > 255 {
+                    return Err(IoError::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("domain too long: {:?}", domain),
+                    ));
+                }
+                body.put_u8(SOCKS_ATYP_DOMAIN);
+                body.put_u8(bytes.len() as u8);
+                body.extend_from_slice(bytes);
+                body.put_u16(*port);
+            }
             _ => {
                 return Err(IoError::new(
                     std::io::ErrorKind::InvalidData,
