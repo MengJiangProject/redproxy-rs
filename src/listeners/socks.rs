@@ -1,9 +1,12 @@
 use async_trait::async_trait;
 use easy_error::{err_msg, Error, ResultExt};
 use futures::TryFutureExt;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc::Sender,
@@ -12,22 +15,37 @@ use tokio::{
 use crate::{
     common::{
         auth::AuthData,
-        set_keepalive,
-        socks::{PasswordAuth, SocksRequest, SocksResponse},
+        into_unspecified, set_keepalive,
+        socks::{
+            frames::setup_udp_session, PasswordAuth, SocksRequest, SocksResponse, SOCKS_CMD_BIND,
+            SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE, SOCKS_REPLY_GENERAL_FAILURE,
+            SOCKS_REPLY_OK,
+        },
         tls::TlsServerConfig,
     },
-    context::{make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps},
+    context::{make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps, Feature},
     listeners::Listener,
     GlobalState,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SocksListener {
     name: String,
     bind: SocketAddr,
     tls: Option<TlsServerConfig>,
     #[serde(default)]
     auth: AuthData,
+    #[serde(default = "default_allow_udp")]
+    allow_udp: bool,
+    #[serde(default)]
+    enforce_udp_client: bool,
+    #[serde(default)]
+    override_udp_address: Option<IpAddr>,
+}
+
+fn default_allow_udp() -> bool {
+    true
 }
 
 pub fn from_value(value: &serde_yaml::Value) -> Result<Box<dyn Listener>, Error> {
@@ -103,6 +121,7 @@ impl SocksListener {
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
     ) -> Result<(), Error> {
+        let local_addr = socket.local_addr().context("local_addr")?;
         set_keepalive(&socket)?;
         let tls_acceptor = self.tls.as_ref().map(|options| options.acceptor());
         let mut socket = if let Some(acceptor) = tls_acceptor {
@@ -119,38 +138,92 @@ impl SocksListener {
             required: self.auth.required,
         };
         let request = SocksRequest::read_from(&mut socket, auth_server).await?;
-        trace!("request {:?}", request);
+        debug!("request {:?}", request);
 
         ctx.write()
             .await
-            .set_target(request.target)
             .set_extra(
                 "user",
                 request.auth.as_ref().map(|a| a.0.as_str()).unwrap_or(""),
             )
             .set_callback(Callback {
                 version: request.version,
+                listen_addr: None,
             })
             .set_client_stream(socket);
-        if self.auth.check(&request.auth).await {
-            ctx.enqueue(&queue).await?;
-        } else {
+
+        if !self.auth.check(&request.auth).await {
             ctx.on_error(err_msg("not authencated")).await;
             debug!("client not authencated: {:?}", request.auth);
+            return Ok(());
+        }
+        match request.cmd {
+            SOCKS_CMD_CONNECT => {
+                ctx.write().await.set_target(request.target);
+                ctx.enqueue(&queue).await?;
+            }
+            SOCKS_CMD_BIND => {
+                ctx.on_error(err_msg("not supported")).await;
+                debug!("not supported cmd: {:?}", request.cmd);
+            }
+            SOCKS_CMD_UDP_ASSOCIATE => {
+                if !self.allow_udp {
+                    ctx.on_error(err_msg("not supported")).await;
+                    debug!("udp not allowed");
+                    return Ok(());
+                }
+                let local = into_unspecified(source);
+                let remote = if self.enforce_udp_client {
+                    request
+                        .target
+                        .as_socket_addr()
+                        .filter(|x| !x.ip().is_unspecified())
+                } else {
+                    None
+                };
+                let target = into_unspecified(local).into();
+                let (mut listen_addr, frames) = setup_udp_session(local, remote)
+                    .await
+                    .context("setup_udp_session")?;
+
+                if let Some(override_addr) = self.override_udp_address {
+                    listen_addr = SocketAddr::new(override_addr, listen_addr.port());
+                } else if listen_addr.ip().is_unspecified() {
+                    listen_addr = SocketAddr::new(local_addr.ip(), listen_addr.port());
+                }
+
+                ctx.write()
+                    .await
+                    .set_target(target)
+                    .set_feature(Feature::UdpForward)
+                    .set_client_frames(frames)
+                    .set_callback(Callback {
+                        version: request.version,
+                        listen_addr: Some(listen_addr),
+                    })
+                    .set_idle_timeout(state.timeouts.udp);
+                ctx.enqueue(&queue).await?;
+            }
+            _ => {
+                ctx.on_error(err_msg("unknown cmd")).await;
+                debug!("unknown cmd: {:?}", request.cmd);
+            }
         }
         Ok(())
     }
 }
+
 struct Callback {
     version: u8,
+    listen_addr: Option<SocketAddr>,
 }
 
 #[async_trait]
 impl ContextCallback for Callback {
     async fn on_connect(&self, ctx: &mut Context) {
         let version = self.version;
-        let cmd = 0;
-        let target = ctx.target();
+        let cmd = SOCKS_REPLY_OK;
+        let target = self.listen_addr.map_or_else(|| ctx.target(), |x| x.into());
         let socket = ctx.borrow_client_stream();
         let resp = SocksResponse {
             version,
@@ -163,8 +236,8 @@ impl ContextCallback for Callback {
     }
     async fn on_error(&self, ctx: &mut Context, _error: Error) {
         let version = self.version;
-        let cmd = 1;
-        let target = ctx.target();
+        let cmd = SOCKS_REPLY_GENERAL_FAILURE;
+        let target = "0.0.0.0:0".parse().unwrap();
         let socket = ctx.borrow_client_stream();
         if socket.is_none() {
             return;

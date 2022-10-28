@@ -19,7 +19,7 @@ const ATYP_HOST: u8 = 3u8;
 pub struct Frame {
     pub addr: Option<TargetAddress>,
     pub session_id: u32,
-    body: Bytes,
+    pub body: Bytes,
 }
 
 #[allow(dead_code)]

@@ -17,6 +17,7 @@ use crate::listeners::Listener;
 use crate::GlobalState;
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct QuicListener {
     name: String,
     bind: SocketAddr,

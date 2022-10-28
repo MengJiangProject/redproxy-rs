@@ -18,6 +18,7 @@ use crate::context::{ContextCallback, ContextRefOps};
 use crate::GlobalState;
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReverseProxyListener {
     name: String,
     bind: SocketAddr,

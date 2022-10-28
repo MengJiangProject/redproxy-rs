@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, sync::Arc};
+use std::{convert::TryFrom, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error, ResultExt};
@@ -9,17 +9,21 @@ use tokio_rustls::rustls::ServerName;
 
 use crate::{
     common::{
-        set_keepalive,
-        socks::{PasswordAuth, SocksRequest, SocksResponse},
+        into_unspecified, set_keepalive,
+        socks::{
+            frames::setup_udp_session, PasswordAuth, SocksRequest, SocksResponse,
+            SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE, SOCKS_REPLY_OK,
+        },
         tls::TlsClientConfig,
     },
-    context::{make_buffered_stream, ContextRef},
+    context::{make_buffered_stream, ContextRef, Feature},
     GlobalState,
 };
 
 use super::ConnectorRef;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SocksConnector {
     name: String,
     server: String,
@@ -49,6 +53,10 @@ pub fn from_value(value: &serde_yaml::Value) -> Result<ConnectorRef, Error> {
 impl super::Connector for SocksConnector {
     fn name(&self) -> &str {
         self.name.as_str()
+    }
+
+    fn features(&self) -> &[Feature] {
+        &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
     }
 
     async fn init(&mut self) -> Result<(), Error> {
@@ -100,20 +108,25 @@ impl super::Connector for SocksConnector {
         } else {
             make_buffered_stream(server)
         };
-
+        let feature = ctx.read().await.feature();
+        let cmd = match feature {
+            Feature::UdpBind | Feature::UdpForward => SOCKS_CMD_UDP_ASSOCIATE,
+            Feature::TcpForward => SOCKS_CMD_CONNECT,
+            _ => bail!("unknown supported feature: {:?}", feature),
+        };
         let auth = self
             .auth
             .to_owned()
             .map(|auth| (auth.username, auth.password));
         let req = SocksRequest {
             version: self.version,
-            cmd: 1,
+            cmd,
             target: ctx.read().await.target(),
             auth,
         };
         req.write_to(&mut server, PasswordAuth::optional()).await?;
         let resp = SocksResponse::read_from(&mut server).await?;
-        if resp.cmd != 0 {
+        if resp.cmd != SOCKS_REPLY_OK {
             bail!("upstream server failure: {:?}", resp.cmd);
         }
         ctx.write()
@@ -121,6 +134,20 @@ impl super::Connector for SocksConnector {
             .set_server_stream(server)
             .set_local_addr(local)
             .set_server_addr(remote);
+        if feature == Feature::UdpBind || feature == Feature::UdpForward {
+            let mut udp_remote = resp
+                .target
+                .as_socket_addr()
+                .ok_or_else(|| err_msg("bad bind address"))?;
+            if udp_remote.ip().is_unspecified() {
+                udp_remote = SocketAddr::new(remote.ip(), udp_remote.port());
+            }
+            let udp_local = into_unspecified(remote);
+            let (_, frames) = setup_udp_session(udp_local, Some(udp_remote))
+                .await
+                .context("setup_udp_session")?;
+            ctx.write().await.set_server_frames(frames);
+        }
         Ok(())
     }
 }

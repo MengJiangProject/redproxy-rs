@@ -27,6 +27,7 @@ use crate::{
 type QuicConn = (Connection, QuicFrameSessions);
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QuicConnector {
     name: String,
     server: String,

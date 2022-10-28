@@ -8,6 +8,19 @@ use crate::context::TargetAddress;
 pub trait RW: AsyncBufRead + AsyncWriteExt + Send + Sync + Unpin {}
 impl<T> RW for T where T: AsyncBufRead + AsyncWriteExt + Send + Sync + Unpin {}
 
+pub const SOCKS_VER_4: u8 = 4u8;
+pub const SOCKS_VER_5: u8 = 5u8;
+pub const SOCKS_CMD_CONNECT: u8 = 1u8;
+pub const SOCKS_CMD_BIND: u8 = 2u8;
+pub const SOCKS_CMD_UDP_ASSOCIATE: u8 = 3u8;
+pub const SOCKS_ATYP_INET4: u8 = 1u8;
+pub const SOCKS_ATYP_DOMAIN: u8 = 3u8;
+pub const SOCKS_ATYP_INET6: u8 = 4u8;
+pub const SOCKS_AUTH_NONE: u8 = 0u8;
+pub const SOCKS_AUTH_USRPWD: u8 = 2u8;
+pub const SOCKS_REPLY_OK: u8 = 0u8;
+pub const SOCKS_REPLY_GENERAL_FAILURE: u8 = 1u8;
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct SocksRequest<T> {
     pub version: u8,
@@ -38,8 +51,8 @@ impl<T> SocksRequest<T> {
     ) -> Result<Self, Error> {
         let version = socket.read_u8().await.context("read ver")?;
         match version {
-            4 => Self::read_v4(socket, auth).await,
-            5 => Self::read_v5(socket, auth).await,
+            SOCKS_VER_4 => Self::read_v4(socket, auth).await,
+            SOCKS_VER_5 => Self::read_v5(socket, auth).await,
             _ => bail!("Unknown socks version: {}", version),
         }
     }
@@ -59,7 +72,7 @@ impl<T> SocksRequest<T> {
         };
         let auth = auth.auth_v4(client_id).await?;
         Ok(Self {
-            version: 4,
+            version: SOCKS_VER_4,
             cmd,
             target,
             auth,
@@ -82,7 +95,10 @@ impl<T> SocksRequest<T> {
 
         // authentication
         let method = method.unwrap();
-        socket.write(&[5, method]).await.context("write")?;
+        socket
+            .write(&[SOCKS_VER_5, method])
+            .await
+            .context("write")?;
         socket.flush().await.context("flush")?;
         let auth = auth.auth_v5(method, socket).await?;
 
@@ -92,17 +108,17 @@ impl<T> SocksRequest<T> {
         let _rsv = socket.read_u8().await.context("read")?;
         let atype = socket.read_u8().await.context("read addr type")?;
         let target = match atype {
-            1 => {
+            SOCKS_ATYP_INET4 => {
                 let dst = socket.read_u32().await.context("read dst")?;
                 let dport = socket.read_u16().await.context("read port")?;
                 (dst, dport).into()
             }
-            3 => {
+            SOCKS_ATYP_DOMAIN => {
                 let domain = read_length_and_string(socket).await?;
                 let dport = socket.read_u16().await.context("read port")?;
                 TargetAddress::DomainPort(domain, dport)
             }
-            4 => {
+            SOCKS_ATYP_INET6 => {
                 let mut dst = [0u8; 16];
                 socket.read_exact(&mut dst).await.context("read domain")?;
                 let dport = socket.read_u16().await.context("read port")?;
@@ -123,8 +139,8 @@ impl<T> SocksRequest<T> {
         auth: A,
     ) -> Result<(), Error> {
         match self.version {
-            4 => self.write_v4(socket, auth).await,
-            5 => self.write_v5(socket, auth).await,
+            SOCKS_VER_4 => self.write_v4(socket, auth).await,
+            SOCKS_VER_5 => self.write_v5(socket, auth).await,
             _ => bail!("not supported version: {}", self.version),
         }?;
         socket.flush().await.context("flush")
@@ -136,13 +152,15 @@ impl<T> SocksRequest<T> {
     ) -> Result<(), Error> {
         socket.write_u8(self.version).await.context("version")?;
         socket.write_u8(self.cmd).await.context("cmd")?;
-        let (dst, dport) = match &self.target {
-            TargetAddress::DomainPort(_, port) => ([0u8, 0, 0, 1], *port),
+        let (dst, dport, target) = match &self.target {
+            TargetAddress::DomainPort(domain, port) => {
+                ([0, 0, 0, 1], *port, Some(domain.as_bytes()))
+            }
             TargetAddress::SocketAddr(a) => {
                 if let IpAddr::V4(v4) = a.ip() {
-                    (v4.octets(), a.port())
+                    (v4.octets(), a.port(), None)
                 } else {
-                    ([0, 0, 0, 1], a.port())
+                    bail!("ipv6 not supported in socks4: {}", self.target)
                 }
             }
             _ => unreachable!(),
@@ -152,6 +170,10 @@ impl<T> SocksRequest<T> {
         let cid = auth.auth_v4(&self.auth).await?;
         socket.write(cid.as_bytes()).await.context("cid")?;
         socket.write_u8(0).await.context("cid")?;
+        if let Some(target) = target {
+            socket.write(target).await.context("target")?;
+            socket.write_u8(0).await.context("target")?;
+        }
         Ok(())
     }
     pub async fn write_v5<IO: RW, A: SocksAuthClient<T>>(
@@ -186,11 +208,11 @@ impl<T> SocksRequest<T> {
             TargetAddress::DomainPort(domain, port) => {
                 let mut x = Vec::from(domain.as_bytes());
                 x.insert(0, x.len() as u8);
-                (3u8, x, *port)
+                (SOCKS_ATYP_DOMAIN, x, *port)
             }
             TargetAddress::SocketAddr(a) => match a.ip() {
-                IpAddr::V6(v6) => (4u8, v6.octets().into(), a.port()),
-                IpAddr::V4(v4) => (1u8, v4.octets().into(), a.port()),
+                IpAddr::V6(v6) => (SOCKS_ATYP_INET6, v6.octets().into(), a.port()),
+                IpAddr::V4(v4) => (SOCKS_ATYP_INET4, v4.octets().into(), a.port()),
             },
             _ => unreachable!(),
         };
@@ -222,7 +244,7 @@ impl SocksAuthServer<()> for NoAuth {
 #[async_trait]
 impl SocksAuthClient<()> for NoAuth {
     fn supported_methods(&self, _: &()) -> &[u8] {
-        &[0]
+        &[SOCKS_AUTH_NONE]
     }
     async fn auth_v4(&self, _: &()) -> Result<String, Error> {
         Ok("NoAuth".into())
@@ -256,10 +278,10 @@ impl PasswordAuth {
 #[async_trait]
 impl SocksAuthServer<Option<(String, String)>> for PasswordAuth {
     fn select_method(&self, methods: &[u8]) -> Option<u8> {
-        if methods.contains(&0) && !self.required {
-            Some(0)
-        } else if methods.contains(&2) {
-            Some(2)
+        if methods.contains(&SOCKS_AUTH_NONE) && !self.required {
+            Some(SOCKS_AUTH_NONE)
+        } else if methods.contains(&SOCKS_AUTH_USRPWD) {
+            Some(SOCKS_AUTH_USRPWD)
         } else {
             None
         }
@@ -273,8 +295,8 @@ impl SocksAuthServer<Option<(String, String)>> for PasswordAuth {
         socket: &mut IO,
     ) -> Result<Option<(String, String)>, Error> {
         match method {
-            0 => Ok(None),
-            2 => {
+            SOCKS_AUTH_NONE => Ok(None),
+            SOCKS_AUTH_USRPWD => {
                 let _ver = socket.read_u8().await.context("auth version")?;
                 let user = read_length_and_string(socket).await?;
                 let pass = read_length_and_string(socket).await?;
@@ -292,14 +314,15 @@ impl SocksAuthServer<Option<(String, String)>> for PasswordAuth {
 impl SocksAuthClient<Option<(String, String)>> for PasswordAuth {
     fn supported_methods(&self, data: &Option<(String, String)>) -> &[u8] {
         if data.is_some() {
-            &[0, 2]
+            &[SOCKS_AUTH_NONE, SOCKS_AUTH_USRPWD]
         } else {
-            &[0]
+            &[SOCKS_AUTH_NONE]
         }
     }
 
     async fn auth_v4(&self, data: &Option<(String, String)>) -> Result<String, Error> {
-        Ok(format!("{:?}", data))
+        data.as_ref()
+            .map_or_else(|| Ok("".to_owned()), |(user, _)| Ok(user.to_owned()))
     }
 
     async fn auth_v5<IO: RW>(
@@ -309,8 +332,8 @@ impl SocksAuthClient<Option<(String, String)>> for PasswordAuth {
         socket: &mut IO,
     ) -> Result<(), Error> {
         match method {
-            0 => Ok(()),
-            2 => {
+            SOCKS_AUTH_NONE => Ok(()),
+            SOCKS_AUTH_USRPWD => {
                 let (user, pass) = data.as_ref().unwrap();
                 socket.write_u8(1).await.context("auth version")?;
                 socket
@@ -326,7 +349,7 @@ impl SocksAuthClient<Option<(String, String)>> for PasswordAuth {
                 socket.flush().await.context("auth")?;
                 let _ver = socket.read_u8().await.context("auth result")?;
                 let result = socket.read_u8().await.context("auth result")?;
-                if result == 0 {
+                if result == SOCKS_REPLY_OK {
                     Ok(())
                 } else {
                     bail!("authenication failed")
@@ -372,17 +395,17 @@ impl SocksResponse {
         let atype = socket.read_u8().await.context("read addr type")?;
         // trace!("ver:{} cmd:{} atype:{}", version, cmd, atype);
         let target = match atype {
-            1 => {
+            SOCKS_ATYP_INET4 => {
                 let dst = socket.read_u32().await.context("read dst")?;
                 let dport = socket.read_u16().await.context("read port")?;
                 (dst, dport).into()
             }
-            3 => {
+            SOCKS_ATYP_DOMAIN => {
                 let domain = read_length_and_string(socket).await?;
                 let dport = socket.read_u16().await.context("read port")?;
                 TargetAddress::DomainPort(domain, dport)
             }
-            4 => {
+            SOCKS_ATYP_INET6 => {
                 let mut dst = [0u8; 16];
                 socket.read_exact(&mut dst).await.context("read domain")?;
                 let dport = socket.read_u16().await.context("read port")?;
@@ -398,8 +421,8 @@ impl SocksResponse {
     }
     pub async fn write_to<IO: RW>(&self, socket: &mut IO) -> Result<(), Error> {
         match self.version {
-            4 => self.write_v4(socket).await,
-            5 => self.write_v5(socket).await,
+            SOCKS_VER_4 => self.write_v4(socket).await,
+            SOCKS_VER_5 => self.write_v5(socket).await,
             _ => bail!("not supported version: {}", self.version),
         }?;
         socket.flush().await.context("flush")
@@ -409,12 +432,12 @@ impl SocksResponse {
         let cmd = if self.cmd == 0 { 90 } else { 91 }; //map v5 response code to v4
         socket.write_u8(cmd).await.context("cmd")?;
         let (dst, dport) = match &self.target {
-            TargetAddress::DomainPort(_, port) => ([0u8, 0, 0, 1], *port),
+            TargetAddress::DomainPort(_, port) => ([0, 0, 0, 1], *port),
             TargetAddress::SocketAddr(a) => {
                 if let IpAddr::V4(v4) = a.ip() {
                     (v4.octets(), a.port())
                 } else {
-                    ([0, 0, 0, 1], a.port())
+                    bail!("ipv6 not supported in socks4: {}", self.target)
                 }
             }
             _ => unreachable!(),
@@ -429,13 +452,14 @@ impl SocksResponse {
         socket.write_u8(0).await.context("write")?;
         let (t, addr, port) = match &self.target {
             TargetAddress::DomainPort(domain, port) => {
-                let mut x = Vec::from(domain.as_bytes());
-                x.insert(0, x.len() as u8);
-                (3u8, x, *port)
+                let bytes = domain.as_bytes();
+                let mut x = vec![bytes.len() as u8];
+                x.extend(bytes);
+                (SOCKS_ATYP_DOMAIN, x, *port)
             }
             TargetAddress::SocketAddr(a) => match a.ip() {
-                IpAddr::V6(v6) => (4u8, v6.octets().into(), a.port()),
-                IpAddr::V4(v4) => (1u8, v4.octets().into(), a.port()),
+                IpAddr::V6(v6) => (SOCKS_ATYP_INET6, v6.octets().into(), a.port()),
+                IpAddr::V4(v4) => (SOCKS_ATYP_INET4, v4.octets().into(), a.port()),
             },
             _ => unreachable!(),
         };
@@ -460,9 +484,206 @@ async fn read_null_terminated_string<IO: RW>(io: &mut IO) -> Result<String, Erro
     Ok(String::from_utf8_lossy(&buf).to_string())
 }
 
+pub mod frames {
+    use std::sync::Arc;
+    use std::{io::Error as IoError, io::Result as IoResult, net::SocketAddr};
+
+    use async_trait::async_trait;
+    use bytes::{Buf, BufMut, Bytes, BytesMut};
+    use tokio::net::UdpSocket;
+
+    use crate::common::frames::{Frame, FrameIO, FrameReader, FrameWriter};
+    use crate::context::TargetAddress;
+
+    use super::*;
+
+    pub async fn setup_udp_session(
+        local: SocketAddr,
+        remote: Option<SocketAddr>,
+    ) -> IoResult<(SocketAddr, FrameIO)> {
+        let socket = UdpSocket::bind(local).await?;
+        let bind_addr = socket.local_addr()?;
+        if let Some(remote) = remote {
+            socket.connect(remote).await?;
+        }
+        let socket = Arc::new(socket);
+        Ok((
+            bind_addr,
+            (
+                SocksFrameReader::new(remote, socket.clone()),
+                SocksFrameWriter::new(socket),
+            ),
+        ))
+    }
+
+    struct SocksFrameReader {
+        socket: Arc<UdpSocket>,
+        remote: Option<SocketAddr>,
+    }
+
+    impl SocksFrameReader {
+        fn new(remote: Option<SocketAddr>, socket: Arc<UdpSocket>) -> Box<Self> {
+            Self { remote, socket }.into()
+        }
+    }
+
+    #[async_trait]
+    impl FrameReader for SocksFrameReader {
+        async fn read(&mut self) -> IoResult<Option<Frame>> {
+            let mut buf = Frame::new();
+            let (_sz, addr) = buf.recv_from(&self.socket).await?;
+            if self.remote.is_none() {
+                self.socket.connect(addr).await?;
+                self.remote = Some(addr);
+            }
+            let buf = decode_socks_frame(buf)?;
+            Ok(Some(buf))
+        }
+    }
+
+    struct SocksFrameWriter {
+        socket: Arc<UdpSocket>,
+    }
+
+    impl SocksFrameWriter {
+        fn new(socket: Arc<UdpSocket>) -> Box<Self> {
+            Self { socket }.into()
+        }
+    }
+
+    #[async_trait]
+    impl FrameWriter for SocksFrameWriter {
+        async fn write(&mut self, frame: Frame) -> IoResult<usize> {
+            let frame = encode_socks_frame(frame)?;
+            self.socket.send(&frame).await
+        }
+        async fn shutdown(&mut self) -> IoResult<()> {
+            Ok(())
+        }
+    }
+
+    /*
+        +----+-----+-------+------+----------+----------+
+        |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
+        +----+-----+-------+------+----------+----------+
+        | 1  |  1  | X'00' |  1   | Variable |    2     |
+        +----+-----+-------+------+----------+----------+
+    */
+    pub fn decode_socks_frame(mut frame: Frame) -> IoResult<Frame> {
+        let body = &mut frame.body;
+        if body.len() < 4 {
+            return Err(IoError::new(
+                std::io::ErrorKind::InvalidData,
+                "frame too short",
+            ));
+        }
+        let _ver = body.get_u8();
+        let _cmd = body.get_u8();
+        let _rsv = body.get_u8();
+        let atyp = body.get_u8();
+        let target: TargetAddress = match atyp {
+            SOCKS_ATYP_INET4 => {
+                if body.len() < 6 {
+                    return Err(IoError::new(
+                        std::io::ErrorKind::InvalidData,
+                        "frame too short",
+                    ));
+                }
+                let dst = body.get_u32();
+                let dport = body.get_u16();
+                (dst, dport).into()
+            }
+            SOCKS_ATYP_INET6 => {
+                if body.len() < 18 {
+                    return Err(IoError::new(
+                        std::io::ErrorKind::InvalidData,
+                        "frame too short",
+                    ));
+                }
+                let mut dst = [0u8; 16];
+                body.copy_to_slice(&mut dst);
+                let dport = body.get_u16();
+                (dst, dport).into()
+            }
+            SOCKS_ATYP_DOMAIN => {
+                if body.is_empty() {
+                    return Err(IoError::new(
+                        std::io::ErrorKind::InvalidData,
+                        "frame too short",
+                    ));
+                }
+                let len = body.get_u8() as usize;
+                if body.len() < len + 2 {
+                    return Err(IoError::new(
+                        std::io::ErrorKind::InvalidData,
+                        "frame too short",
+                    ));
+                }
+                let domain = String::from_utf8(body.split_to(len).to_vec())
+                    .map_err(|e| IoError::new(std::io::ErrorKind::InvalidData, e))?;
+                let dport = body.get_u16();
+                (domain, dport).into()
+            }
+            _ => {
+                return Err(IoError::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("not supported atype {}", atyp),
+                ))
+            }
+        };
+        frame.addr = Some(target);
+        Ok(frame)
+    }
+    pub fn encode_socks_frame(frame: Frame) -> IoResult<Bytes> {
+        let mut body = BytesMut::with_capacity(65536);
+        body.put_u8(SOCKS_VER_5);
+        body.put_u8(SOCKS_CMD_UDP_ASSOCIATE);
+        body.put_u8(0);
+        match &frame.addr {
+            Some(TargetAddress::SocketAddr(a)) => match a.ip() {
+                IpAddr::V6(v6) => {
+                    body.put_u8(SOCKS_ATYP_INET6);
+                    body.extend_from_slice(&v6.octets());
+                    body.put_u16(a.port());
+                }
+                IpAddr::V4(v4) => {
+                    body.put_u8(SOCKS_ATYP_INET4);
+                    body.extend_from_slice(&v4.octets());
+                    body.put_u16(a.port());
+                }
+            },
+            Some(TargetAddress::DomainPort(domain, port)) => {
+                let bytes = domain.as_bytes();
+                if bytes.len() > 255 {
+                    return Err(IoError::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("domain too long: {:?}", domain),
+                    ));
+                }
+                body.put_u8(SOCKS_ATYP_DOMAIN);
+                body.put_u8(bytes.len() as u8);
+                body.extend_from_slice(bytes);
+                body.put_u16(*port);
+            }
+            _ => {
+                return Err(IoError::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("not supported addr {:?}", frame.addr),
+                ))
+            }
+        };
+        body.extend(frame.body());
+        Ok(body.freeze())
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::common::frames::Frame;
+
+    use super::frames::*;
     use super::*;
+    use bytes::Bytes;
     use test_log::test;
     use tokio::io::BufReader;
     use tokio_test::io::Builder;
@@ -544,6 +765,24 @@ mod tests {
                 .unwrap(),
             output
         );
+    }
+    #[test(tokio::test)]
+    async fn write_request_v4a() {
+        let output = [
+            4, 1, 0, 5, 0, 0, 0, 1, b'a', b'b', b'c', 0, b'x', b'y', b'z', 0,
+        ];
+        let input = SocksRequest {
+            version: 4,
+            cmd: 1,
+            target: "xyz:5".parse().unwrap(),
+            auth: Some(("abc".to_string(), "".to_string())),
+        };
+        let stream = Builder::new().write(&output).build();
+        let mut stream = BufReader::new(stream);
+        input
+            .write_to(&mut stream, PasswordAuth::required())
+            .await
+            .unwrap();
     }
     #[test(tokio::test)]
     async fn write_request_v5() {
@@ -641,5 +880,37 @@ mod tests {
         let stream = Builder::new().write(&write).build();
         let mut stream = BufReader::new(stream);
         output.write_to(&mut stream).await.unwrap();
+    }
+
+    #[test(tokio::test)]
+    async fn test_encode_frame() {
+        let input = Bytes::from_static(&[1, 2, 3, 4]);
+        let addr = "[::1]:5".parse().unwrap();
+        let mut frame = Frame::from_body(input);
+        frame.addr = Some(addr);
+        let expected = Bytes::from_static(&[
+            5, 3, 0, 4, // ver 5 cmd 1 resv 0 type 4
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, // ipv6 address ::1
+            0, 5, //port 5
+            1, 2, 3, 4, // data
+        ]);
+        assert_eq!(encode_socks_frame(frame).unwrap(), expected)
+    }
+
+    #[test(tokio::test)]
+    async fn test_decode_frame() {
+        let input = Bytes::from_static(&[
+            5, 3, 0, 1, // ver 5 cmd 1 resv 0 type 1
+            1, 1, 1, 1, // ipv4 address 1.1.1.1
+            0, 53, // port 53
+            1, 2, 3, 4, // data
+        ]);
+
+        let frame = Frame::from_body(input);
+        let body = Bytes::from_static(&[1, 2, 3, 4]);
+        let addr = "1.1.1.1:53".parse().ok();
+        let output = decode_socks_frame(frame).unwrap();
+        assert_eq!(output.body, body);
+        assert_eq!(output.addr, addr);
     }
 }
