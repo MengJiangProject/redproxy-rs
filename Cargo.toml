@@ -26,7 +26,7 @@ webpki-roots = "0.22.5"
 async-trait = "0.1.58"
 easy-error = "1.0.0"
 log = "0.4"
-env_logger = "0.9.1"
+env_logger = "0.10.0"
 yaml-rust = "0.4"
 serde = { version = "1.0", features = ["derive","rc"] }
 serde_yaml = "0.9.14"
