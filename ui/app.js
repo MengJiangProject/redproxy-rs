@@ -150,39 +150,84 @@ app.component('tab-history', {
 })
 
 app.component('tab-rules', {
-  template: `
-  <div class="rules-tab">
-    <ol class="list-group list-group-numbered">
-      <li v-for="item in list" class="list-group-item d-flex justify-content-between align-items-start">
-        <dl class="row ms-2 me-auto">
-          <dt v-if=item.filter>filter</dt>
-          <dd v-if=item.filter>{{item.filter}}</dd>
-          <dt>target</dt>
-          <dd>{{item.target}}</dd>
-        </dl>
-        <rule-stats :stats=item.stats></rule-stats>
-      </li>
-    </ol>
-  </div>`,
+  template: "#tab-rules",
   data() {
     return {
-      list: []
+      list: [],
+      editing: false
     }
   },
-  mounted() { this.loadData(); },
   methods: {
     async loadData() {
+      if (this.editing) return;
       let response = await fetch(API_PREFIX + '/rules')
       if (response.status !== 200) {
         console.log('Response Error', response);
         return;
       }
       let data = await response.json()
-      // console.info(data);
       this.list = data;
+    },
+    startEditing() {
+      // switch to editing mode
+      this.editing = true;
+    },
+    finishEditing() {
+      // switch back to non-editing mode
+      this.editing = false;
     }
+  },
+  mounted() {
+    this.loadData();
   }
 })
+
+app.component('edit-rules', {
+  template: "#tab-rules-edit",
+  props: ['rules'],
+  methods: {
+    addRule() {
+      // add a new rule to the rules array
+      this.rules.push({
+        filter: '',
+        target: '',
+      });
+    },
+    deleteRule(index) {
+      // delete the ruleat the specified index
+      this.rules.splice(index, 1);
+    },
+    async commitChanges() {
+      // commit changes to the rules on the API server
+      let response = await fetch(API_PREFIX + '/rules', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(this.rules)
+      });
+      if (response.status !== 200) {
+        console.log('Error committing changes', response);
+      } else {
+        // emit done event to indicate that the changes have been committed
+        this.$emit('done');
+      }
+    },
+    moveUp(index) {
+      // move the rule at the specified index up one position
+      let rule = this.rules[index];
+      this.rules.splice(index, 1);
+      this.rules.splice(index - 1, 0, rule);
+    },
+    moveDown(index) {
+      // move the rule at the specified index down one position
+      let rule = this.rules[index];
+      this.rules.splice(index, 1);
+      this.rules.splice(index + 1, 0, rule);
+    }
+  },
+  mounted() { }
+});
 
 app.component('rule-stats', {
   props: { stats: Object },
@@ -203,88 +248,21 @@ app.component('rule-stats', {
 })
 app.component('contexts', {
   props: { list: Array },
-  template: `
-  <table id="context-list" class="table table-striped table-hover">
-  <thead>
-    <tr>
-      <th scope="col">#</th>
-      <th scope="col">Source</th>
-      <th scope="col">Target</th>
-      <th scope="col">Listener</th>
-      <th scope="col">Connector</th>
-      <th scope="col">State</th>
-      <th scope="col" colspan="2">Stats</th>
-  </thead>
-  <tbody>
-    <context-row v-for="item in list" :item=item></context-row>
-  </tbody>
-  </table>`
+  template: "#context-list"
 })
 
 app.component('context-row', {
   props: { item: Object },
-  template: `
-<tr scope="row">
-  <td>{{ item.id }}</td>
-  <td>{{ item.source }}</td>
-  <td>{{ item.target }}</td>
-  <td>{{ item.listener }}</td>
-  <td>
-    <tooltip>
-      <template #tip>
-        local: {{ item.local_addr }}<br/>
-        remote: {{ item.server_addr }}
-      </template>
-      <template #content>{{ item.connector }}</template>
-    </tooltip>
-  </td>
-  <td><context-state :item=item></context-state></td>
-  <td class="nowrap">
-    <tooltip>
-      <template #tip>{{ item.client_stat.last_read.timeSince() }}</template>
-      <template #content>&#9650; {{ item.client_stat.read_bytes.fileSize() }}</template>
-    </tooltip>
-  </td>
-  <td class="nowrap">
-    <tooltip>
-      <template #tip>{{ item.server_stat.last_read.timeSince()}}</template>
-      <template #content>&#9660; {{ item.server_stat.read_bytes.fileSize() }}</template>
-    </tooltip>
-  </td>
-</tr>
-`
+  template: "#context-row"
 })
 
 app.component('tooltip', {
-  template: `
-  <span class="my_tooltip">
-    <slot name="content"></slot>
-    <span class="my_tooltiptext">
-      <slot name="tip"></slot>
-    </span>
-  </span>`,
+  template: "#tooltip",
 });
 
 app.component('context-state', {
   props: { item: Object },
-  template: `
-  <tooltip>
-    <template #content>
-      {{ state }}
-    </template>
-    <template #tip>
-      <table class="table-dark table-sm">
-        <tr v-for="st in item.state">
-          <td>{{ st.state }}</td>
-          <td>{{ st.time.timeSince() }}</td>
-        </tr>
-        <tr v-if=error>
-          <td>Error</td>
-          <td>{{ error }}</td>
-        </tr>
-      </table>
-    </template>
-  </tooltip>`,
+  template: "#context-state",
   computed: {
     state() {
       return this.item.state.last().state;
@@ -294,7 +272,6 @@ app.component('context-state', {
     }
   }
 })
-
 
 window.onload = function () {
   console.info("onload");
