@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use easy_error::{err_msg, Error, ResultExt};
 use futures::TryFutureExt;
-use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::{
     net::{IpAddr, SocketAddr},
@@ -11,6 +10,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc::Sender,
 };
+use tracing::{debug, error, info, warn};
 
 use crate::{
     common::{

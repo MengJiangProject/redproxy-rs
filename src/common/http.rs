@@ -1,6 +1,6 @@
 use easy_error::{err_msg, Error, ResultExt};
-use log::trace;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
+use tracing::trace;
 
 type Reader<'a> = &'a mut (dyn AsyncBufRead + Send + Unpin);
 type Writer<'a> = &'a mut (dyn AsyncWrite + Send + Unpin);

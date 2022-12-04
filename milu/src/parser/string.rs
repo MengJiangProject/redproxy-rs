@@ -52,7 +52,7 @@ where
     // a Result. In this case we take the hex bytes from parse_hex and attempt to
     // convert them to a u32.
     let parse_u32 = map_res(parse_delimited_hex, move |hex: Span| {
-        u32::from_str_radix(*hex, 16)
+        u32::from_str_radix(&hex, 16)
     });
 
     // map_opt is like map_res, but it takes an Option instead of a Result. If
@@ -152,7 +152,7 @@ where
         // string.
         |mut string, fragment| {
             match fragment {
-                StringFragment::Literal(s) => string.push_str(*s),
+                StringFragment::Literal(s) => string.push_str(&s),
                 StringFragment::EscapedChar(c) => string.push(c),
                 StringFragment::EscapedWS => {}
             }

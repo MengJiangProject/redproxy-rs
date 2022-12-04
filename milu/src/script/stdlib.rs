@@ -1,7 +1,7 @@
 use std::convert::TryInto;
 
 use easy_error::bail;
-use log::trace;
+use tracing::trace;
 
 use super::*;
 

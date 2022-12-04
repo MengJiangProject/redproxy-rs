@@ -7,9 +7,9 @@ use std::{
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use easy_error::{bail, Error, ResultExt};
-use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpSocket, UdpSocket};
+use tracing::{debug, trace};
 
 use super::ConnectorRef;
 use crate::{
@@ -179,11 +179,11 @@ impl FrameReader for DirectFrames {
         // loop {
         let mut frame = Frame::new();
         let (_, _source) = frame.recv_from(&self.socket).await?;
-        log::trace!("read udp frame: {:?}", frame);
+        tracing::trace!("read udp frame: {:?}", frame);
         // if self.target.ip().is_unspecified() || self.target == source {
         return Ok(Some(frame));
         // } else {
-        //     log::debug!("received unexpected udp frame from {:?}, dropping", source)
+        //     tracing::debug!("received unexpected udp frame from {:?}, dropping", source)
         // }
         // }
     }
@@ -200,7 +200,7 @@ impl FrameWriter for DirectFrames {
                     .lookup_host(domain.as_str(), *port)
                     .await
                     .map_err(|x| {
-                        log::warn!("dns error: {}", x);
+                        tracing::warn!("dns error: {}", x);
                         std::io::Error::new(ErrorKind::InvalidInput, "dns error")
                     })?,
                 _ => return Err(std::io::Error::new(ErrorKind::InvalidInput, "bad target")),
@@ -208,7 +208,7 @@ impl FrameWriter for DirectFrames {
         } else {
             self.target
         };
-        log::trace!("send udp frame: {:?}", frame);
+        tracing::trace!("send udp frame: {:?}", frame);
         self.socket.send_to(frame.body(), target).await?;
         Ok(frame.len())
     }
@@ -233,6 +233,6 @@ pub fn set_fwmark<T: std::os::unix::prelude::AsRawFd>(
 
 #[cfg(not(target_os = "linux"))]
 pub fn set_fwmark<T>(_sk: &T, _mark: Option<u32>) -> Result<(), Error> {
-    log::warn!("fwmark not supported on this platform");
+    tracing::warn!("fwmark not supported on this platform");
     Ok(())
 }

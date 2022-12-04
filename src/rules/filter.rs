@@ -1,9 +1,9 @@
 use easy_error::{ensure, Error};
-use log::trace;
 use milu::parser::{parse, SyntaxError};
 use milu::script::{Evaluatable, Type, Value};
 use std::convert::TryInto;
 use std::str::FromStr;
+use tracing::trace;
 
 use crate::context::Context;
 use crate::rules::script_ext::create_context;

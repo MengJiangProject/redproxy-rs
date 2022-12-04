@@ -2,12 +2,12 @@ use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use easy_error::{Error, ResultExt};
 use futures_util::{StreamExt, TryFutureExt};
-use log::{debug, info, warn};
 use quinn::{congestion, Endpoint, Incoming, NewConnection};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
+use tracing::{debug, info, warn};
 
 use crate::common::h11c::h11c_handshake;
 use crate::common::quic::{create_quic_frames, create_quic_server, quic_frames_thread, QuicStream};

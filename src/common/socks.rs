@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use easy_error::{bail, Error, ResultExt};
-use log::trace;
 use std::net::IpAddr;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+use tracing::trace;
 
 use crate::context::TargetAddress;
 pub trait RW: AsyncBufRead + AsyncWriteExt + Send + Sync + Unpin {}

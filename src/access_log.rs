@@ -1,6 +1,5 @@
 use easy_error::{ensure, err_msg, Error, ResultExt};
 use futures::TryFutureExt;
-use log::info;
 use milu::{
     parser::parse,
     script::{Evaluatable, ScriptContext, Type, Value},
@@ -16,6 +15,7 @@ use tokio::{
     io::{AsyncWriteExt, BufWriter},
     sync::mpsc::{channel, Receiver, Sender},
 };
+use tracing::info;
 
 #[cfg(unix)]
 use tokio::signal::unix::{signal, SignalKind};
@@ -153,7 +153,7 @@ async fn signal_watch(_tx: Sender<Option<Arc<ContextProps>>>) {}
 
 #[cfg(not(target_os = "windows"))]
 async fn signal_watch(tx: Sender<Option<Arc<ContextProps>>>) {
-    use log::error;
+    use tracing::error;
 
     let mut stream = signal(SignalKind::user_defined1()).unwrap();
     loop {

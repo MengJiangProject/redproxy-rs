@@ -25,8 +25,8 @@ rustls-pemfile = "1.0.1"
 webpki-roots = "0.22.5"
 async-trait = "0.1.58"
 easy-error = "1.0.0"
-log = "0.4"
-env_logger = "0.9.1"
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 yaml-rust = "0.4"
 serde = { version = "1.0", features = ["derive","rc"] }
 serde_yaml = "0.9.14"
@@ -63,7 +63,7 @@ winapi = "0.3.9"
 
 [dev-dependencies]
 tokio-test = "0.4.2"
-test-log = "0.2.11"
+test-log = { version = "0.2.11", default-features = false, features = ["trace"] }
 
 [build-dependencies]
 mime_guess = "2.0.4"

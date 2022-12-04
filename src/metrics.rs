@@ -13,7 +13,6 @@ use axum::{
 };
 use easy_error::{ensure, Error};
 use futures::StreamExt;
-use log::info;
 use prometheus::{
     register_histogram_vec, register_int_counter_vec, Encoder, HistogramVec, IntCounterVec,
     TextEncoder,
@@ -25,6 +24,7 @@ use std::{
 };
 use tower_http::services::ServeDir;
 use tower_http::{add_extension::AddExtensionLayer, set_header::SetResponseHeaderLayer};
+use tracing::info;
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]

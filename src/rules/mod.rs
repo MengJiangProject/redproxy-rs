@@ -3,7 +3,6 @@
 mod filter;
 pub(crate) mod script_ext;
 use easy_error::{Error, ResultExt};
-use log::trace;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::{
@@ -13,6 +12,7 @@ use std::{
     },
     time::Instant,
 };
+use tracing::trace;
 
 use crate::{connectors::Connector, context::Context};
 

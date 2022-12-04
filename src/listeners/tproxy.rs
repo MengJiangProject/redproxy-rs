@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use chashmap_async::CHashMap;
 use easy_error::{err_msg, Error, ResultExt};
-use log::{debug, error, info, trace};
 use lru::LruCache;
 use nix::{
     cmsg_space,
@@ -34,6 +33,7 @@ use tokio::{
         Mutex,
     },
 };
+use tracing::{debug, error, info, trace};
 
 use crate::{
     common::{
@@ -387,7 +387,7 @@ impl Session {
     }
     async fn add_frame(&mut self, frame: Frame) -> IoResult<()> {
         if self.queue.try_send(frame).is_err() {
-            log::warn!("buffer overflow: src={}, dropping.", self.source)
+            tracing::warn!("buffer overflow: src={}, dropping.", self.source)
         }
         Ok(())
     }

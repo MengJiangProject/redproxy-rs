@@ -205,7 +205,7 @@ where
         loop {
             if let Some(buf) = self.remaining.as_mut() {
                 if let Some(ret) = Frame::read_head(&buf[..])? {
-                    log::trace!("read frame from stream: {:?}", ret);
+                    tracing::trace!("read frame from stream: {:?}", ret);
                     if buf.len() >= ret {
                         let buf = buf.split_to(ret).freeze();
                         let ret = Frame::from_buffer(buf).unwrap();
@@ -249,7 +249,7 @@ where
     T: AsyncWrite + Sync + Send + Unpin,
 {
     async fn write(&mut self, mut frame: Frame) -> IoResult<usize> {
-        log::trace!("write frame to stream: {:?}", frame);
+        tracing::trace!("write frame to stream: {:?}", frame);
         frame.session_id = self.session_id;
         frame.write_to(&mut self.inner).await
     }

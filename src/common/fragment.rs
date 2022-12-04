@@ -45,21 +45,21 @@ where
         let id = head.get_u16();
         let total = head.get_u8();
         let seq = head.get_u8();
-        // log::trace!("reassemble id: {} total: {} seq: {}", id, total, seq);
+        // tracing::trace!("reassemble id: {} total: {} seq: {}", id, total, seq);
         if total == 1 && seq == 0 {
             T::from_buffer(buf)
         } else if let Entry::Occupied(mut entry) = self.queue.entry(id) {
             let queue = entry.get_mut();
             if queue.add_fragment(seq, buf) {
                 let buf = queue.assemble();
-                // log::trace!("reassembled {} bytes", buf.len());
+                // tracing::trace!("reassembled {} bytes", buf.len());
                 entry.remove_entry();
                 T::from_buffer(buf.freeze())
             } else {
                 None
             }
         } else {
-            // log::trace!("new entry for {}", id);
+            // tracing::trace!("new entry for {}", id);
             self.queue.insert(id, ReassembleQueue::new(total, seq, buf));
             self.timer.push_back((id, Instant::now() + self.timeout));
             None
@@ -70,7 +70,7 @@ where
         for _ in 0..self.timer.partition_point(|x| x.1 < now) {
             let id = self.timer.pop_front().unwrap().0;
             self.queue.remove(&id);
-            // log::trace!("removed fragment queue {} by timer", id);
+            // tracing::trace!("removed fragment queue {} by timer", id);
         }
     }
 }

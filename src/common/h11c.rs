@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use easy_error::{bail, Error, ResultExt};
 use futures::Future;
-use log::{trace, warn};
 use std::{
     net::SocketAddr,
     sync::atomic::{AtomicU32, Ordering},
 };
 use tokio::sync::mpsc::Sender;
+use tracing::{trace, warn};
 
 use crate::{
     common::http::{HttpRequest, HttpResponse},
@@ -27,7 +27,7 @@ where
     T1: FnOnce(u32) -> T2 + Sync,
     T2: Future<Output = FrameIO>,
 {
-    log::trace!("h11c_connect: channel={}", frame_channel);
+    tracing::trace!("h11c_connect: channel={}", frame_channel);
     let target = ctx.read().await.target();
     let feature = ctx.read().await.feature();
     match feature {
@@ -63,7 +63,7 @@ where
 
             request.write_to(&mut server).await?;
             let resp = HttpResponse::read_from(&mut server).await?;
-            log::trace!("response: {:?}", resp);
+            tracing::trace!("response: {:?}", resp);
             if resp.code != 200 {
                 bail!("upstream server failure: {:?}", resp);
             }
@@ -98,7 +98,7 @@ where
     let mut ctx_lock = ctx.write().await;
     let socket = ctx_lock.borrow_client_stream().unwrap();
     let request = HttpRequest::read_from(socket).await?;
-    log::trace!("request={:?}", request);
+    tracing::trace!("request={:?}", request);
     if request.method.eq_ignore_ascii_case("CONNECT") {
         let protocol = request.header("Proxy-Protocol", "tcp");
         // let host = request.header("Host", "0.0.0.0:0");
@@ -185,7 +185,7 @@ struct FrameChannelCallback {
 #[async_trait]
 impl ContextCallback for FrameChannelCallback {
     async fn on_connect(&self, ctx: &mut Context) {
-        log::trace!("on_connect callback: id={} ctx={}", self.session_id, ctx);
+        tracing::trace!("on_connect callback: id={} ctx={}", self.session_id, ctx);
         let mut stream = ctx.take_client_stream();
         if let Err(e) = HttpResponse::new(200, "Connection established")
             .with_header("Session-Id", self.session_id.to_string())

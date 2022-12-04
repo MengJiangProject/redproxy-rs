@@ -1,9 +1,9 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use easy_error::Error;
-use log::trace;
 use serde::{Deserialize, Serialize};
 use tokio::{process::Command, sync::Mutex};
+use tracing::trace;
 
 //TODO: ratelimit and DDOS protection
 

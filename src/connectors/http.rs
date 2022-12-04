@@ -2,10 +2,10 @@ use std::{convert::TryFrom, sync::Arc};
 
 use async_trait::async_trait;
 use easy_error::{err_msg, Error, ResultExt};
-use log::trace;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_rustls::rustls::ServerName;
+use tracing::trace;
 
 use crate::{
     common::{h11c::h11c_connect, set_keepalive, tls::TlsClientConfig},

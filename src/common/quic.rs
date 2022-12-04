@@ -154,7 +154,7 @@ impl QuicFrameReader {
 impl FrameReader for QuicFrameReader {
     async fn read(&mut self) -> IoResult<Option<Frame>> {
         let ret = self.rx.recv().await;
-        log::trace!("QuicFrameReader::read: {:?}", ret);
+        tracing::trace!("QuicFrameReader::read: {:?}", ret);
         Ok(ret)
     }
 }
@@ -179,7 +179,7 @@ impl QuicFrameWriter {
 impl FrameWriter for QuicFrameWriter {
     async fn write(&mut self, mut frame: Frame) -> IoResult<usize> {
         frame.session_id = self.session_id;
-        log::trace!(
+        tracing::trace!(
             "quic send_datagram: sid={} len={}",
             frame.session_id,
             frame.len()
@@ -218,7 +218,7 @@ pub async fn quic_frames_thread(name: String, sessions: QuicFrameSessions, mut i
             },
             Some(frame) = next => {
                 if let Err(e) = frame {
-                    log::warn!("{}: QUIC connection error: {}", name, e);
+                    tracing::warn!("{}: QUIC connection error: {}", name, e);
                     break;
                 }
                 let frame = f.reassemble(frame.unwrap());
@@ -231,7 +231,7 @@ pub async fn quic_frames_thread(name: String, sessions: QuicFrameSessions, mut i
                     if session.is_closed() || session.send(frame).await.is_err() {
                         drop(session);
                         sessions.remove(&sid).await;
-                        log::trace!("quic recv error: sid={}", sid);
+                        tracing::trace!("quic recv error: sid={}", sid);
                     }
                 }
             },

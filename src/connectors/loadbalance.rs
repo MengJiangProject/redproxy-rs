@@ -8,13 +8,13 @@ use std::{
 
 use async_trait::async_trait;
 use easy_error::{ensure, Error, ResultExt};
-use log::debug;
 use milu::{
     parser::parse,
     script::{ScriptContext, Type, Value},
 };
 use rand::{prelude::SliceRandom, thread_rng};
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 use super::{Connector, ConnectorRef};
 use crate::{context::ContextRef, rules::script_ext::create_context, GlobalState};

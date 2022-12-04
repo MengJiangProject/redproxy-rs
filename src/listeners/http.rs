@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use easy_error::{bail, Error, ResultExt};
-use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Sender;
+use tracing::{error, info, warn};
 
 use crate::common::h11c::h11c_handshake;
 use crate::common::set_keepalive;

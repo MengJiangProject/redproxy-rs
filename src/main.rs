@@ -2,10 +2,11 @@ use clap::{builder::PossibleValuesParser, value_parser};
 use config::{IoParams, Timeouts};
 use context::{ContextRef, ContextState, GlobalState as ContextGlobalState};
 use easy_error::{err_msg, Error, Terminator};
-use log::{info, warn};
 use rules::Rule;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc::channel, RwLock, RwLockReadGuard};
+use tracing::{info, warn};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[cfg(feature = "metrics")]
 use metrics::MetricsServer;
@@ -101,7 +102,14 @@ async fn main() -> Result<(), Terminator> {
         .get_one("log-level")
         .map(String::as_str)
         .unwrap_or("info");
-    env_logger::init_from_env(env_logger::Env::default().default_filter_or(log_level));
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(
+            EnvFilter::builder()
+                .with_default_directive(log_level.parse()?)
+                .from_env()?,
+        )
+        .init();
 
     let cfg = config::Config::load(config).await?;
     let mut state: Arc<GlobalState> = Default::default();

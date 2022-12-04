@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use easy_error::{err_msg, Error, ResultExt};
-use log::debug;
 use quinn::{congestion, Connection, Endpoint};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -9,6 +8,7 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::Mutex;
+use tracing::debug;
 
 use super::ConnectorRef;
 use crate::{

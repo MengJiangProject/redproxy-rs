@@ -20,7 +20,7 @@ pub fn udp_socket(
         use nix::sys::socket::{SockFlag, SockProtocol, SockType};
         use std::os::unix::prelude::FromRawFd;
 
-        log::trace!("udp_socket local: {:?} remote: {:?}", local, remote);
+        tracing::trace!("udp_socket local: {:?} remote: {:?}", local, remote);
         let local: SockaddrStorage = local.into();
         let remote: Option<SockaddrStorage> =
             remote.filter(|x| !x.ip().is_unspecified()).map(Into::into);
@@ -39,13 +39,13 @@ pub fn udp_socket(
             }
             #[cfg(not(target_os = "linux"))]
             {
-                log::warn!("ip transparent not implemented")
+                tracing::warn!("ip transparent not implemented")
             }
         }
-        log::trace!("bind({})", local);
+        tracing::trace!("bind({})", local);
         bind(fd, &local)?;
         if let Some(remote) = remote {
-            log::trace!("connect({})", remote);
+            tracing::trace!("connect({})", remote);
             connect(fd, &remote)?;
         }
 
@@ -58,11 +58,11 @@ pub fn udp_socket(
         use std::os::windows::prelude::FromRawSocket;
         use winapi::um::winsock2::SOCK_DGRAM;
 
-        log::trace!("setup_udp_session local: {:?} remote: {:?}", local, remote);
+        tracing::trace!("setup_udp_session local: {:?} remote: {:?}", local, remote);
         let fd = socket(local, SOCK_DGRAM)?;
         set_reuse_addr(fd, true)?;
         if transparent {
-            log::warn!("ip transparent not implemented")
+            tracing::warn!("ip transparent not implemented")
         }
         bind(fd, local)?;
         if let Some(remote) = remote {

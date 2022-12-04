@@ -248,7 +248,7 @@ rule!(decimal, {
 
 rule!(integer -> Value, {
     fn atoi<'a>(n: u32) -> impl Fn(Span<'a>) -> Result<Value, ParseIntError> {
-        move |x| i64::from_str_radix(*x, n).map(Into::into)
+        move |x| i64::from_str_radix(&x, n).map(Into::into)
     }
     alt((
         map_res(binary, atoi(2)),

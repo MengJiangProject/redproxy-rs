@@ -1,6 +1,5 @@
 use cidr::AnyIpCidr;
 use easy_error::{bail, Error};
-use log::warn;
 use milu::script::{Call, ScriptContext};
 use milu::{
     function,
@@ -9,6 +8,7 @@ use milu::{
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::{convert::TryInto, net::IpAddr};
+use tracing::warn;
 
 use crate::context::{ContextProps, TargetAddress};
 

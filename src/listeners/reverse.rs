@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use easy_error::{Error, ResultExt};
-use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc::{channel, Sender};
+use tracing::{debug, error, info};
 
 use super::Listener;
 use crate::common::frames::Frame;

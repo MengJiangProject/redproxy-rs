@@ -1,7 +1,6 @@
 use crate::{access_log::AccessLog, common::frames::FrameIO};
 use async_trait::async_trait;
 use easy_error::{Error, ResultExt};
-use log::trace;
 use serde::{de::Visitor, ser::SerializeStruct, Deserialize, Serialize};
 use std::{
     any::Any,
@@ -23,6 +22,7 @@ use tokio::{
     net::lookup_host,
     sync::{mpsc::Sender, Mutex, RwLock},
 };
+use tracing::trace;
 
 #[derive(Debug)]
 pub struct InvalidAddress;
@@ -671,7 +671,7 @@ impl Context {
         Arc::make_mut(&mut self.props)
             .state
             .push((state, SystemTime::now()).into());
-        log::debug!("set_state: ctx={} state={:?}", self.props, state);
+        tracing::debug!("set_state: ctx={} state={:?}", self.props, state);
         self
     }
 
