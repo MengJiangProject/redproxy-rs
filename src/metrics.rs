@@ -2,7 +2,6 @@ use crate::{rules::Rule, GlobalState, VERSION};
 use axum::{
     body::{Body, BoxBody},
     extract::Extension,
-    handler::Handler,
     http::{
         header::{ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_TYPE},
         HeaderValue, Response, StatusCode,
@@ -22,8 +21,10 @@ use std::{
     net::SocketAddr,
     sync::{Arc, Weak},
 };
-use tower_http::services::ServeDir;
-use tower_http::{add_extension::AddExtensionLayer, set_header::SetResponseHeaderLayer};
+use tower_http::{
+    add_extension::AddExtensionLayer, services::ServeDir, set_header::SetResponseHeaderLayer,
+    trace::TraceLayer,
+};
 use tracing::info;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -102,7 +103,8 @@ impl MetricsServer {
                 CACHE_CONTROL,
                 HeaderValue::from_static("public, max-age=3600"),
             ))
-            .fallback(not_found.into_service());
+            .layer(TraceLayer::new_for_http());
+        // .fallback(not_found.into_service());
 
         tokio::spawn(async move {
             info!("metrics server listening on {}", self.bind);
@@ -122,15 +124,16 @@ fn ui_service(ui: Option<&str>) -> Result<Router, Error> {
         if ui == "<embedded>" {
             return Ok(embedded_ui::app());
         }
-        Ok(Router::new().nest(
-            "/",
-            get_service(ServeDir::new(".")).handle_error(|error: std::io::Error| async move {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Unhandled internal error: {}", error),
-                )
-            }),
-        ))
+        Ok(
+            Router::new().fallback_service(get_service(ServeDir::new(ui)).handle_error(
+                |error: std::io::Error| async move {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Unhandled internal error: {}", error),
+                    )
+                },
+            )),
+        )
     } else {
         Ok(Router::new())
     }
@@ -247,10 +250,6 @@ handler!(post_logrotate(state: Extension<Arc<GlobalState>>) -> Result<(), MyErro
         Ok(())
     }
 });
-
-async fn not_found() -> impl IntoResponse {
-    (StatusCode::NOT_FOUND, "not found")
-}
 
 struct MyError(Error);
 
