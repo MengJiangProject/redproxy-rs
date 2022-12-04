@@ -53,14 +53,16 @@
     <div>
         <ol class="list-group list-group-numbered">
             <li v-for="(rule, index) in rules" class="list-group-item d-flex justify-content-between align-items-start">
-                <dl class="row ms-2 me-auto">
+                <dl class="row ms-2 me-auto w-100">
                     <dt>filter</dt>
                     <dd>
                         <input v-model="rule.filter" class="form-control">
                     </dd>
                     <dt>target</dt>
                     <dd>
-                        <input v-model="rule.target" class="form-control">
+                        <select v-model="rule.target" @change="updateRule(index)" class="form-control">
+                            <option v-for="target in targets" :value="target">{{target}}</option>
+                        </select>
                     </dd>
                 </dl>
                 <button @click="moveUp(index)" v-if="index > 0" class="close">

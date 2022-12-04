@@ -185,16 +185,28 @@ app.component('tab-rules', {
 app.component('edit-rules', {
   template: "#tab-rules-edit",
   props: ['rules'],
+  watch: {
+    rules: {
+      handler: function (newValue, oldValue) {
+        this.rules.forEach((rule) => {
+          if (rule.filter === '') {
+            rule.filter = null;
+          }
+        });
+      },
+      deep: true,
+    },
+  },
   methods: {
     addRule() {
       // add a new rule to the rules array
       this.rules.push({
         filter: '',
-        target: '',
+        target: 'deny',
       });
     },
     deleteRule(index) {
-      // delete the ruleat the specified index
+      // delete the rule at the specified index
       this.rules.splice(index, 1);
     },
     async commitChanges() {
@@ -226,7 +238,21 @@ app.component('edit-rules', {
       this.rules.splice(index + 1, 0, rule);
     }
   },
-  mounted() { }
+  data() {
+    return {
+      //rules: [],
+      targets: [],
+    }
+  },
+  mounted() {
+    fetch(API_PREFIX + '/status')
+      .then((response) => response.json())
+      .then((data) => {
+        let list = data.connectors;
+        list.push("deny");
+        this.targets = list;
+      });
+  },
 });
 
 app.component('rule-stats', {
