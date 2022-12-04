@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use easy_error::{Error, ResultExt};
-use futures_util::{StreamExt, TryFutureExt};
-use quinn::{congestion, Endpoint, Incoming, NewConnection};
+use futures_util::TryFutureExt;
+use quinn::{congestion, Connection, Endpoint};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -55,9 +55,9 @@ impl Listener for QuicListener {
             let transport = Arc::get_mut(&mut cfg.transport).unwrap();
             transport.congestion_controller_factory(Arc::new(congestion::BbrConfig::default()));
         }
-        let (endpoint, incoming) = Endpoint::server(cfg, self.bind).context("quic_listen")?;
+        let endpoint = Endpoint::server(cfg, self.bind).context("quic_listen")?;
         tokio::spawn(
-            self.accept(endpoint, incoming, state, queue)
+            self.accept(endpoint, state, queue)
                 .unwrap_or_else(|e| panic!("{}: {:?}", e, e.cause)),
         );
         Ok(())
@@ -66,12 +66,11 @@ impl Listener for QuicListener {
 impl QuicListener {
     async fn accept(
         self: Arc<Self>,
-        _endpoint: Endpoint,
-        mut incoming: Incoming,
+        endpoint: Endpoint,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
     ) -> Result<(), Error> {
-        while let Some(conn) = incoming.next().await {
+        while let Some(conn) = endpoint.accept().await {
             let source = conn.remote_address();
             let source = crate::common::try_map_v4_addr(source);
             debug!("{}: QUIC connected from {:?}", self.name, source);
@@ -91,31 +90,18 @@ impl QuicListener {
     }
     async fn client_thread(
         self: Arc<Self>,
-        conn: NewConnection,
+        conn: Connection,
         source: SocketAddr,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
     ) {
         let sessions = Arc::new(CHashMap::new());
-        let mut bi_streams = conn.bi_streams;
         tokio::spawn(quic_frames_thread(
             self.name.to_owned(),
             sessions.clone(),
-            conn.datagrams,
+            conn.clone(),
         ));
-        let conn = conn.connection;
-        while let Some(stream) = bi_streams.next().await {
-            let stream = match stream {
-                Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                    info!("{}: QUIC connection closed", self.name);
-                    break;
-                }
-                Err(e) => {
-                    warn!("{}: QUIC connection error: {}", self.name, e);
-                    break;
-                }
-                Ok(s) => s,
-            };
+        while let Ok(stream) = conn.accept_bi().await {
             debug!("{}: BiStream connected from {:?}", self.name, source);
             let stream: QuicStream = stream.into();
             let stream = make_buffered_stream(stream);

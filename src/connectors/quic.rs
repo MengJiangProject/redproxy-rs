@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use easy_error::{err_msg, Error, ResultExt};
-use quinn::{congestion, Connection, Endpoint};
+use quinn::{Connection, Endpoint};
 use serde::{Deserialize, Serialize};
 use std::{
     net::{SocketAddr, ToSocketAddrs},
@@ -74,11 +74,7 @@ impl super::Connector for QuicConnector {
 
     async fn init(&mut self) -> Result<(), Error> {
         self.tls.init()?;
-        let mut cfg = create_quic_client(&self.tls)?;
-        if self.bbr {
-            let transport = Arc::get_mut(&mut cfg.transport).unwrap();
-            transport.congestion_controller_factory(Arc::new(congestion::BbrConfig::default()));
-        }
+        let cfg = create_quic_client(&self.tls, self.bbr)?;
         let bind = self.bind.parse().context("parse bind")?;
         let mut endpoint = Endpoint::client(bind).context("bind")?;
         endpoint.set_default_client_config(cfg);
@@ -182,8 +178,8 @@ impl QuicConnector {
         tokio::spawn(quic_frames_thread(
             self.name.to_owned(),
             sessions.clone(),
-            conn.datagrams,
+            conn.clone(),
         ));
-        Ok((conn.connection, sessions))
+        Ok((conn, sessions))
     }
 }

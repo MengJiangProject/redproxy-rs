@@ -1,8 +1,7 @@
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use easy_error::{Error, ResultExt};
-use futures::StreamExt;
-use quinn::{ClientConfig, Connection, Datagrams, RecvStream, SendStream, ServerConfig};
+use quinn::{congestion, ClientConfig, Connection, RecvStream, SendStream, ServerConfig};
 use std::{
     convert::TryInto,
     io::{Error as IoError, ErrorKind, Result as IoResult},
@@ -43,7 +42,7 @@ pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig, Error> 
     Ok(cfg)
 }
 
-pub fn create_quic_client(tls: &TlsClientConfig) -> Result<ClientConfig, Error> {
+pub fn create_quic_client(tls: &TlsClientConfig, enable_bbr: bool) -> Result<ClientConfig, Error> {
     let builder = rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_root_certificates(tls.root_store()?);
@@ -69,9 +68,11 @@ pub fn create_quic_client(tls: &TlsClientConfig) -> Result<ClientConfig, Error> 
     transport_config.max_concurrent_uni_streams(0u8.into());
     transport_config.keep_alive_interval(Some(Duration::from_secs(30)));
     transport_config.max_idle_timeout(Some(Duration::from_secs(3600).try_into().unwrap()));
-
+    if enable_bbr {
+        transport_config.congestion_controller_factory(Arc::new(congestion::BbrConfig::default()));
+    }
     let mut cfg = ClientConfig::new(Arc::new(client_crypto));
-    cfg.transport = Arc::new(transport_config);
+    cfg.transport_config(Arc::new(transport_config));
     Ok(cfg)
 }
 
@@ -207,16 +208,16 @@ impl FrameWriter for QuicFrameWriter {
 }
 
 pub type QuicFrameSessions = Arc<CHashMap<u32, Sender<Frame>>>;
-pub async fn quic_frames_thread(name: String, sessions: QuicFrameSessions, mut input: Datagrams) {
+pub async fn quic_frames_thread(name: String, sessions: QuicFrameSessions, input: Connection) {
     let mut f: Fragments<Frame> = Fragments::new(Duration::from_secs(5));
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     loop {
-        let next = input.next();
+        let next = input.read_datagram();
         tokio::select! {
             _ = interval.tick() => {
                 f.timer()
             },
-            Some(frame) = next => {
+            frame = next => {
                 if let Err(e) = frame {
                     tracing::warn!("{}: QUIC connection error: {}", name, e);
                     break;
