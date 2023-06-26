@@ -12,6 +12,6 @@ tracing = "0.1"
 
 [dev-dependencies]
 clap = "~4.0"
-rustyline = "10"
+rustyline = "12"
 rustyline-derive = "0.7.0"
 nix = "0.26.2"
