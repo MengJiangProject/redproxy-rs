@@ -43,7 +43,7 @@ lru = "0.10.0"
 # features quic
 quinn = { version = "0.9", optional = true}
 futures-util = { version = "0.3.24", optional = true}
-pin-project-lite = { version = "0.2.9", optional = true }
+pin-project-lite = { version = "0.2.10", optional = true }
 
 # features metrics
 axum = { version = "0.6", optional = true }
