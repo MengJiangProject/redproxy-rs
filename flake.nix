@@ -15,10 +15,13 @@
         defaultPackage = (pkgs.makeRustPlatform {
           inherit (fenix.packages.${system}.minimal) cargo rustc;
         }).buildRustPackage {
-          pname = "hello";
-          version = "0.1.0";
+          pname = "redproxy-rs";
+          version = "0.9.0";
           src = ./.;
-          cargoSha256 = nixpkgs.lib.fakeSha256;
+          #cargoSha256 = "sha256-zvG0eT5xH/uk6jrxIDXV37i9nB24kVovwCsKrsBxFsk=";
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+          };
         };
       }
     );
