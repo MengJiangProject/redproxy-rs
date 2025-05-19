@@ -176,7 +176,7 @@ impl Serialize for TargetAddress {
 }
 
 struct TargetAddressVisitor;
-impl<'de> Visitor<'de> for TargetAddressVisitor {
+impl Visitor<'_> for TargetAddressVisitor {
     type Value = TargetAddress;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -213,10 +213,12 @@ impl UnixTimestamp for SystemTime {
     }
 }
 
+
 pub trait IOStream: AsyncRead + AsyncWrite + Send + Sync + Unpin {
     fn as_any(&self) -> &dyn Any;
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
 }
+
 impl<T> IOStream for T
 where
     T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
@@ -761,10 +763,11 @@ impl std::fmt::Debug for Context {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Default)]
 #[allow(dead_code)]
 pub enum Feature {
     // 1-to-1 connection
+    #[default]
     TcpForward,
     // 1-to-any listening (one shot only)
     TcpBind,
@@ -773,12 +776,6 @@ pub enum Feature {
     // 1-to-many listening
     UdpBind,
     // maybe we should add tap/tun support in the future
-}
-
-impl Default for Feature {
-    fn default() -> Self {
-        Feature::TcpForward
-    }
 }
 
 impl Display for Feature {

@@ -28,44 +28,16 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-v2
 
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt, clippy
-
-      - name: cargo fmt
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
-
-      - name: cargo check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
-          args: --workspace
-
-      - name: cargo clippy
-        uses: actions-rs/clippy-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-features
-
-      - name: cargo test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --workspace --all-features
-
-      - name: cargo build
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --workspace --all-targets --all-features
+      - run: |
+          rustup component add clippy
+          rustup component add rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo check --workspace
+      - run: cargo clippy --all-features -- -D warnings
+      - run: cargo test --workspace --all-features
+      - run: cargo build --workspace --all-targets --all-features
 
       - name: "Artifact upload"
         uses: actions/upload-artifact@master
@@ -127,14 +99,6 @@ jobs:
           echo "PROJECT_MAINTAINER=$(sed -n 's/^authors = \["\(.*\)"\]/\1/p' Cargo.toml)" >> $GITHUB_ENV
           echo "PROJECT_HOMEPAGE=$(sed -n 's/^homepage = "\(.*\)"/\1/p' Cargo.toml)" >> $GITHUB_ENV
 
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: ${{ matrix.job.target }}
-          override: true
-          profile: minimal # minimal component installation (ie, no documentation)
-
       - name: Show version information (Rust, cargo, GCC)
         shell: bash
         run: |
@@ -145,12 +109,7 @@ jobs:
           cargo -V
           rustc -V
 
-      - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          use-cross: ${{ matrix.job.use-cross }}
-          command: build
-          args: --locked --release --target=${{ matrix.job.target }} --workspace  --all-features
+      - run: cargo build --locked --release --target=${{ matrix.job.target }} --workspace  --all-features
 
       - name: Strip debug information from executable
         id: strip
@@ -225,6 +184,5 @@ jobs:
         with:
           files: |
             ${{ steps.package.outputs.PKG_PATH }}
-            ${{ steps.debian-package.outputs.DPKG_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
