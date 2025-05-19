@@ -92,6 +92,7 @@ macro_rules! function {
                 })+
                 Ok($rtype)
             }
+            #[allow(unused_braces)]
             fn call(
                 &self,
                 $ctx: ScriptContextRef,

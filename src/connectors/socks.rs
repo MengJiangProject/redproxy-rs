@@ -2,9 +2,9 @@ use std::{convert::TryFrom, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error, ResultExt};
+use rustls::pki_types::ServerName;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
-use rustls::pki_types::ServerName;
 use tracing::trace;
 
 use crate::{

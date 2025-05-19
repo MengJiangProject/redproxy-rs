@@ -19,8 +19,7 @@ pub struct DnsConfig {
     #[serde(default)]
     pub family: AddressFamily,
     #[serde(skip)]
-    resolver:
-        Option<Arc<AsyncResolver<TokioConnectionProvider>>>,
+    resolver: Option<Arc<AsyncResolver<TokioConnectionProvider>>>,
 }
 
 impl Default for DnsConfig {
@@ -33,18 +32,13 @@ impl Default for DnsConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default)]
 pub enum AddressFamily {
     V4Only,
     V6Only,
     V4First,
+    #[default]
     V6First,
-}
-
-impl Default for AddressFamily {
-    fn default() -> Self {
-        AddressFamily::V6First
-    }
 }
 
 impl DnsConfig {

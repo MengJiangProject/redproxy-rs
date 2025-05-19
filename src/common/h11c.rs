@@ -169,7 +169,7 @@ impl ContextCallback for ConnectCallback {
         let buf = format!("Error: {} Cause: {:?}", error, error.cause);
         if let Err(e) = HttpResponse::new(503, "Service unavailable")
             .with_header("Content-Type", "text/plain")
-            .with_header("Content-Length", buf.as_bytes().len())
+            .with_header("Content-Length", buf.len())
             .write_with_body(socket.unwrap(), buf.as_bytes())
             .await
         {
@@ -211,7 +211,7 @@ impl ContextCallback for FrameChannelCallback {
         let buf = format!("Error: {} Cause: {:?}", error, error.cause);
         if let Err(e) = HttpResponse::new(503, "Service unavailable")
             .with_header("Content-Type", "text/plain")
-            .with_header("Content-Length", buf.as_bytes().len())
+            .with_header("Content-Length", buf.len())
             .write_with_body(socket.unwrap(), buf.as_bytes())
             .await
         {

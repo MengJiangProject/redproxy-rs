@@ -7,11 +7,11 @@ use easy_error::{err_msg, Error, ResultExt};
 use rustls_pemfile::{certs, read_one, Item};
 use serde::{Deserialize, Serialize};
 use tokio_rustls::rustls::{
+    client::danger::HandshakeSignatureValid,
     client::danger::{ServerCertVerified, ServerCertVerifier},
     pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime},
     server::{danger::ClientCertVerifier, NoClientAuth, WebPkiClientVerifier},
-    ClientConfig, ServerConfig, RootCertStore,
-    client::danger::HandshakeSignatureValid, SignatureScheme, DigitallySignedStruct,
+    ClientConfig, DigitallySignedStruct, RootCertStore, ServerConfig, SignatureScheme,
 };
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
@@ -171,13 +171,17 @@ impl TlsClientConfig {
         let root_store = self.root_store()?;
         let builder = ClientConfig::builder();
         let builder = if self.insecure {
-            builder.dangerous().with_custom_certificate_verifier(self.insecure_verifier())
+            builder
+                .dangerous()
+                .with_custom_certificate_verifier(self.insecure_verifier())
         } else {
             builder.with_root_certificates(root_store)
         };
         let config = if let Some(auth_cfg) = &self.auth {
             let (chain, key) = auth_cfg.certs()?;
-            builder.with_client_auth_cert(chain, key).context("failed to load certificate")?
+            builder
+                .with_client_auth_cert(chain, key)
+                .context("failed to load certificate")?
         } else {
             builder.with_no_client_auth()
         };
@@ -244,9 +248,9 @@ fn load_keys<P: AsRef<Path>>(path: P) -> Result<PrivateKeyDer<'static>, Error> {
         .map_err(|_| err_msg("fail to load private key"))?
         .expect("pem file");
     let key = match item {
-        Item::Pkcs1Key(key)  => PrivateKeyDer::Pkcs1(key),
-        Item::Pkcs8Key(key)  => PrivateKeyDer::Pkcs8(key),
-        Item::Sec1Key(key)   => PrivateKeyDer::Sec1(key),
+        Item::Pkcs1Key(key) => PrivateKeyDer::Pkcs1(key),
+        Item::Pkcs8Key(key) => PrivateKeyDer::Pkcs8(key),
+        Item::Sec1Key(key) => PrivateKeyDer::Sec1(key),
         _ => return Err(err_msg("fail to load private key")),
     };
     Ok(key)

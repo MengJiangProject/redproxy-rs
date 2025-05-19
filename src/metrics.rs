@@ -7,7 +7,7 @@ use axum::{
         HeaderValue, Response, StatusCode,
     },
     response::IntoResponse,
-    routing::{get,  post},
+    routing::{get, post},
     Json, Router,
 };
 use easy_error::{ensure, Error};
@@ -21,10 +21,7 @@ use std::{
     net::SocketAddr,
     sync::{Arc, Weak},
 };
-use tower_http::{
-    services::ServeDir, set_header::SetResponseHeaderLayer,
-    trace::TraceLayer,
-};
+use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer, trace::TraceLayer};
 use tracing::info;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -109,9 +106,7 @@ impl MetricsServer {
         tokio::spawn(async move {
             info!("metrics server listening on {}", self.bind);
             let bind = tokio::net::TcpListener::bind(self.bind).await.unwrap();
-            axum::serve(bind,root.into_make_service())
-                .await
-                .unwrap();
+            axum::serve(bind, root.into_make_service()).await.unwrap();
         });
 
         Ok(())

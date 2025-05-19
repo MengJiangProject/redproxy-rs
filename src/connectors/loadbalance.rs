@@ -12,7 +12,7 @@ use milu::{
     parser::parse,
     script::{ScriptContext, Type, Value},
 };
-use rand::{ seq::IndexedRandom, rng};
+use rand::{rng, seq::IndexedRandom};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
