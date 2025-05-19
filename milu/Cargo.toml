@@ -11,7 +11,7 @@ easy-error = "1"
 tracing = "0.1"
 
 [dev-dependencies]
-clap = "~4.0"
-rustyline = "10"
-rustyline-derive = "0.7.0"
-nix = "0.26.2"
+clap = "4.5"
+rustyline = "15"
+rustyline-derive = "0.11"
+nix = {version = "0.30",features = ["fs"]}

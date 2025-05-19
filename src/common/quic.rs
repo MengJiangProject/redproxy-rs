@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use easy_error::{Error, ResultExt};
-use quinn::{congestion, ClientConfig, Connection, RecvStream, SendStream, ServerConfig};
+use quinn::{congestion, crypto::rustls::{QuicClientConfig, QuicServerConfig}, ClientConfig, Connection, RecvStream, SendStream, ServerConfig};
 use std::{
     convert::TryInto,
     io::{Error as IoError, ErrorKind, Result as IoResult},
@@ -26,7 +26,6 @@ pub const ALPN_QUIC_HTTP11C: &[&[u8]] = &[b"h11c"]; //this is not regular HTTP3 
 pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig, Error> {
     let (certs, key) = tls.certs()?;
     let mut server_crypto = rustls::ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .context("load certificate")?;
@@ -37,20 +36,21 @@ pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig, Error> 
     transport_config.keep_alive_interval(Some(Duration::from_secs(30)));
     transport_config.max_idle_timeout(Some(Duration::from_secs(3600).try_into().unwrap()));
 
-    let mut cfg = ServerConfig::with_crypto(Arc::new(server_crypto));
+    let cfg:QuicServerConfig  = server_crypto.try_into()
+        .context("failed to convert rustls::ServerConfig to quinn::ServerConfig")?;
+    let mut cfg = ServerConfig::with_crypto(Arc::new(cfg));
     cfg.transport = Arc::new(transport_config);
     Ok(cfg)
 }
 
 pub fn create_quic_client(tls: &TlsClientConfig, enable_bbr: bool) -> Result<ClientConfig, Error> {
     let builder = rustls::ClientConfig::builder()
-        .with_safe_defaults()
         .with_root_certificates(tls.root_store()?);
 
     let mut client_crypto = if let Some(auth) = &tls.auth {
         let (certs, key) = auth.certs()?;
         builder
-            .with_single_cert(certs, key)
+            .with_client_auth_cert(certs, key)
             .context("load client certs")?
     } else {
         builder.with_no_client_auth()
@@ -71,7 +71,8 @@ pub fn create_quic_client(tls: &TlsClientConfig, enable_bbr: bool) -> Result<Cli
     if enable_bbr {
         transport_config.congestion_controller_factory(Arc::new(congestion::BbrConfig::default()));
     }
-    let mut cfg = ClientConfig::new(Arc::new(client_crypto));
+    let cfg: QuicClientConfig = client_crypto.try_into().context("failed to convert rustls::ClientConfig to quinn::ClientConfig")?;
+    let mut cfg = ClientConfig::new(Arc::new(cfg));
     cfg.transport_config(Arc::new(transport_config));
     Ok(cfg)
 }

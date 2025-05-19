@@ -18,42 +18,43 @@ embedded-ui = ["metrics"]
 [dependencies]
 milu = { path = "milu" }
 tokio = { version = "1.25.0", features = ["full"] }
-tokio-rustls = { version="0.23.4", features = ["dangerous_configuration"] }
-tokio-util = {version="0.7.7", features = ["full"]}
+tokio-rustls = { version="0.26" }
+rustls = {version = "0.23"}
+tokio-util = {version="0.7", features = ["full"]}
 bytes = "1.4.0"
-rustls-pemfile = "1.0.2"
-webpki-roots = "0.22.5"
-async-trait = "0.1.68"
-easy-error = "1.0.0"
-tracing = "0.1.37"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+rustls-pemfile = "2.2"
+webpki-roots = "1.0"
+async-trait = "0.1"
+easy-error = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 yaml-rust = "0.4"
 serde = { version = "1.0", features = ["derive","rc"] }
-serde_yaml = "0.9.21"
+serde_yaml = "0.9"
 serde_json = "1.0"
-clap = "4.0"
+clap = "4.5"
 futures = "0.3.25"
-cidr = "0.2.1"
-rand = "0.8.5"
+cidr = "0.3"
+rand = "0.9"
 libc = "0.2"
-trust-dns-resolver = "0.22.0"
+trust-dns-resolver = "0.23"
 chashmap-async = "0.1.0"
-lru = "0.10.0"
+lru = "0.14"
 
 # features quic
-quinn = { version = "0.9", optional = true}
+quinn = { version = "0.11", optional = true}
 futures-util = { version = "0.3.24", optional = true}
 pin-project-lite = { version = "0.2.9", optional = true }
 
 # features metrics
-axum = { version = "0.6", optional = true }
-tower = { version = "0.4", optional = true }
-tower-http = { version = "0.3", optional = true, features = ["add-extension","fs","set-header","trace"] }
-prometheus = {version = "0.13.3", optional = true, features = ["process"] }
+axum = { version = "0.8", optional = true }
+tower = { version = "0.5", optional = true }
+tower-http = { version = "0.6", optional = true, features = ["add-extension","fs","set-header","trace"] }
+prometheus = {version = "0.14", optional = true, features = ["process"] }
 lazy_static = { version = "1", optional = true }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
-nix = { version = "0.26"}
+nix = { version = "0.30" , features = ["socket","net"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = "0.3.9"

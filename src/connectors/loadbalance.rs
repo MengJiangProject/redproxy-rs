@@ -12,7 +12,7 @@ use milu::{
     parser::parse,
     script::{ScriptContext, Type, Value},
 };
-use rand::{prelude::SliceRandom, thread_rng};
+use rand::{ seq::IndexedRandom, rng};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -118,7 +118,7 @@ impl Connector for LoadBalanceConnector {
 
 impl LoadBalanceConnector {
     fn random(self: &Arc<Self>, state: &Arc<GlobalState>) -> Result<Arc<dyn Connector>, Error> {
-        let next = self.connectors.choose(&mut thread_rng()).unwrap();
+        let next = self.connectors.choose(&mut rng()).unwrap();
         Ok(state.connectors.get(next).unwrap().clone())
     }
 

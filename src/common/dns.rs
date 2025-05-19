@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
 };
 
@@ -8,7 +8,7 @@ use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use trust_dns_resolver::{
     config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts},
-    name_server::{GenericConnection, GenericConnectionProvider, TokioRuntime},
+    name_server::TokioConnectionProvider,
     system_conf::read_system_conf,
     AsyncResolver,
 };
@@ -20,7 +20,7 @@ pub struct DnsConfig {
     pub family: AddressFamily,
     #[serde(skip)]
     resolver:
-        Option<Arc<AsyncResolver<GenericConnection, GenericConnectionProvider<TokioRuntime>>>>,
+        Option<Arc<AsyncResolver<TokioConnectionProvider>>>,
 }
 
 impl Default for DnsConfig {
@@ -50,7 +50,7 @@ impl Default for AddressFamily {
 impl DnsConfig {
     pub fn init(&mut self) -> Result<(), Error> {
         let config = Self::parse_servers(&self.servers)?;
-        self.resolver = Some(Arc::new(AsyncResolver::tokio(config.0, config.1).unwrap()));
+        self.resolver = Some(Arc::new(AsyncResolver::tokio(config.0, config.1)));
         Ok(())
     }
 
@@ -75,7 +75,7 @@ impl DnsConfig {
                     protocol: Protocol::Udp,
                     tls_dns_name: None,
                     bind_addr: None,
-                    trust_nx_responses: true,
+                    trust_negative_responses: true,
                 });
             }
             Ok((config, ResolverOpts::default()))
@@ -89,17 +89,17 @@ impl DnsConfig {
                 .await
                 .context("ipv4_lookup")?
                 .into_iter()
-                .choose(&mut rand::thread_rng())
+                .choose(&mut rand::rng())
                 .ok_or_else(|| err_msg(format!("No IPv4 address found for {}", host)))
-                .map(IpAddr::V4)?,
+                .map(|a| IpAddr::V4(Ipv4Addr::from(a.octets())))?,
             AddressFamily::V6Only => resolver
                 .ipv6_lookup(host)
                 .await
                 .context("ipv6_lookup")?
                 .into_iter()
-                .choose(&mut rand::thread_rng())
+                .choose(&mut rand::rng())
                 .ok_or_else(|| err_msg(format!("No IPv6 address found for {}", host)))
-                .map(IpAddr::V6)?,
+                .map(|a| IpAddr::V6(Ipv6Addr::from(a.octets())))?,
             AddressFamily::V4First => {
                 let (v4, v6): (Vec<_>, Vec<_>) = resolver
                     .lookup_ip(host)
@@ -108,8 +108,8 @@ impl DnsConfig {
                     .into_iter()
                     .partition(|a| a.is_ipv4());
                 v4.into_iter()
-                    .choose(&mut rand::thread_rng())
-                    .or_else(|| v6.into_iter().choose(&mut rand::thread_rng()))
+                    .choose(&mut rand::rng())
+                    .or_else(|| v6.into_iter().choose(&mut rand::rng()))
                     .ok_or_else(|| err_msg(format!("No address found for {}", host)))?
             }
             AddressFamily::V6First => {
@@ -120,8 +120,8 @@ impl DnsConfig {
                     .into_iter()
                     .partition(|a| a.is_ipv4());
                 v6.into_iter()
-                    .choose(&mut rand::thread_rng())
-                    .or_else(|| v4.into_iter().choose(&mut rand::thread_rng()))
+                    .choose(&mut rand::rng())
+                    .or_else(|| v4.into_iter().choose(&mut rand::rng()))
                     .ok_or_else(|| err_msg(format!("No address found for {}", host)))?
             }
         };

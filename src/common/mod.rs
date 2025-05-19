@@ -36,8 +36,7 @@ pub fn try_map_v4_addr(addr: SocketAddr) -> SocketAddr {
 pub fn set_keepalive(stream: &tokio::net::TcpStream) -> Result<(), easy_error::Error> {
     use easy_error::ResultExt;
     use nix::sys::socket::{setsockopt, sockopt::KeepAlive};
-    use std::os::unix::prelude::AsRawFd;
-    setsockopt(stream.as_raw_fd(), KeepAlive, &true).context("setsockopt")
+    setsockopt(stream, KeepAlive, &true).context("setsockopt")
 }
 
 #[cfg(windows)]

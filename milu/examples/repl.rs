@@ -8,6 +8,7 @@ use rustyline::validate::{self, MatchingBracketValidator, Validator};
 use rustyline::{Cmd, CompletionType, Config, Context, EditMode, Editor, KeyEvent};
 use rustyline_derive::Helper;
 use std::borrow::Cow::{self, Borrowed, Owned};
+use std::io::stdin;
 use std::path::PathBuf;
 
 use milu::parser;
@@ -65,8 +66,8 @@ impl Highlighter for MyHelper {
         self.highlighter.highlight(line, pos)
     }
 
-    fn highlight_char(&self, line: &str, pos: usize) -> bool {
-        self.highlighter.highlight_char(line, pos)
+    fn highlight_char(&self, line: &str, pos: usize, kind: rustyline::highlight::CmdKind) -> bool {
+        self.highlighter.highlight_char(line, pos, kind)
     }
 }
 
@@ -109,7 +110,7 @@ fn repl() -> rustyline::Result<()> {
     #[cfg(target_os = "windows")]
     let is_tty = false;
     #[cfg(not(target_os = "windows"))]
-    let is_tty = nix::unistd::isatty(nix::libc::STDIN_FILENO)
+    let is_tty = nix::unistd::isatty(stdin())
         .map_err(|_e| std::io::Error::last_os_error())?;
     macro_rules! println {
         () => (if(is_tty) {println!("\n")});
@@ -157,7 +158,9 @@ fn repl() -> rustyline::Result<()> {
                     let ctx = global.clone();
                     let sbuf = buf.join(" ");
                     eval(ctx, &sbuf);
-                    rl.add_history_entry(&sbuf);
+                    if let Err(e) = rl.add_history_entry(&sbuf) {
+                        eprintln!("Failed to add history entry: {}", e);
+                    }
                     count += 1;
                     buf.clear();
                 }

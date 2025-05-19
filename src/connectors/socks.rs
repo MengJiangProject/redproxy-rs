@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error, ResultExt};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
-use tokio_rustls::rustls::ServerName;
+use rustls::pki_types::ServerName;
 use tracing::trace;
 
 use crate::{
@@ -90,7 +90,8 @@ impl super::Connector for SocksConnector {
         set_keepalive(&server)?;
 
         let mut server = if let Some(connector) = tls_connector {
-            let domain = ServerName::try_from(self.server.as_str())
+            let server_name = self.server.clone();
+            let domain = ServerName::try_from(server_name)
                 .or_else(|e| {
                     if tls_insecure {
                         ServerName::try_from("example.com")

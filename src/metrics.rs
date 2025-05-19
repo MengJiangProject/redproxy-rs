@@ -1,13 +1,13 @@
 use crate::{rules::Rule, GlobalState, VERSION};
 use axum::{
-    body::{Body, BoxBody},
+    body::Body,
     extract::Extension,
     http::{
-        header::{ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_TYPE},
+        header::{self, ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_TYPE},
         HeaderValue, Response, StatusCode,
     },
     response::IntoResponse,
-    routing::{get, get_service, post},
+    routing::{get,  post},
     Json, Router,
 };
 use easy_error::{ensure, Error};
@@ -22,7 +22,7 @@ use std::{
     sync::{Arc, Weak},
 };
 use tower_http::{
-    add_extension::AddExtensionLayer, services::ServeDir, set_header::SetResponseHeaderLayer,
+    services::ServeDir, set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
 };
 use tracing::info;
@@ -87,9 +87,9 @@ impl MetricsServer {
             .route("/rules", get(get_rules).post(post_rules))
             .route("/metrics", get(get_metrics))
             .route("/logrotate", post(post_logrotate))
-            .layer(AddExtensionLayer::new(state))
+            .layer(Extension(state))
             .layer(SetResponseHeaderLayer::if_not_present(
-                CACHE_CONTROL,
+                header::CACHE_CONTROL,
                 HeaderValue::from_static("no-store"),
             ));
 
@@ -108,8 +108,8 @@ impl MetricsServer {
 
         tokio::spawn(async move {
             info!("metrics server listening on {}", self.bind);
-            axum::Server::bind(&self.bind)
-                .serve(root.into_make_service())
+            let bind = tokio::net::TcpListener::bind(self.bind).await.unwrap();
+            axum::serve(bind,root.into_make_service())
                 .await
                 .unwrap();
         });
@@ -124,16 +124,7 @@ fn ui_service(ui: Option<&str>) -> Result<Router, Error> {
         if ui == "<embedded>" {
             return Ok(embedded_ui::app());
         }
-        Ok(
-            Router::new().fallback_service(get_service(ServeDir::new(ui)).handle_error(
-                |error: std::io::Error| async move {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Unhandled internal error: {}", error),
-                    )
-                },
-            )),
-        )
+        Ok(Router::new().fallback_service(ServeDir::new(ui)))
     } else {
         Ok(Router::new())
     }
@@ -254,7 +245,7 @@ handler!(post_logrotate(state: Extension<Arc<GlobalState>>) -> Result<(), MyErro
 struct MyError(Error);
 
 impl IntoResponse for MyError {
-    fn into_response(self) -> Response<BoxBody> {
+    fn into_response(self) -> Response<Body> {
         let body = Body::from(format!("{} cause: {:?}", self.0, self.0.cause));
         Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)

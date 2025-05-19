@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::io::Result as IoResult;
+use std::{io::Result as IoResult, os::fd::AsRawFd};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::{net::UdpSocket, sync::mpsc};
@@ -30,7 +30,7 @@ pub fn udp_socket(
             SockFlag::empty(),
             SockProtocol::Udp,
         )?;
-        setsockopt(fd, ReuseAddr, &true)?;
+        setsockopt(&fd, ReuseAddr, &true)?;
         if transparent {
             #[cfg(target_os = "linux")]
             {
@@ -43,13 +43,13 @@ pub fn udp_socket(
             }
         }
         tracing::trace!("bind({})", local);
-        bind(fd, &local)?;
+        bind(fd.as_raw_fd(), &local)?;
         if let Some(remote) = remote {
             tracing::trace!("connect({})", remote);
-            connect(fd, &remote)?;
+            connect(fd.as_raw_fd(), &remote)?;
         }
 
-        unsafe { std::net::UdpSocket::from_raw_fd(fd) }
+        unsafe { std::net::UdpSocket::from_raw_fd(fd.as_raw_fd()) }
     };
 
     #[cfg(windows)]
