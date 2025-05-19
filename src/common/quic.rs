@@ -205,7 +205,7 @@ impl FrameWriter for QuicFrameWriter {
             len += fragment.len();
             self.conn
                 .send_datagram(fragment)
-                .map_err(|e| IoError::new(ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| IoError::other(e.to_string()))?;
         }
         Ok(len)
     }

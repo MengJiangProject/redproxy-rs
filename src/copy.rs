@@ -109,7 +109,7 @@ where
         fn read(&mut self) -> BoxFuture<'_, IoResult<usize>>;
         fn write(&mut self, more: bool) -> BoxFuture<'_, IoResult<usize>>;
     }
-    type BoxSpliceFn = Box<dyn SpliceFn + Send>;
+    //type BoxSpliceFn = Box<dyn SpliceFn + Send>;
     struct NullFn;
     impl SpliceFn for NullFn {
         fn read(&mut self) -> BoxFuture<'_, IoResult<usize>> {

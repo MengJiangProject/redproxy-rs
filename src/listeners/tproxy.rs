@@ -17,7 +17,7 @@ use nix::{
 };
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
-use std::io::Result as IoResult;
+use std::{io::Result as IoResult, os::fd::AsFd};
 use std::{
     io::IoSliceMut,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -165,12 +165,12 @@ impl TProxyListener {
         let source = crate::common::try_map_v4_addr(source);
 
         let target = if source.is_ipv4() {
-            let dst = getsockopt(socket.as_raw_fd(), OriginalDst).context("getsockopt")?;
+            let dst = getsockopt(&socket, OriginalDst).context("getsockopt")?;
             let addr = Ipv4Addr::from(ntohl(dst.sin_addr.s_addr));
             let port = ntohs(dst.sin_port);
             TargetAddress::from((addr, port))
         } else {
-            let dst = getsockopt(socket.as_raw_fd(), Ip6tOriginalDst).context("getsockopt")?;
+            let dst = getsockopt(&socket, Ip6tOriginalDst).context("getsockopt")?;
             let addr = Ipv6Addr::from(dst.sin6_addr.s6_addr);
             let port = ntohs(dst.sin6_port);
             TargetAddress::from((addr, port))
@@ -278,11 +278,11 @@ fn ntohs(x: u16) -> u16 {
     u16::from_be(x)
 }
 
-pub fn set_nonblocking(fd: i32) -> std::io::Result<()> {
+pub fn set_nonblocking<T: AsFd>(fd: T) -> std::io::Result<()> {
     use nix::fcntl::{fcntl, FcntlArg, OFlag};
-    let mut flags = fcntl(fd, FcntlArg::F_GETFD)?;
+    let mut flags = fcntl(&fd, FcntlArg::F_GETFD)?;
     flags |= libc::O_NONBLOCK;
-    fcntl(fd, FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags)))?;
+    fcntl(&fd, FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags)))?;
     Ok(())
 }
 
@@ -300,19 +300,19 @@ impl TproxyUdpSocket {
             SockFlag::empty(),
             SockProtocol::Udp,
         )?;
-        set_nonblocking(fd)?;
-        setsockopt(fd, ReuseAddr, &true)?;
-        setsockopt(fd, IpTransparent, &true)?;
+        set_nonblocking(&fd)?;
+        setsockopt(&fd, ReuseAddr, &true)?;
+        setsockopt(&fd, IpTransparent, &true)?;
         if addr.is_ipv4() {
-            setsockopt(fd, Ipv4OrigDstAddr, &true)?;
+            setsockopt(&fd, Ipv4OrigDstAddr, &true)?;
         } else {
-            setsockopt(fd, Ipv6OrigDstAddr, &true)?;
+            setsockopt(&fd, Ipv6OrigDstAddr, &true)?;
         }
 
-        bind(fd, &ss)?;
+        bind(fd.as_raw_fd(), &ss)?;
 
         Ok(Self {
-            inner: AsyncFd::new(fd)?,
+            inner: AsyncFd::new(fd.as_raw_fd())?,
         })
     }
 
@@ -342,7 +342,8 @@ impl TproxyUdpSocket {
                             }
                             _ => panic!("unknown address family"),
                         };
-                        let dst: SocketAddr = match ret.cmsgs().next() {
+                        let mut cmsgs = ret.cmsgs().expect("cmsgs");
+                        let dst: SocketAddr = match cmsgs.next() {
                             Some(ControlMessageOwned::Ipv4OrigDstAddr(addr)) => unsafe {
                                 SocketAddr::V4(
                                     SockaddrIn::from_raw(

@@ -35,7 +35,7 @@ pub fn udp_socket(
             #[cfg(target_os = "linux")]
             {
                 use nix::sys::socket::sockopt::IpTransparent;
-                setsockopt(fd, IpTransparent, &true)?;
+                setsockopt(&fd, IpTransparent, &true)?;
             }
             #[cfg(not(target_os = "linux"))]
             {

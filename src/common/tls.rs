@@ -238,7 +238,7 @@ fn load_certs<P: AsRef<Path>>(path: P) -> Result<Vec<CertificateDer<'static>>, E
     let raw = certs(&mut reader)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| err_msg("fail to load certificate"))?;
-    Ok(raw.into_iter().map(CertificateDer::from).collect())
+    Ok(raw.into_iter().collect())
 }
 
 fn load_keys<P: AsRef<Path>>(path: P) -> Result<PrivateKeyDer<'static>, Error> {

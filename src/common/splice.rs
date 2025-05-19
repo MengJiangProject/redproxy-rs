@@ -5,12 +5,13 @@ use nix::errno::Errno;
 use nix::fcntl::{splice, SpliceFFlags};
 use nix::unistd::pipe as c_pipe;
 use std::io::{self, Result as IoResult};
-use std::os::unix::prelude::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::AsFd;
+use std::os::unix::prelude::{AsRawFd,  OwnedFd, RawFd};
 use tokio::io::unix::AsyncFd;
 
 pub fn pipe() -> IoResult<(AsyncFd<OwnedFd>, AsyncFd<OwnedFd>)> {
     let pipe = c_pipe()?;
-    let pipe = unsafe { (OwnedFd::from_raw_fd(pipe.0), OwnedFd::from_raw_fd(pipe.1)) };
+   // let pipe = unsafe { (OwnedFd::from_raw_fd(pipe.0), OwnedFd::from_raw_fd(pipe.1)) };
     let pipe = (AsyncFd::new(pipe.0)?, AsyncFd::new(pipe.1)?);
     Ok(pipe)
 }
@@ -33,9 +34,9 @@ pub async fn async_splice(
 
     loop {
         let ret = splice(
-            fd_in.as_raw_fd(),
+            fd_in.as_fd(),
             None,
-            fd_out.as_raw_fd(),
+            fd_out.as_fd(),
             None,
             len,
             flags,
@@ -64,7 +65,7 @@ pub async fn async_splice(
                 }
             }
             Err(e) => break Err(io::Error::from_raw_os_error(e as i32)),
-            Ok(ret) => break Ok(ret as usize),
+            Ok(ret) => break Ok(ret),
         }
     }
 }

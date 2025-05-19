@@ -218,7 +218,7 @@ impl FrameWriter for DirectFrames {
 }
 
 #[cfg(target_os = "linux")]
-pub fn set_fwmark<T: std::os::unix::prelude::AsRawFd>(
+pub fn set_fwmark<T: std::os::unix::prelude::AsFd>(
     sk: &T,
     mark: Option<u32>,
 ) -> Result<(), Error> {
@@ -228,7 +228,7 @@ pub fn set_fwmark<T: std::os::unix::prelude::AsRawFd>(
         return Ok(());
     }
     let mark = mark.unwrap();
-    setsockopt(sk.as_raw_fd(), Mark, &mark).context("setsockopt")
+    setsockopt(sk, Mark, &mark).context("setsockopt")
 }
 
 #[cfg(not(target_os = "linux"))]

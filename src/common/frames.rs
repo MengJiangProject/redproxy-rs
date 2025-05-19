@@ -75,8 +75,7 @@ impl Frame {
         }
         let magic = buf.get_u32();
         if magic != MAGIC {
-            return Err(IoError::new(
-                ErrorKind::Other,
+            return Err(IoError::other(
                 format!("Invalid magic: {:?}", magic),
             ));
         }

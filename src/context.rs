@@ -57,7 +57,7 @@ impl TargetAddress {
                 let addr = format!("{}:{}", host, port);
                 let mut ret = lookup_host(addr.as_str()).await?;
                 ret.next()
-                    .ok_or_else(|| IoError::new(std::io::ErrorKind::Other, "DNS Error"))
+                    .ok_or_else(|| IoError::other("DNS Error"))
             }
             Self::SocketAddr(addr) => Ok(*addr),
             _ => unreachable!(),
