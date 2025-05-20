@@ -102,15 +102,6 @@ jobs:
       - name: Install target
         run: rustup target add ${{ matrix.job.target }}
 
-      - name: Setup cross compilation
-        if: matrix.job.use-cross
-        shell: bash
-        run: |
-          # Install cross
-          cargo install cross
-          # Install cross target
-          cross --target ${{ matrix.job.target }} --version
-
       - name: Show version information (Rust, cargo, GCC)
         shell: bash
         run: |
