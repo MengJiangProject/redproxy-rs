@@ -218,10 +218,7 @@ impl FrameWriter for DirectFrames {
 }
 
 #[cfg(target_os = "linux")]
-pub fn set_fwmark<T: std::os::unix::prelude::AsFd>(
-    sk: &T,
-    mark: Option<u32>,
-) -> Result<(), Error> {
+pub fn set_fwmark<T: std::os::unix::prelude::AsFd>(sk: &T, mark: Option<u32>) -> Result<(), Error> {
     use nix::sys::socket::setsockopt;
     use nix::sys::socket::sockopt::Mark;
     if mark.is_none() {

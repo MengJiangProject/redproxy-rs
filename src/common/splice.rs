@@ -6,12 +6,12 @@ use nix::fcntl::{splice, SpliceFFlags};
 use nix::unistd::pipe as c_pipe;
 use std::io::{self, Result as IoResult};
 use std::os::fd::AsFd;
-use std::os::unix::prelude::{AsRawFd,  OwnedFd, RawFd};
+use std::os::unix::prelude::{AsRawFd, OwnedFd, RawFd};
 use tokio::io::unix::AsyncFd;
 
 pub fn pipe() -> IoResult<(AsyncFd<OwnedFd>, AsyncFd<OwnedFd>)> {
     let pipe = c_pipe()?;
-   // let pipe = unsafe { (OwnedFd::from_raw_fd(pipe.0), OwnedFd::from_raw_fd(pipe.1)) };
+    // let pipe = unsafe { (OwnedFd::from_raw_fd(pipe.0), OwnedFd::from_raw_fd(pipe.1)) };
     let pipe = (AsyncFd::new(pipe.0)?, AsyncFd::new(pipe.1)?);
     Ok(pipe)
 }
@@ -33,14 +33,7 @@ pub async fn async_splice(
     }
 
     loop {
-        let ret = splice(
-            fd_in.as_fd(),
-            None,
-            fd_out.as_fd(),
-            None,
-            len,
-            flags,
-        );
+        let ret = splice(fd_in.as_fd(), None, fd_out.as_fd(), None, len, flags);
         match ret {
             Err(e) if e == Errno::EWOULDBLOCK => {
                 // Since tokio might use epoll's edge-triggered mode, we cannot blindly

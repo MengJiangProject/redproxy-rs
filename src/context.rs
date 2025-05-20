@@ -56,8 +56,7 @@ impl TargetAddress {
             Self::DomainPort(host, port) => {
                 let addr = format!("{}:{}", host, port);
                 let mut ret = lookup_host(addr.as_str()).await?;
-                ret.next()
-                    .ok_or_else(|| IoError::other("DNS Error"))
+                ret.next().ok_or_else(|| IoError::other("DNS Error"))
             }
             Self::SocketAddr(addr) => Ok(*addr),
             _ => unreachable!(),
@@ -212,7 +211,6 @@ impl UnixTimestamp for SystemTime {
             .as_millis() as u64
     }
 }
-
 
 pub trait IOStream: AsyncRead + AsyncWrite + Send + Sync + Unpin {
     fn as_any(&self) -> &dyn Any;

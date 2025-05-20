@@ -75,9 +75,7 @@ impl Frame {
         }
         let magic = buf.get_u32();
         if magic != MAGIC {
-            return Err(IoError::other(
-                format!("Invalid magic: {:?}", magic),
-            ));
+            return Err(IoError::other(format!("Invalid magic: {:?}", magic)));
         }
         let _session_id = buf.get_u32();
         let attr_len = buf.get_u16() as usize;

@@ -17,7 +17,6 @@ use nix::{
 };
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
-use std::{io::Result as IoResult, os::fd::AsFd};
 use std::{
     io::IoSliceMut,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -25,6 +24,7 @@ use std::{
     os::unix::prelude::{AsRawFd, RawFd},
     sync::Arc,
 };
+use std::{io::Result as IoResult, os::fd::AsFd};
 use tokio::{
     io::unix::AsyncFd,
     net::{TcpListener, UdpSocket},
