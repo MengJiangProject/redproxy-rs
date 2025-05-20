@@ -102,6 +102,11 @@ jobs:
       - name: Install target
         run: rustup target add ${{ matrix.job.target }}
 
+      - name: Install cross
+        if: ${{ matrix.job.use-cross }}
+        shell: bash
+        run: cargo install cross
+
       - name: Show version information (Rust, cargo, GCC)
         shell: bash
         run: |
@@ -112,7 +117,11 @@ jobs:
           cargo -V
           rustc -V
 
-      - run: cargo build --locked --release --target=${{ matrix.job.target }} --workspace  --all-features
+      - if: ${{ ! matrix.job.use-cross }}
+        run: cargo build --locked --release --target=${{ matrix.job.target }} --workspace  --all-features
+
+      - if: ${{ matrix.job.use-cross }}
+        run: cross build --locked --release --target=${{ matrix.job.target }} --workspace  --all-features
 
       - name: Strip debug information from executable
         id: strip
