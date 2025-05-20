@@ -1,7 +1,9 @@
 use async_trait::async_trait;
+use std::io::Result as IoResult;
 use std::net::SocketAddr;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 use std::sync::Arc;
-use std::{io::Result as IoResult, os::fd::AsRawFd};
 use tokio::{net::UdpSocket, sync::mpsc};
 
 use super::frames::{Frame, FrameIO, FrameReader, FrameWriter};
