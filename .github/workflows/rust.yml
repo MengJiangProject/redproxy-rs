@@ -99,6 +99,23 @@ jobs:
           echo "PROJECT_MAINTAINER=$(sed -n 's/^authors = \["\(.*\)"\]/\1/p' Cargo.toml)" >> $GITHUB_ENV
           echo "PROJECT_HOMEPAGE=$(sed -n 's/^homepage = "\(.*\)"/\1/p' Cargo.toml)" >> $GITHUB_ENV
 
+      - name: Install target
+        run: rustup target add ${{ matrix.job.target }}
+
+      - name: Setup cross compilation
+        if: matrix.job.use-cross
+        shell: bash
+        run: |
+          # Install cross
+          cargo install cross
+          # Install cross target
+          cross --target ${{ matrix.job.target }} --version
+          # Install cross dependencies
+          case ${{ matrix.job.target }} in
+            arm-unknown-linux-*) sudo apt-get -y update ; sudo apt-get -y install gcc-arm-linux-gnueabihf ;;
+            aarch64-unknown-linux-gnu) sudo apt-get -y update ; sudo apt-get -y install gcc-aarch64-linux-gnu ;;
+          esac
+
       - name: Show version information (Rust, cargo, GCC)
         shell: bash
         run: |
