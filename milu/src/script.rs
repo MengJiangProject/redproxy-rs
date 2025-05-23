@@ -895,24 +895,24 @@ ${to_string(1+2)}` "#,
 
     #[test]
     fn eval_closure_lexical_scoping() {
-        eval_test!("let x = 10; let f(a) = a + x in f(5)", Value::Integer(15));
-        type_test("let x = 10; let f(a) = a + x in f(5)", Type::Any);
-        eval_test!("let x = 10; let f() = x * 2 in f()", Value::Integer(20));
-        type_test("let x = 10; let f() = x * 2 in f()", Type::Any);
+        eval_test!("let x = 10; f(a) = a + x in f(5)", Value::Integer(15));
+        type_test("let x = 10; f(a) = a + x in f(5)", Type::Any);
+        eval_test!("let x = 10; f() = x * 2 in f()", Value::Integer(20));
+        type_test("let x = 10; f() = x * 2 in f()", Type::Any);
     }
 
     #[test]
     fn eval_closure_arg_shadows_outer_scope() {
-        eval_test!("let x = 10; let f(x) = x + 1 in f(5)", Value::Integer(6));
-        type_test("let x = 10; let f(x) = x + 1 in f(5)", Type::Any);
+        eval_test!("let x = 10; f(x) = x + 1 in f(5)", Value::Integer(6));
+        type_test("let x = 10; f(x) = x + 1 in f(5)", Type::Any);
     }
 
     #[test]
     fn eval_closure_inner_let_shadows_outer_scope() {
-        eval_test!("let x = 10; let f() = (let x = 5 in x + 1); f()", Value::Integer(6));
-        type_test("let x = 10; let f() = (let x = 5 in x + 1); f()", Type::Any);
-        eval_test!("let x = 10; let f() = (let y = 5 in x + y); f()", Value::Integer(15));
-        type_test("let x = 10; let f() = (let y = 5 in x + y); f()", Type::Any);
+        eval_test!("let x = 10; f() = (let x = 5 in x + 1) in f()", Value::Integer(6)); // Corrected: single let, removed semicolon before 'in' for f() body.
+        type_test("let x = 10; f() = (let x = 5 in x + 1) in f()", Type::Any);
+        eval_test!("let x = 10; f() = (let y = 5 in x + y) in f()", Value::Integer(15)); // Corrected: single let, removed semicolon before 'in' for f() body.
+        type_test("let x = 10; f() = (let y = 5 in x + y) in f()", Type::Any);
     }
 
     #[test]
@@ -925,19 +925,19 @@ ${to_string(1+2)}` "#,
 
     #[test]
     fn eval_mutually_recursive_functions() {
-        let script_even = "let is_even(n) = if n == 0 then true else is_odd(n - 1); let is_odd(n) = if n == 0 then false else is_even(n - 1) in is_even(4)";
+        let script_even = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_even(4)"; // Corrected
         eval_test!(script_even, Value::Boolean(true));
         type_test(script_even, Type::Any);
 
-        let script_odd = "let is_even(n) = if n == 0 then true else is_odd(n - 1); let is_odd(n) = if n == 0 then false else is_even(n - 1) in is_odd(3)";
+        let script_odd = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_odd(3)"; // Corrected
         eval_test!(script_odd, Value::Boolean(true));
         type_test(script_odd, Type::Any);
     }
     
     #[test]
     fn eval_function_uses_another_in_same_block() {
-        eval_test!("let g() = 10; let f(a) = a + g() in f(5)", Value::Integer(15));
-        type_test("let g() = 10; let f(a) = a + g() in f(5)", Type::Any);
+        eval_test!("let g() = 10; f(a) = a + g() in f(5)", Value::Integer(15)); // Corrected
+        type_test("let g() = 10; f(a) = a + g() in f(5)", Type::Any);
     }
 
     // Optional: Type of function itself.

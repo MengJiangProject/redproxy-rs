@@ -449,10 +449,10 @@ rule!(op_assign -> Value, {
             nom_tuple((
                 identifier,
                 ws(func_args_def),
-                ws(char('=')),
-                op_0
+                cut(ws(char('='))), // cut after '='
+                cut(op_0)           // cut before body
             )),
-            |(name_ident, arg_idents, _, body)| {
+            |(name_ident, arg_idents, _, body)| { // _ for char('=')
                 Value::ParsedFunction(Arc::new(ParsedFunction {
                     name_ident,
                     arg_idents,
@@ -486,8 +486,9 @@ rule!(op_let -> Value, {
 rule!(op_0 -> Value, {
     alt((
         op_if,
-        op_let, // op_let now correctly uses the modified op_assign
-        op_1 // op_1 includes op_assign indirectly through the chain if not in let/if
+        op_let,     // op_let now correctly uses the modified op_assign
+        op_assign,  // Allow standalone assignments (var or func def)
+        op_1        // Then other expressions
     ))
 });
 
