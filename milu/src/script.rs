@@ -334,13 +334,7 @@ impl Value {
             _ => panic!("as_vec: type mismatch, possible bug in parse"),
         }
     }
-    fn as_str(&self) -> &str {
-        match self {
-            Self::String(a) => a,
-            Self::Identifier(a) => a,
-            _ => panic!("as_str: type mismatch, possible bug in parse"),
-        }
-    }
+    // Removed fn as_str(&self) -> &str { ... }
     #[allow(dead_code)]
     fn as_i64(&self) -> i64 {
         match self {
@@ -762,7 +756,7 @@ mod tests {
     use super::super::parser::parse;
     use super::*;
     // For Value::Integer, etc.
-    use crate::script::Value::{Integer as int, Boolean as bool_val, String as str_val};
+    use super::Value; // Changed from specific imports to `use super::Value;`
 
 
     macro_rules! eval_test {
@@ -785,13 +779,13 @@ mod tests {
     #[test]
     fn one_plus_one() {
         type_test("1+1", Type::Integer);
-        eval_test!("1+1", 2.into());
+        eval_test!("1+1", Value::Integer(2).into());
     }
 
     #[test]
     fn to_string() {
         type_test("to_string(100*2)", Type::String);
-        eval_test!("to_string(100*2)", "200".into())
+        eval_test!("to_string(100*2)", Value::String("200".to_string()).into());
     }
 
     #[test]
@@ -838,19 +832,19 @@ mod tests {
     #[test]
     fn scope() {
         type_test("let a=1;b=2 in a+b", Type::Integer);
-        eval_test!("let a=1;b=2 in a+b", 3.into());
+        eval_test!("let a=1;b=2 in a+b", Value::Integer(3).into());
     }
 
     #[test]
     fn access_tuple() {
         type_test("(1,\"2\",false).1", Type::String);
-        eval_test!("(1,\"2\",false).1", "2".into());
+        eval_test!("(1,\"2\",false).1", Value::String("2".to_string()).into());
     }
 
     #[test]
     fn strcat() {
         type_test(r#" strcat(["1","2",to_string(3)]) "#, Type::String);
-        eval_test!(r#" strcat(["1","2",to_string(3)]) "#, "123".into());
+        eval_test!(r#" strcat(["1","2",to_string(3)]) "#, Value::String("123".to_string()).into());
     }
 
     #[test]
@@ -859,7 +853,7 @@ mod tests {
         eval_test!(
             r#" `x=
 ${to_string(1+2)}` "#,
-            "x=\n3".into()
+            Value::String("x=\n3".to_string()).into()
         );
     }
 
@@ -883,67 +877,67 @@ ${to_string(1+2)}` "#,
 
     #[test]
     fn eval_simple_function_call() {
-        eval_test!("let f(a) = a + 1 in f(5)", int!(6));
-        type_test!("let f(a) = a + 1 in f(5)", Type::Any); // UDF returns Type::Any
+        eval_test!("let f(a) = a + 1 in f(5)", Value::Integer(6));
+        type_test("let f(a) = a + 1 in f(5)", Type::Any); // UDF returns Type::Any
     }
 
     #[test]
     fn eval_function_multiple_args() {
-        eval_test!("let add(x, y) = x + y in add(3, 4)", int!(7));
-        type_test!("let add(x, y) = x + y in add(3, 4)", Type::Any);
+        eval_test!("let add(x, y) = x + y in add(3, 4)", Value::Integer(7));
+        type_test("let add(x, y) = x + y in add(3, 4)", Type::Any);
     }
 
     #[test]
     fn eval_function_no_args() {
-        eval_test!("let get_num() = 42 in get_num()", int!(42));
-        type_test!("let get_num() = 42 in get_num()", Type::Any);
+        eval_test!("let get_num() = 42 in get_num()", Value::Integer(42));
+        type_test("let get_num() = 42 in get_num()", Type::Any);
     }
 
     #[test]
     fn eval_closure_lexical_scoping() {
-        eval_test!("let x = 10; let f(a) = a + x in f(5)", int!(15));
-        type_test!("let x = 10; let f(a) = a + x in f(5)", Type::Any);
-        eval_test!("let x = 10; let f() = x * 2 in f()", int!(20));
-        type_test!("let x = 10; let f() = x * 2 in f()", Type::Any);
+        eval_test!("let x = 10; let f(a) = a + x in f(5)", Value::Integer(15));
+        type_test("let x = 10; let f(a) = a + x in f(5)", Type::Any);
+        eval_test!("let x = 10; let f() = x * 2 in f()", Value::Integer(20));
+        type_test("let x = 10; let f() = x * 2 in f()", Type::Any);
     }
 
     #[test]
     fn eval_closure_arg_shadows_outer_scope() {
-        eval_test!("let x = 10; let f(x) = x + 1 in f(5)", int!(6));
-        type_test!("let x = 10; let f(x) = x + 1 in f(5)", Type::Any);
+        eval_test!("let x = 10; let f(x) = x + 1 in f(5)", Value::Integer(6));
+        type_test("let x = 10; let f(x) = x + 1 in f(5)", Type::Any);
     }
 
     #[test]
     fn eval_closure_inner_let_shadows_outer_scope() {
-        eval_test!("let x = 10; let f() = (let x = 5 in x + 1); f()", int!(6));
-        type_test!("let x = 10; let f() = (let x = 5 in x + 1); f()", Type::Any);
-        eval_test!("let x = 10; let f() = (let y = 5 in x + y); f()", int!(15));
-        type_test!("let x = 10; let f() = (let y = 5 in x + y); f()", Type::Any);
+        eval_test!("let x = 10; let f() = (let x = 5 in x + 1); f()", Value::Integer(6));
+        type_test("let x = 10; let f() = (let x = 5 in x + 1); f()", Type::Any);
+        eval_test!("let x = 10; let f() = (let y = 5 in x + y); f()", Value::Integer(15));
+        type_test("let x = 10; let f() = (let y = 5 in x + y); f()", Type::Any);
     }
 
     #[test]
     fn eval_recursive_function_factorial() {
-        eval_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)", int!(6));
-        type_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)", Type::Any);
-        eval_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)", int!(1));
-        type_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)", Type::Any);
+        eval_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)", Value::Integer(6));
+        type_test("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)", Type::Any);
+        eval_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)", Value::Integer(1));
+        type_test("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)", Type::Any);
     }
 
     #[test]
     fn eval_mutually_recursive_functions() {
         let script_even = "let is_even(n) = if n == 0 then true else is_odd(n - 1); let is_odd(n) = if n == 0 then false else is_even(n - 1) in is_even(4)";
-        eval_test!(script_even, bool_val!(true));
-        type_test!(script_even, Type::Any);
+        eval_test!(script_even, Value::Boolean(true));
+        type_test(script_even, Type::Any);
 
         let script_odd = "let is_even(n) = if n == 0 then true else is_odd(n - 1); let is_odd(n) = if n == 0 then false else is_even(n - 1) in is_odd(3)";
-        eval_test!(script_odd, bool_val!(true));
-        type_test!(script_odd, Type::Any);
+        eval_test!(script_odd, Value::Boolean(true));
+        type_test(script_odd, Type::Any);
     }
     
     #[test]
     fn eval_function_uses_another_in_same_block() {
-        eval_test!("let g() = 10; let f(a) = a + g() in f(5)", int!(15));
-        type_test!("let g() = 10; let f(a) = a + g() in f(5)", Type::Any);
+        eval_test!("let g() = 10; let f(a) = a + g() in f(5)", Value::Integer(15));
+        type_test("let g() = 10; let f(a) = a + g() in f(5)", Type::Any);
     }
 
     // Optional: Type of function itself.
