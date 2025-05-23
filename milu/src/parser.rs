@@ -17,7 +17,7 @@ use std::{fmt, num::ParseIntError, sync::Arc};
 mod string;
 mod template;
 use super::script::stdlib::*;
-use super::script::{Call, Value};
+use super::script::{Call, Value, ParsedFunction}; // Added ParsedFunction
 
 pub type Span<'s> = LocatedSpan<&'s str>;
 
@@ -456,10 +456,73 @@ rule!(op_let -> Value, {
 rule!(op_0 -> Value, {
     alt((
         op_if,
+        // op_let should be before op_assign to parse "let a = fn() = 1" correctly.
+        // However, op_assign is part of op_let.
+        // We will handle op_assign to include function definitions first.
+        // Then op_let will naturally pick it up.
         op_let,
+        op_assign, // Ensure op_assign is tried if not part of a let block.
         op_1
     ))
 });
+
+rule!(func_args_def -> Vec<Value>, {
+    delimited(
+        char('('),
+        separated_list0(ws(char(',')), identifier),
+        ws(char(')'))
+    )
+});
+
+rule!(op_assign -> Value, {
+    alt((
+        // Try to parse function definition first: identifier func_args_def = op_0
+        map(
+            nom_tuple((
+                identifier,
+                ws(func_args_def),
+                ws(char('=')),
+                op_0
+            )),
+            |(name_ident, arg_idents, _, body)| {
+                Value::ParsedFunction(Arc::new(ParsedFunction {
+                    name_ident,
+                    arg_idents,
+                    body,
+                }))
+            }
+        ),
+        // Fallback to simple variable assignment: identifier = op_0
+        map(
+            separated_pair(identifier, ws(char('=')), op_0),
+            |(name, value)| Value::Tuple(Arc::new(vec![name, value]))
+        )
+    ))
+});
+
+rule!(op_let -> Value, {
+    map(
+        nom_tuple((
+            preceded(tag("let"),
+                terminated(
+                    separated_list0(ws(char(';')), op_assign), // op_assign now handles func defs
+                    opt(ws(char(';')))
+                )
+            ),
+            preceded(ws(tag("in")),op_0),
+        )),
+        |(vars,expr)| Scope::make_call(vars.into(),expr).into()
+    )
+});
+
+rule!(op_0 -> Value, {
+    alt((
+        op_if,
+        op_let, // op_let now correctly uses the modified op_assign
+        op_1 // op_1 includes op_assign indirectly through the chain if not in let/if
+    ))
+});
+
 
 rule!(root(i)->Value, {
     all_consuming(terminated(op_0,delimited(multispace0,opt(tag(";;")),multispace0)))
@@ -512,6 +575,11 @@ mod tests {
     // use super::super::filter::Filter;
     // use super::super::script::stdlib::*;
     use super::*;
+    // Ensure Arc is available, usually through std::sync::Arc, but tests might need explicit import if not re-exported by `super::*`
+    // For ParsedFunction, it should come from `super::super::script::ParsedFunction` or similar if `super::*` doesn't already get it.
+    // Given `use super::script::{Call, Value, ParsedFunction};` at the top of the file, `ParsedFunction` is in scope.
+    // `Value` is also in scope. `Arc` is standard.
+
     macro_rules! expr {
         ($id:ident,$name:ident) => {
             expr!($id, $name, make_call);
@@ -748,4 +816,81 @@ mod tests {
         };
         assert_ast(input, value);
     }
+
+    #[test]
+    fn parse_simple_function_definition() {
+        let input = "let f(a) = a + 1 in f(5)";
+        let expected_vars = array!(
+            Value::ParsedFunction(Arc::new(ParsedFunction {
+                name_ident: id!("f"),
+                arg_idents: vec![id!("a")],
+                body: plus!(id!("a"), int!(1)),
+            }))
+        );
+        let expected_expr_in_scope = call!(vec![id!("f"), int!(5)]);
+        let expected_value = scope!(expected_vars, expected_expr_in_scope);
+        assert_ast(input, expected_value);
+    }
+
+    #[test]
+    fn parse_function_definition_multiple_args() {
+        let input = "let add(x, y) = x + y in add(3, 4)";
+        let expected_vars = array!(
+            Value::ParsedFunction(Arc::new(ParsedFunction {
+                name_ident: id!("add"),
+                arg_idents: vec![id!("x"), id!("y")],
+                body: plus!(id!("x"), id!("y")),
+            }))
+        );
+        let expected_expr_in_scope = call!(vec![id!("add"), int!(3), int!(4)]);
+        let expected_value = scope!(expected_vars, expected_expr_in_scope);
+        assert_ast(input, expected_value);
+    }
+
+    #[test]
+    fn parse_function_definition_no_args() {
+        let input = "let get_num() = 42 in get_num()";
+        let expected_vars = array!(
+            Value::ParsedFunction(Arc::new(ParsedFunction {
+                name_ident: id!("get_num"),
+                arg_idents: vec![],
+                body: int!(42),
+            }))
+        );
+        let expected_expr_in_scope = call!(vec![id!("get_num")]);
+        let expected_value = scope!(expected_vars, expected_expr_in_scope);
+        assert_ast(input, expected_value);
+    }
+
+    #[test]
+    fn parse_function_definition_mixed_with_vars() {
+        let input = "let a = 1; f(b) = b + a; c = 2 in f(c)";
+        let expected_vars = array!(
+            tuple!(id!("a"), int!(1)), // For a = 1
+            Value::ParsedFunction(Arc::new(ParsedFunction { // For f(b) = b + a
+                name_ident: id!("f"),
+                arg_idents: vec![id!("b")],
+                body: plus!(id!("b"), id!("a")),
+            })),
+            tuple!(id!("c"), int!(2))  // For c = 2
+        );
+        let expected_expr_in_scope = call!(vec![id!("f"), id!("c")]);
+        let expected_value = scope!(expected_vars, expected_expr_in_scope);
+        assert_ast(input, expected_value);
+    }
+
+    #[test]
+    fn parse_standalone_function_assignment() {
+        // This test assumes that a function can be assigned directly
+        // without a `let...in` expression, if the grammar supports it.
+        // The current op_0 -> alt includes op_assign for this.
+        let input = "f(a) = a + 1";
+        let expected_value = Value::ParsedFunction(Arc::new(ParsedFunction {
+            name_ident: id!("f"),
+            arg_idents: vec![id!("a")],
+            body: plus!(id!("a"), int!(1)),
+        }));
+        assert_ast(input, expected_value);
+    }
+
 }

@@ -308,17 +308,56 @@ impl NativeObject for ScopeBinding {
 
 function_head!(Scope(vars: Array, expr: Any) => Any);
 impl Scope {
-    fn make_context(vars: &[Value], ctx: ScriptContextRef) -> Result<ScriptContextRef, Error> {
-        let mut nctx = ScriptContext::new(Some(ctx.clone()));
-        for v in vars.iter() {
-            let t = v.as_vec();
-            let id: String = t[0].as_str().to_owned();
-            let value = t[1].clone();
-            let value = ScopeBinding {
-                ctx: ctx.clone(),
-                value,
-            };
-            nctx.set(id, value.into());
+    fn make_context(vars: &[Value], outer_ctx: ScriptContextRef) -> Result<ScriptContextRef, Error> {
+        let mut nctx = ScriptContext::new(Some(outer_ctx.clone()));
+        for v_or_pf in vars.iter() {
+            match v_or_pf {
+                Value::ParsedFunction(parsed_fn_arc) => {
+                    let name_str = match &parsed_fn_arc.name_ident {
+                        Value::Identifier(s) => s.clone(),
+                        _ => return Err(err_msg("Function name must be an identifier")),
+                    };
+
+                    let mut arg_names_str = Vec::new();
+                    for arg_ident_val in &parsed_fn_arc.arg_idents {
+                        match arg_ident_val {
+                            Value::Identifier(s) => arg_names_str.push(s.clone()),
+                            _ => return Err(err_msg("Function arguments must be identifiers")),
+                        }
+                    }
+
+                    let udf = UserDefinedFunction {
+                        name: Some(name_str.clone()),
+                        arg_names: arg_names_str,
+                        body: parsed_fn_arc.body.clone(),
+                        captured_context: outer_ctx.clone(), // Capture the outer context
+                    };
+                    // Functions are defined and ready to be called, not wrapped in ScopeBinding
+                    nctx.set(name_str, Value::UserDefined(Arc::new(udf)));
+                }
+                Value::Tuple(pair_arc) => { // Existing variable binding logic for Value::Tuple
+                    let t = pair_arc.as_ref(); // pair_arc is Arc<Vec<Value>>
+                    if t.len() != 2 {
+                        return Err(err_msg(format!("Invalid variable binding tuple: {:?}", t)));
+                    }
+                    let id = match &t[0] {
+                        Value::Identifier(s) => s.clone(),
+                        _ => return Err(err_msg("Binding name must be an identifier")),
+                    };
+                    let value = t[1].clone();
+                    let scope_bound_value = ScopeBinding {
+                        ctx: outer_ctx.clone(), // outer_ctx is the context for lazy eval of expressions
+                        value,
+                    };
+                    nctx.set(id, scope_bound_value.into());
+                }
+                _ => {
+                    return Err(err_msg(format!(
+                        "Invalid item in let binding list: {:?}. Expected Tuple or ParsedFunction.",
+                        v_or_pf
+                    )));
+                }
+            }
         }
         Ok(Arc::new(nctx))
     }
