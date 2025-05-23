@@ -304,7 +304,34 @@ impl NativeObject for ScopeBinding {
     fn as_evaluatable(&self) -> Option<&dyn Evaluatable> {
         Some(self)
     }
+    fn as_callable(&self) -> Option<&dyn Callable> {
+        Some(self) // Allow ScopeBinding to be treated as Callable
+    }
 }
+
+impl Callable for ScopeBinding {
+    fn signature(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Type, Error> {
+        // ScopeBinding is not directly callable as a function.
+        // Its purpose is to wrap values in a 'let' binding for lazy evaluation.
+        // However, for type checking or analysis, it might need a signature.
+        // Returning Any, or perhaps the type of the wrapped value.
+        self.value.type_of(self.ctx.clone())
+    }
+
+    fn call(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Value, Error> {
+        // ScopeBinding is not directly callable. It resolves during 'value_of'.
+        bail!("ScopeBinding is not directly callable. It should be resolved via value_of.")
+    }
+
+    fn unresovled_ids<'s: 'o, 'o>(&'s self, _args: &'s [Value], ids: &mut HashSet<&'o Value>) {
+        // A ScopeBinding's unresolved IDs are those in its wrapped value.
+        // The 'args' for Callable are not relevant here as ScopeBinding isn't a function call itself.
+        // The context for these unresolved IDs is implicitly the one where 'value' is defined,
+        // but unresovled_ids is a static check.
+        self.value.unresovled_ids(ids);
+    }
+}
+
 
 function_head!(Scope(vars: Array, expr: Any) => Any);
 impl Scope {
