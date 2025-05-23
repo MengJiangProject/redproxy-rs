@@ -240,7 +240,7 @@ impl Callable for Access {
         }
     }
 
-    fn unresovled_ids<'s: 'o, 'o>(&self, args: &'s [Value], ids: &mut HashSet<&'o Value>) {
+    fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) { // Changed &self to &'s self
         args[0].unresovled_ids(ids) // args[1] is always literal identifier or integer, thus not unresolved
     }
 }
@@ -400,7 +400,7 @@ impl Callable for Scope {
         args[1].value_of(ctx)
     }
 
-    fn unresovled_ids<'s: 'o, 'o>(&self, args: &'s [Value], ids: &mut HashSet<&'o Value>) {
+    fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) { // Changed &self to &'s self
         let mut unresolved = HashSet::new();
         args[1].unresovled_ids(&mut unresolved); // first get all unresolved ids in expr
 

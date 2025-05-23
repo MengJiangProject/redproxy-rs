@@ -89,7 +89,7 @@ pub trait Callable {
     // should not return Any
     fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error>;
     fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error>;
-    fn unresovled_ids<'s: 'o, 'o>(&self, args: &'s [Value], ids: &mut HashSet<&'o Value>) {
+    fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) { // Changed &self to &'s self
         args.iter().for_each(|v| v.unresovled_ids(ids))
     }
 }
@@ -247,7 +247,7 @@ impl Callable for UserDefinedFunction {
         self.body.real_value_of(Arc::new(fn_ctx))
     }
 
-    fn unresovled_ids<'s: 'o, 'o>(&self, args: &'s [Value], ids: &mut HashSet<&'o Value>) {
+    fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) { // Changed &self to &'s self
         args.iter().for_each(|v| v.unresovled_ids(ids));
 
         let mut body_ids = HashSet::new();
