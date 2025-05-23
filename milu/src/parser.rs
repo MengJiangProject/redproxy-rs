@@ -431,40 +431,8 @@ rule!(op_if(i) -> Value, {
     )
 });
 
-rule!(op_assign -> Value, {
-    map(
-        separated_pair(identifier,ws(tag("=")),op_0),
-        |(name,value)| Value::Tuple(Arc::new(vec![name,value]))
-    )
-});
-
-rule!(op_let -> Value, {
-    map(
-        nom_tuple((
-            preceded(tag("let"),
-                terminated(
-                    separated_list0(ws(char(';')), op_assign),
-                    opt(ws(char(';')))
-                )
-            ),
-            preceded(ws(tag("in")),op_0),
-        )),
-        |(vars,expr)| Scope::make_call(vars.into(),expr).into()
-    )
-});
-
-rule!(op_0 -> Value, {
-    alt((
-        op_if,
-        // op_let should be before op_assign to parse "let a = fn() = 1" correctly.
-        // However, op_assign is part of op_let.
-        // We will handle op_assign to include function definitions first.
-        // Then op_let will naturally pick it up.
-        op_let,
-        op_assign, // Ensure op_assign is tried if not part of a let block.
-        op_1
-    ))
-});
+// Removed duplicated op_assign, op_let, and op_0 rules.
+// The correct definitions are below, ensuring each is defined only once.
 
 rule!(func_args_def -> Vec<Value>, {
     delimited(

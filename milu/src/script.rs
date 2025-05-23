@@ -184,6 +184,7 @@ impl std::hash::Hash for NativeObjectRef {
     }
 }
 
+#[derive(Debug)] // Added Debug for ScriptContext
 pub struct ScriptContext {
     parent: Option<ScriptContextRef>,
     varibles: HashMap<String, Value>,
@@ -191,13 +192,23 @@ pub struct ScriptContext {
 
 pub type ScriptContextRef = Arc<ScriptContext>;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)] // Removed PartialEq, Eq from derive for UserDefinedFunction
 pub struct UserDefinedFunction {
     pub name: Option<String>,
     pub arg_names: Vec<String>,
     pub body: Value,
     pub captured_context: ScriptContextRef,
 }
+
+impl PartialEq for UserDefinedFunction {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name &&
+        self.arg_names == other.arg_names &&
+        self.body == other.body
+        // captured_context is intentionally excluded from comparison
+    }
+}
+impl Eq for UserDefinedFunction {}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ParsedFunction {
@@ -297,7 +308,7 @@ impl Default for ScriptContext {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, PartialEq, Eq, Clone)] // Removed Hash from derive
 pub enum Value {
     // Null,
     Integer(i64),
@@ -464,6 +475,22 @@ impl Evaluatable for Value {
                 Ok(Type::Tuple(ret))
             }
             NativeObject(o) => Ok(Type::NativeObject(o.clone())),
+            UserDefined(_udf_arc) => {
+                // A UserDefinedFunction's type when treated as a value is not directly its signature's return type.
+                // Its signature's return type is for when it's *called*.
+                // For now, we'll treat the "type of a function value" as Type::Any.
+                // A more sophisticated type system might have a Type::Function variant.
+                // If we wanted to get the return type of its signature:
+                // udf_arc.signature(ctx, &[]) // This would require ctx, and might not be what's intended here.
+                Ok(Type::Any)
+            }
+            ParsedFunction(_) => {
+                // ParsedFunction is an intermediate representation and ideally should not be directly evaluated for type
+                // in a fully resolved AST. If it occurs, it implies an incomplete processing step.
+                // However, to make the match exhaustive, we return Type::Any.
+                // Consider if an internal error or a more specific "untyped" or "function definition" type is better.
+                Ok(Type::Any)
+            }
         }
     }
 
