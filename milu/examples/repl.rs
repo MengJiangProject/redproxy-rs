@@ -109,7 +109,8 @@ fn repl() -> rustyline::Result<()> {
     #[cfg(target_os = "windows")]
     let is_tty = false;
     #[cfg(not(target_os = "windows"))]
-    let is_tty = nix::unistd::isatty(std::io::stdin()).map_err(|_e| std::io::Error::last_os_error())?;
+    let is_tty =
+        nix::unistd::isatty(std::io::stdin()).map_err(|_e| std::io::Error::last_os_error())?;
     macro_rules! println {
         () => (if(is_tty) {println!("\n")});
         ($($arg:tt)*) => ({if(is_tty) {std::println!($($arg)*);}})

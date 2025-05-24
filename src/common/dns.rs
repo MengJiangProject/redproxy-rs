@@ -4,11 +4,15 @@ use std::{
 };
 
 use easy_error::{err_msg, Error, ResultExt};
+use hickory_resolver::{
+    config::{NameServerConfig, ResolverConfig, ResolverOpts},
+    name_server::TokioConnectionProvider,
+    proto::xfer::Protocol,
+    system_conf::read_system_conf,
+    Resolver,
+};
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
-use hickory_resolver::{
-    config::{NameServerConfig, ResolverConfig, ResolverOpts}, name_server::TokioConnectionProvider, proto::xfer::Protocol, system_conf::read_system_conf, Resolver
-};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DnsConfig {
@@ -41,7 +45,11 @@ pub enum AddressFamily {
 impl DnsConfig {
     pub fn init(&mut self) -> Result<(), Error> {
         let config = Self::parse_servers(&self.servers)?;
-        self.resolver = Some(Arc::new(Resolver::builder_with_config(config.0,TokioConnectionProvider::default()).with_options(config.1).build()));
+        self.resolver = Some(Arc::new(
+            Resolver::builder_with_config(config.0, TokioConnectionProvider::default())
+                .with_options(config.1)
+                .build(),
+        ));
         Ok(())
     }
 
