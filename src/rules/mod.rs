@@ -4,7 +4,7 @@ mod filter;
 pub(crate) mod script_ext;
 use easy_error::{Error, ResultExt};
 use serde::{Deserialize, Serialize};
-use serde_yaml::Value;
+use serde_yaml_ng::Value;
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -19,7 +19,7 @@ use crate::{connectors::Connector, context::Context};
 pub fn from_config(cfg: &[Value]) -> Result<Vec<Arc<Rule>>, Error> {
     let mut ret = Vec::with_capacity(cfg.len());
     for val in cfg {
-        ret.push(serde_yaml::from_value(val.clone()).context("parse rule")?);
+        ret.push(serde_yaml_ng::from_value(val.clone()).context("parse rule")?);
     }
     Ok(ret)
 }

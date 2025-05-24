@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use easy_error::{Error, ResultExt};
 use serde::{Deserialize, Serialize};
-use serde_yaml::Value;
+use serde_yaml_ng::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, UdpSocket};
@@ -42,7 +42,7 @@ fn default_protocol() -> Protocol {
 
 pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
     let ret: ReverseProxyListener =
-        serde_yaml::from_value(value.clone()).context("parse config")?;
+        serde_yaml_ng::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
 }
 

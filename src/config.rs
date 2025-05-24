@@ -11,9 +11,9 @@ use crate::metrics::MetricsServer;
 pub struct Config {
     pub api_version: String,
     pub kind: String,
-    pub listeners: serde_yaml::Sequence,
-    pub connectors: serde_yaml::Sequence,
-    pub rules: serde_yaml::Sequence,
+    pub listeners: serde_yaml_ng::Sequence,
+    pub connectors: serde_yaml_ng::Sequence,
+    pub rules: serde_yaml_ng::Sequence,
     #[cfg(feature = "metrics")]
     pub metrics: Option<MetricsServer>,
     pub access_log: Option<AccessLog>,
@@ -43,7 +43,7 @@ impl Config {
     pub async fn load(path: &str) -> Result<Self, Error> {
         let s = tokio::fs::read(path).await.context("read file")?;
         let s = String::from_utf8(s).context("parse utf8")?;
-        serde_yaml::from_str(&s).context("parse yaml")
+        serde_yaml_ng::from_str(&s).context("parse yaml")
     }
 }
 

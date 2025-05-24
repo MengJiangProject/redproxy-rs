@@ -16,7 +16,7 @@ use nix::{
     },
 };
 use serde::{Deserialize, Serialize};
-use serde_yaml::Value;
+use serde_yaml_ng::Value;
 use std::{
     io::IoSliceMut,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -86,7 +86,7 @@ fn default_max_udp_socket() -> usize {
 }
 
 pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
-    let ret: TProxyListener = serde_yaml::from_value(value.clone()).context("parse config")?;
+    let ret: TProxyListener = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
 }
 

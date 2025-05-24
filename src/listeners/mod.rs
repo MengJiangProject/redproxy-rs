@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error};
-use serde_yaml::Value;
+use serde_yaml_ng::Value;
 use tokio::sync::mpsc::Sender;
 
 use crate::{context::ContextRef, GlobalState};
