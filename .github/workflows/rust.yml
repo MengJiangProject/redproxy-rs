@@ -19,7 +19,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - uses: actions/cache@v4
         with:
           path: |
@@ -29,15 +29,12 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-v2
-
-      - run: |
-          rustup component add clippy
-          rustup component add rustfmt
-
-      - uses: LoliGothick/rustfmt-check@master
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-      #- run: cargo fmt --all -- --check
+          components: rustfmt,clippy
+          
+      - name: Rustfmt Check
+        uses: actions-rust-lang/rustfmt@v1
       - run: cargo check --workspace
       - run: cargo clippy --all-features -- -D warnings
       - run: cargo test --workspace --all-features
@@ -48,6 +45,7 @@ jobs:
         with:
           name: redproxy-rs_debug_${{github.sha}}
           path: target/debug/redproxy-rs
+
 
   build-corss:
     needs: build-dev
