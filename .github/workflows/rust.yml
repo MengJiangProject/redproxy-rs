@@ -32,7 +32,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt,clippy
-          
+
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
       - run: cargo check --workspace
@@ -95,7 +95,7 @@ jobs:
       - name: Install cross
         if: ${{ matrix.job.use-cross }}
         shell: bash
-        run: cargo install cross
+        run: cargo install cross --force
 
       - name: Show version information (Rust, cargo, GCC)
         shell: bash
