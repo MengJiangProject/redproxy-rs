@@ -189,4 +189,70 @@ mod tests {
         );
         println!("Result:\n\n{}", result);
     }
+
+    // Helper for error tests
+    fn assert_parse_string_error(input: &str) {
+        let data = Span::new(input);
+        assert!(parse_string::<nom::error::VerboseError<Span>>(data).is_err());
+    }
+
+    #[test]
+    fn test_unterminated_string() {
+        assert_parse_string_error("\"abc");
+    }
+
+    #[test]
+    fn test_invalid_unicode_escape_too_many_digits() {
+        assert_parse_string_error("\"\\u{FFFFFFF}\""); // More than 6 hex digits
+    }
+
+    #[test]
+    fn test_invalid_unicode_escape_empty() {
+        assert_parse_string_error("\"\\u{}\"");
+    }
+    
+    #[test]
+    fn test_invalid_unicode_escape_invalid_char() {
+        assert_parse_string_error("\"\\u{FFFG}\""); // G is not a hex digit
+    }
+
+    #[test]
+    fn test_invalid_escape_sequence() {
+        assert_parse_string_error("\"\\x\""); // \x is not a valid escape in this parser
+        assert_parse_string_error("\"\\ \""); // '\ ' is not a valid escape, parse_escaped_whitespace handles '\\'+multispace1
+        assert_parse_string_error("\"\\"); // Dangling backslash
+    }
+    
+    #[test]
+    fn test_dangling_backslash_at_end() {
+        assert_parse_string_error("\"abc\\");
+    }
+
+    #[test]
+    fn test_empty_string() {
+        let data = Span::new("\"\"");
+        let result = parse_string::<()>(data).unwrap().1;
+        assert_eq!(result, String::from(""));
+    }
+
+    #[test]
+    fn test_string_with_only_escape_sequences() {
+        let data = Span::new("\"\\n\\t\\\"\\\\\""); // \n, \t, \", \\
+        let result = parse_string::<()>(data).unwrap().1;
+        assert_eq!(result, String::from("\n\t\"\\"));
+    }
+
+    #[test]
+    fn test_string_with_all_valid_escapes() {
+        let data = Span::new("\"\\b\\f\\n\\r\\t\\\"\\\\\\/\\u{0041}\""); // \b \f \n \r \t \" \\ \/ \u{0041} (A)
+        let result = parse_string::<()>(data).unwrap().1;
+        assert_eq!(result, String::from("\u{08}\u{0C}\n\r\t\"\\/A"));
+    }
+    
+    #[test]
+    fn test_string_with_escaped_whitespace() {
+        let data = Span::new("\"a\\   b\\ \t\nc\""); // 'a', escaped spaces, 'b', escaped space, tab, newline, 'c'
+        let result = parse_string::<()>(data).unwrap().1;
+        assert_eq!(result, String::from("abc")); // Escaped whitespace should be consumed
+    }
 }

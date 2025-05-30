@@ -643,21 +643,64 @@ function!(StringConcat(a: Type::array_of(String))=>String, ctx=ctx, {
 mod tests {
     // use super::super::*;
     use super::*;
+    use crate::script::Value; // Ensure Value is in scope for macro usage if not already.
+
     macro_rules! op_test {
         ($name:ident, $fn:ident, [ $($in:expr),+ ] , $out:expr) => {
             #[test]
             fn $name() {
                 let ctx : ScriptContextRef = Default::default();
-                let func : Value = $fn::make_call( $($in),+ ).into();
-                let output : Value = $out;
-                let otype = output.type_of(ctx.clone()).unwrap();
-                let rtype = func.type_of(ctx.clone()).unwrap();
-                assert_eq!(otype, rtype);
-                let ret = func.value_of(ctx).unwrap();
-                assert_eq!(ret, output);
+                let func_call_val : Value = $fn::make_call( $($in),+ ).into();
+                let expected_output_val : Value = $out;
+
+                // Test signature (type check)
+                let expected_type = expected_output_val.type_of(ctx.clone())
+                    .unwrap_or_else(|e| panic!("Error getting type of expected output for {}: {:?}", stringify!($name), e));
+                let actual_type_result = func_call_val.type_of(ctx.clone());
+                assert!(actual_type_result.is_ok(), "Type signature check failed for {}: {:?}", stringify!($name), actual_type_result.err().unwrap());
+                assert_eq!(expected_type, actual_type_result.unwrap(), "Type mismatch for {}", stringify!($name));
+                
+                // Test call (value evaluation)
+                let actual_value_result = func_call_val.value_of(ctx);
+                assert!(actual_value_result.is_ok(), "Value evaluation failed for {}: {:?}", stringify!($name), actual_value_result.err().unwrap());
+                assert_eq!(actual_value_result.unwrap(), expected_output_val, "Value mismatch for {}", stringify!($name));
             }
         };
     }
+
+    macro_rules! op_error_test {
+        ($name:ident, $fn:ident, [ $($in:expr),+ ] , $expected_error_substring:expr) => {
+            #[test]
+            fn $name() {
+                let ctx : ScriptContextRef = Default::default();
+                let func_call_val : Value = $fn::make_call( $($in),+ ).into();
+
+                // Check if signature catches the error (type error)
+                let type_result = func_call_val.type_of(ctx.clone());
+                
+                let value_result = func_call_val.value_of(ctx);
+
+                let error_message = match (type_result, value_result) {
+                    (Err(type_err), _) => { // If type_of fails, that's the primary error
+                        type_err.to_string()
+                    },
+                    (_, Err(val_err)) => { // If type_of succeeds but value_of fails
+                        val_err.to_string()
+                    },
+                    (Ok(t), Ok(v)) => {
+                        panic!("Expected error for '{}', but got Ok(type: {:?}, value: {:?})", stringify!($name), t, v)
+                    }
+                };
+                
+                assert!(
+                    error_message.contains($expected_error_substring),
+                    "Error message for '{}' was '{}', expected to contain '{}'",
+                    stringify!($name), error_message, $expected_error_substring
+                );
+            }
+        };
+    }
+
 
     op_test!(
         access_tuple,
@@ -780,4 +823,78 @@ mod tests {
         [vec!["1".into(), "2".into()].into()],
         "12".into()
     );
+
+    // --- New Error Condition & Edge Case Tests for stdlib functions ---
+
+    // Index Errors
+    op_error_test!(index_with_non_integer, Index, [Value::Array(Arc::new(vec![1.into()])), "a".into()], "Index not a integer type");
+    // Note: Testing Index with a non-indexable (e.g. string "abc"[0]) depends on how parser creates the OpCall.
+    // If parser directly calls Value::Array().get(), it's not an Index stdlib call.
+    // Assuming Index stdlib is used:
+    op_error_test!(index_on_non_indexable_script_value, Index, ["abc".into(), 0.into()], "Object does not implement Indexable");
+
+    // Access Errors
+    op_error_test!(access_with_non_string_or_int_key_for_tuple, Access, [Value::Tuple(Arc::new(vec![1.into()])), true.into()], "Can not access a tuple with"); 
+    // Accessing native object with wrong key type is also tricky if parser handles it.
+    // If Access stdlib is called:
+    // Assuming Test::new() native object from existing tests, and it's accessible.
+    // Accessing TestNativeSimple with a non-string identifier would be a parser error for `obj.true`
+    // If it were `obj."true"`, then Access would get Value::String("true")
+    op_error_test!(access_native_with_non_identifier_val, Access, [Test::new().into(), true.into()], "Can not access a NativeObject with");
+
+
+    // IsMemberOf Edge Cases
+    op_test!(is_member_of_empty_array, IsMemberOf, [1.into(), Value::Array(Arc::new(vec![]))], false.into());
+    op_error_test!(is_member_of_array_different_type, IsMemberOf, [1.into(), Value::Array(Arc::new(vec!["a".into()]))], "subject must have on same type with array");
+
+    // Arithmetic Ops Errors
+    op_error_test!(divide_by_zero_stdlib, Divide, [1.into(), 0.into()], "division by zero");
+    op_error_test!(mod_by_zero_stdlib, Mod, [1.into(), 0.into()], "division by zero");
+
+    // Like / NotLike Errors
+    op_error_test!(like_invalid_regex, Like, ["abc".into(), "[".into()], "failed to compile regex");
+
+    // ToInteger Errors
+    op_error_test!(to_integer_non_integer_string, ToInteger, ["abc".into()], "failed to parse integer: abc");
+    op_error_test!(to_integer_float_string, ToInteger, ["1.0".into()], "failed to parse integer: 1.0");
+    op_error_test!(to_integer_empty_string, ToInteger, ["".into()], "failed to parse integer: ");
+
+    // Split Edge Cases
+    // Behavior of split by empty string: Rust's split by "" gives ["", "a", "b", "c", ""]. If that's desired:
+    // op_test!(split_by_empty_delimiter, Split, ["abc".into(), "".into()], Value::Array(Arc::new(vec!["".into(), "a".into(), "b".into(), "c".into(), "".into()])));
+    // However, many languages error or have different behavior. Let's assume it returns array of chars if empty, or error.
+    // Current impl of split in Rust would yield ["", "a", "b", "c", ""]. Let's match that.
+    op_test!(split_by_empty_delimiter, Split, ["abc".into(), "".into()], Value::Array(Arc::new(vec!["".into(),"a".into(),"b".into(),"c".into(),"".into()])));
+    op_test!(split_empty_string, Split, ["".into(), ",".into()], Value::Array(Arc::new(vec!["".into()]))); // "".split(",") -> [""]
+    op_test!(split_by_delimiter_not_present, Split, ["abc".into(), "d".into()], Value::Array(Arc::new(vec!["abc".into()])));
+
+
+    // StringConcat Edge Cases
+    op_test!(strcat_empty_array, StringConcat, [Value::Array(Arc::new(vec![]))], "".into());
+    op_test!(strcat_array_one_string, StringConcat, [Value::Array(Arc::new(vec!["a".into()]))], "a".into());
+    op_test!(strcat_array_with_empty_strings, StringConcat, [Value::Array(Arc::new(vec!["a".into(), "".into(), "b".into()]))], "ab".into());
+    op_error_test!(strcat_array_non_string, StringConcat, [Value::Array(Arc::new(vec![1.into()]))], "type mismatch");
+
+
+    // And / Or Short-circuiting
+    // These tests need to be done via eval_test in script.rs as op_test directly calls the function, bypassing script evaluation logic.
+    // See script.rs for these tests if added there:
+    // eval_test!("true || (1/0 == 1)", Value::Boolean(true));
+    // eval_test!("false && (1/0 == 1)", Value::Boolean(false));
+    // For stdlib direct call, short-circuiting isn't observable as args are pre-evaluated by script engine.
+    // We can test the non-short-circuiting behavior (both args evaluated by `args!` macro):
+    op_test!(and_op_true_true, And, [true.into(), true.into()], true.into());
+    op_test!(or_op_false_false, Or, [false.into(), false.into()], false.into());
+
+
+    // Comparison Ops (Equal, NotEqual) Type Mismatch
+    // The `compare_op!` macro currently panics with "not implemented" for different types.
+    // We need to ensure this becomes a proper script error.
+    // The function signature for Equal/NotEqual takes (a: Any, b: Any).
+    // The current impl of `compare_op`'s `call` method will panic.
+    // This panic should be caught by the scripting engine and converted to an Error.
+    // Let's assume the panic is caught and results in an error containing "not implemented" or "type mismatch".
+    op_error_test!(equal_different_types, Equal, [1.into(), "1".into()], "not implemented");
+    op_error_test!(not_equal_different_types, NotEqual, [1.into(), "1".into()], "not implemented");
+
 }

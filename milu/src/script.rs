@@ -712,21 +712,37 @@ mod tests {
     use super::*;
     // For Value::Integer, etc.
     use super::Value; 
-
+    use std::fmt; // Required for the new NativeObject impls
 
     macro_rules! eval_test {
         ($input: expr, $output: expr) => {{
             let ctx = Default::default();
-            let value = parse($input).unwrap();
-            // println!("ast={{}}", value); // Keep this commented out for less noise unless debugging
-            let value = value.value_of(ctx).unwrap();
+            let parsed_value = parse($input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", $input, e));
+            // println!("ast={{}}", parsed_value); // Keep this commented out for less noise unless debugging
+            let value = parsed_value.value_of(ctx).unwrap_or_else(|e| panic!("Eval error for '{}': {:?}", $input, e));
             assert_eq!(value, $output);
         }};
     }
 
+    macro_rules! eval_error_test {
+        ($input: expr, $expected_error_substring: expr) => {{
+            let ctx = Default::default();
+            let parsed_value = parse($input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", $input, e));
+            let result = parsed_value.value_of(ctx);
+            assert!(result.is_err(), "Expected error for '{}', but got Ok({:?})", $input, result.as_ref().ok());
+            let error_message = result.err().unwrap().to_string();
+            assert!(
+                error_message.contains($expected_error_substring),
+                "Error message for '{}' was '{}', expected to contain '{}'",
+                $input, error_message, $expected_error_substring
+            );
+        }};
+    }
+
+
     fn type_test(input: &str, output: Type) {
         let ctx = Default::default();
-        let value = parse(input).unwrap();
+        let value = parse(input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", input, e));
         let value = value.type_of(ctx).unwrap();
         assert_eq!(value, output);
     }
@@ -800,8 +816,8 @@ mod tests {
 
     #[test]
     fn strcat() {
-        type_test(r#" strcat([\"1\",\"2\",to_string(3)]) "#, Type::String);
-        eval_test!(r#" strcat([\"1\",\"2\",to_string(3)]) "#, Value::String("123".to_string()).into());
+        type_test(r#" strcat(["1","2",to_string(3)]) "#, Type::String);
+        eval_test!(r#" strcat(["1","2",to_string(3)]) "#, Value::String("123".to_string()).into());
     }
 
     #[test]
@@ -957,4 +973,192 @@ ${to_string(1+2)}` "#,
             Ok(self.0.to_owned().into())
         }
     }
+
+    // --- Native Object Test Setup ---
+
+    #[derive(Debug, Hash, Eq, PartialEq)]
+    struct TestNativeSimple;
+    impl NativeObject for TestNativeSimple {
+        fn as_accessible(&self) -> Option<&dyn Accessible> {
+            Some(self)
+        }
+    }
+    impl Accessible for TestNativeSimple {
+        fn names(&self) -> Vec<&str> {
+            vec!["valid_prop"]
+        }
+        fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
+            if name == "valid_prop" { Ok(Type::Integer) } else { bail!("no such property") }
+        }
+        fn get(&self, name: &str) -> Result<Value, Error> {
+            if name == "valid_prop" { Ok(Value::Integer(123)) } else { bail!("no such property: {}", name) }
+        }
+    }
+    
+    #[derive(Debug, Hash, Eq, PartialEq)]
+    struct TestNativeFailingAccess;
+    impl NativeObject for TestNativeFailingAccess {
+        fn as_accessible(&self) -> Option<&dyn Accessible> {
+            Some(self)
+        }
+    }
+    impl Accessible for TestNativeFailingAccess {
+        fn names(&self) -> Vec<&str> { vec!["prop_that_fails"] }
+        fn type_of(&self, _name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { Ok(Type::Integer) }
+        fn get(&self, name: &str) -> Result<Value, Error> {
+            bail!("native error on get for {}", name)
+        }
+    }
+
+    #[derive(Debug, Hash, Eq, PartialEq)]
+    struct TestNativeFailingCall;
+    impl NativeObject for TestNativeFailingCall {
+        fn as_callable(&self) -> Option<&dyn Callable> {
+            Some(self)
+        }
+    }
+    impl Callable for TestNativeFailingCall {
+        fn signature(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Type, Error> {
+            Ok(Type::Integer)
+        }
+        fn call(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Value, Error> {
+            bail!("native error on call")
+        }
+    }
+
+
+    // --- Runtime Error Handling Tests ---
+    #[test]
+    fn test_call_non_existent_function() {
+        eval_error_test!("non_existent_func()", "\"non_existent_func\" is undefined");
+    }
+
+    #[test]
+    fn test_call_non_callable_value() {
+        eval_error_test!("let x = 10 in x()", "is not a callable function type");
+    }
+
+    #[test]
+    fn test_incorrect_arg_count_udf() {
+        eval_error_test!("let f(a) = a in f(1,2)", "expected 1 arguments, got 2");
+    }
+
+    #[test]
+    fn test_type_mismatch_binary_op() {
+        eval_error_test!("1 + \"hello\"", "type mismatch"); // Error message might vary based on Plus impl
+    }
+
+    #[test]
+    fn test_index_out_of_bounds_array() {
+        eval_error_test!("[1,2][2]", "index out of bounds: 2");
+        eval_error_test!("[1,2][-3]", "index out of bounds"); // Exact message might differ
+    }
+
+    #[test]
+    fn test_index_out_of_bounds_tuple() {
+        eval_error_test!("(1,2).2", "index out of bounds: 2");
+        eval_error_test!("(1,2).-3", "index out of bounds");
+    }
+    
+    #[test]
+    fn test_access_non_existent_property_native() {
+        let ctx = ScriptContext::new(Some(Default::default()));
+        ctx.set("no_simple".to_string(), TestNativeSimple.into());
+        let parsed = parse("no_simple.invalid_prop").unwrap();
+        let res = parsed.value_of(Arc::new(ctx));
+        assert!(res.is_err());
+        assert!(res.err().unwrap().to_string().contains("no such property: invalid_prop"));
+    }
+    
+    #[test]
+    fn test_division_by_zero() {
+        eval_error_test!("1 / 0", "division by zero");
+    }
+
+    #[test]
+    fn test_modulo_by_zero() {
+        eval_error_test!("1 % 0", "division by zero");
+    }
+
+    // --- Scope and Context Tests ---
+    #[test]
+    fn test_variable_shadowing_and_unshadowing() {
+        eval_test!("let x = 1; (let x = 2 in x) + x", Value::Integer(3));
+        eval_test!("let x = 1; let y = (let x = 2 in x) + x; y", Value::Integer(3)); // y = 2 + 1
+    }
+
+    #[test]
+    fn test_variable_redefinition_in_let_block() {
+        // Current parser allows this, and it shadows.
+        // `let a=1; a=2 in a` parses as `let a=1 ; (a=2 in a)`
+        // The inner `a=2` is an assignment if `a` is mutable or a new var declaration.
+        // Milu's `let` creates immutable bindings in current scope.
+        // `a=2` inside `let` is actually parsed as `tuple!(id!(a), int!(2))` by `op_assign`
+        // So `let a=1; a=2 in a` becomes `scope!(array!(tuple!(id!(a),int!(1)), tuple!(id!(a),int!(2))), id!(a))`
+        // The Scope::call will set 'a' to 1, then 'a' to 2. So 'a' will be 2.
+        eval_test!("let a = 1; a = 2 in a", Value::Integer(2));
+        // If it were to be an error, it would be a compile/parse time error or specific runtime check.
+        // To test if `let a=1, a=2 in a` is an error, that's a parser test.
+        // This test is for runtime evaluation of shadowing if allowed.
+    }
+    
+    // --- Native Objects Error Tests ---
+    #[test]
+    fn test_native_object_failing_get() {
+        let ctx = ScriptContext::new(Some(Default::default()));
+        ctx.set("native_fail_get".to_string(), TestNativeFailingAccess.into());
+        let parsed = parse("native_fail_get.prop_that_fails").unwrap();
+        let res = parsed.value_of(Arc::new(ctx));
+        assert!(res.is_err());
+        assert!(res.err().unwrap().to_string().contains("native error on get for prop_that_fails"));
+    }
+
+    #[test]
+    fn test_native_object_failing_call() {
+        let ctx = ScriptContext::new(Some(Default::default()));
+        ctx.set("native_fail_call".to_string(), TestNativeFailingCall.into());
+        let parsed = parse("native_fail_call()").unwrap();
+        let res = parsed.value_of(Arc::new(ctx));
+        assert!(res.is_err());
+        assert!(res.err().unwrap().to_string().contains("native error on call"));
+    }
+
+    // --- ToString Tests (from original request, placed here for eval_test) ---
+    #[test]
+    fn test_to_string_empty_array() {
+        eval_test!("to_string([])", Value::String("[]".to_string()));
+    }
+
+    #[test]
+    fn test_to_string_mixed_array() {
+        // This depends on array type checking. If an array like [1, "a"] can be formed:
+        // The current Array type_of logic would error if members are different.
+        // Let's assume if it forms (e.g. array of Any, or if type check is bypassed),
+        // to_string should handle it.
+        // For now, this test will likely fail at array creation time if types are strict.
+        // If array elements must be same type, this test should be `eval_error_test`.
+        // Assuming an array of Type::Any could be constructed or specific `to_string` behavior:
+        // eval_test!("to_string([1, \"a\"])", Value::String("[1,\"a\"]".to_string()));
+        // Let's test `to_string` on an array that CAN be formed:
+        eval_test!("to_string([1, 2])", Value::String("[1,2]".to_string()));
+        eval_test!("to_string([\"a\", \"b\"])", Value::String("[\"a\",\"b\"]".to_string()));
+    }
+
+    #[test]
+    fn test_to_string_empty_tuple() {
+        eval_test!("to_string(())", Value::String("()".to_string()));
+    }
+
+    #[test]
+    fn test_to_string_mixed_tuple() {
+        eval_test!("to_string((1, \"a\"))", Value::String("(1,\"a\")".to_string()));
+    }
+
+    #[test]
+    fn test_to_string_complex_expression_result() {
+        // to_string should operate on the *result* of the expression.
+        eval_test!("to_string(let x=1 in x+1)", Value::String("2".to_string()));
+        eval_test!("to_string(if true then \"hello\" else \"world\")", Value::String("\"hello\"".to_string()));
+    }
+
 }

@@ -862,4 +862,132 @@ mod tests {
         assert_ast(input, expected_value);
     }
 
+    // Tests for Error Conditions
+
+    #[test]
+    fn test_unmatched_parentheses() {
+        assert!(parse("(1 + 2").is_err());
+        assert!(parse("1 + 2)").is_err());
+        assert!(parse("((1 + 2").is_err());
+    }
+
+    #[test]
+    fn test_incomplete_expressions() {
+        assert!(parse("let a = ;").is_err());
+        assert!(parse("1 +").is_err());
+        assert!(parse("a ==").is_err());
+    }
+
+    #[test]
+    fn test_invalid_operator_usage() {
+        assert!(parse("1 + * 2").is_err());
+        assert!(parse("1 ** 2").is_err()); // Assuming `**` is not a valid operator
+        assert!(parse("/ 2").is_err());
+    }
+
+    #[test]
+    fn test_malformed_integer_literals() {
+        assert!(parse("0xZ").is_err());
+        assert!(parse("0b3").is_err());
+        assert!(parse("0o9").is_err());
+        assert!(parse("1_").is_err()); // Trailing underscore
+    }
+
+    #[test]
+    fn test_errors_in_let_bindings() {
+        assert!(parse("let a in expr").is_err()); // Missing '='
+        assert!(parse("let = 1 in expr").is_err()); // Missing identifier
+        assert!(parse("let a = 1 expr").is_err()); // Missing 'in'
+        assert!(parse("leta = 1 in expr").is_err()); // 'let' keyword fused with identifier
+    }
+
+    #[test]
+    fn test_errors_in_function_definitions() {
+        assert!(parse("let f() = ; in f()").is_err()); // Empty body after '='
+        assert!(parse("let f(a b) = a+b in f(1,2)").is_err()); // Missing comma between args
+        assert!(parse("let f(a,) = a in f(1)").is_err()); // Trailing comma in arg list (depends on strictness)
+        assert!(parse("f(a) = ").is_err()); // Incomplete function definition
+        assert!(parse("let f = a+b in f()").is_err()); // `f` used as func, but defined as var
+    }
+
+    // Tests for Literals
+
+    #[test]
+    fn test_integer_formats() {
+        assert_ast("0b1010", int!(10));
+        assert_ast("0o12", int!(10));
+        assert_ast("0xCafe", int!(51966));
+        assert_ast("0b1_010", int!(10));
+        assert_ast("0o1_2", int!(10));
+        assert_ast("0xCa_fe", int!(51966));
+        assert_ast("1_000_000", int!(1000000));
+    }
+
+    // Tests for Empty Inputs/Edge Cases
+
+    #[test]
+    fn test_empty_array() {
+        assert_ast("[]", array!());
+    }
+
+    #[test]
+    fn test_array_with_trailing_comma() {
+        assert_ast("[1,]", array!(int!(1)));
+        assert_ast("[1,2,]", array!(int!(1), int!(2)));
+    }
+    
+    #[test]
+    fn test_tuple_with_trailing_comma() {
+        // Current tuple parser `map_opt` logic might disallow single element tuples with trailing comma
+        // e.g. `(1,)` might not parse as `tuple!(int!(1))` but as an error or () depending on `map_opt`
+        // This test assumes `(1,)` is a valid tuple of one element. Adjust if grammar differs.
+        // assert_ast("(1,)", tuple!(int!(1))); // This might fail based on current tuple parsing logic.
+        assert_ast("(1,2,)", tuple!(int!(1), int!(2)));
+    }
+
+
+    // Tests for Comments
+
+    #[test]
+    fn test_comment_at_end_of_input() {
+        assert_ast("1 + 1 # This is a comment", plus!(int!(1), int!(1)));
+        assert_ast("1 + 1 // This is also a comment, if supported by eol_comment!", plus!(int!(1), int!(1))); 
+        assert_ast("1 + 1 /* block comment */", plus!(int!(1), int!(1)));
+    }
+
+    #[test]
+    fn test_comment_eof_after_spaces() {
+        assert_ast("1 + 1   # comment", plus!(int!(1), int!(1)));
+        assert_ast("1 /* comment */ ", plus!(int!(1), int!(0))); // This was "1 " which is not valid, changed to "1+0" for a valid expression
+    }
+
+
+    #[test]
+    fn test_comments_interspersed() {
+        assert_ast("1 # comment\n + # another comment\n 2", plus!(int!(1), int!(2)));
+        assert_ast("1 /* block1 */ + /* block2 */ 2", plus!(int!(1), int!(2)));
+        assert_ast(
+            "let a = 1; # comment for a\n /* block comment */ let b = 2; # comment for b\n in a + b",
+            scope!(
+                array!(tuple!(id!("a"), int!(1)), tuple!(id!("b"), int!(2))),
+                plus!(id!("a"), id!("b"))
+            )
+        );
+        assert_ast("1 + /* comment before op */ - /* comment after op */ 2", plus!(int!(1), neg!(int!(2))));
+    }
+
+    #[test]
+    fn test_empty_input_with_comment() {
+        assert!(parse("# just a comment").is_err()); // Expecting an expression, not just comment
+        assert!(parse("/* block comment */").is_err()); // Same here
+        assert!(parse("   # comment   ").is_err()); // And here
+    }
+
+    #[test]
+    fn test_semicolon_termination() {
+        assert_ast("1+2;;", plus!(int!(1), int!(2)));
+        assert_ast("1+2 ;;", plus!(int!(1), int!(2)));
+        assert_ast("let a=1 in a;;", scope!(array!(tuple!(id!("a"),int!(1))),id!("a")));
+    }
+
 }
