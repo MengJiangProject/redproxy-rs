@@ -1,5 +1,6 @@
 use easy_error::{bail, err_msg, Error, ResultExt};
 use std::{
+    sync::RwLock, // Changed from RefCell
     collections::{HashMap, HashSet},
     convert::{TryFrom, TryInto},
     fmt::Display,
@@ -120,12 +121,12 @@ impl Indexable for Vec<Value> {
     }
 
     fn get(&self, index: i64) -> Result<Value, Error> {
-        let index: Result<usize, std::num::TryFromIntError> = if index >= 0 {
+        let index_val: Result<usize, std::num::TryFromIntError> = if index >= 0 { 
             index.try_into()
         } else {
             (-index).try_into().map(|i: usize| self.len() - i)
         };
-        let i: usize = index.context("failed to cast index from i64")?;
+        let i: usize = index_val.context("failed to cast index from i64")?; 
         if i >= self.len() {
             bail!("index out of bounds: {}", i)
         }
@@ -172,8 +173,6 @@ type NativeObjectRef = Box<dyn NativeObject + Send + Sync>;
 impl Eq for NativeObjectRef {}
 impl PartialEq for NativeObjectRef {
     fn eq(&self, other: &NativeObjectRef) -> bool {
-        // println!("self={:?} hash={}", self, self.hash());
-        // println!("other={:?} hash={}", other, other.hash());
         self.gen_hash() == other.gen_hash()
     }
 }
@@ -184,15 +183,15 @@ impl std::hash::Hash for NativeObjectRef {
     }
 }
 
-#[derive(Debug)] // Added Debug for ScriptContext
+#[derive(Debug)] 
 pub struct ScriptContext {
     parent: Option<ScriptContextRef>,
-    varibles: HashMap<String, Value>,
+    varibles: RwLock<HashMap<String, Value>>, 
 }
 
 pub type ScriptContextRef = Arc<ScriptContext>;
 
-#[derive(Debug, Clone)] // Removed PartialEq, Eq from derive for UserDefinedFunction
+#[derive(Debug, Clone)] 
 pub struct UserDefinedFunction {
     pub name: Option<String>,
     pub arg_names: Vec<String>,
@@ -205,15 +204,14 @@ impl PartialEq for UserDefinedFunction {
         self.name == other.name &&
         self.arg_names == other.arg_names &&
         self.body == other.body
-        // captured_context is intentionally excluded from comparison
     }
 }
 impl Eq for UserDefinedFunction {}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ParsedFunction {
-    pub name_ident: Value, // Expected to be Value::Identifier
-    pub arg_idents: Vec<Value>, // Expected to be Vec<Value::Identifier>
+    pub name_ident: Value, 
+    pub arg_idents: Vec<Value>, 
     pub body: Value,
 }
 
@@ -238,16 +236,16 @@ impl Callable for UserDefinedFunction {
             );
         }
 
-        let mut fn_ctx = ScriptContext::new(Some(self.captured_context.clone()));
+        let fn_ctx = ScriptContext::new(Some(self.captured_context.clone())); 
         for (i, arg_name) in self.arg_names.iter().enumerate() {
             let arg_value = args[i].real_value_of(caller_context.clone())?;
-            fn_ctx.set(arg_name.clone(), arg_value);
+            fn_ctx.set(arg_name.clone(), arg_value); 
         }
 
-        self.body.real_value_of(Arc::new(fn_ctx))
+        self.body.real_value_of(Arc::new(fn_ctx)) 
     }
 
-    fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) { // Changed &self to &'s self
+    fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) { 
         args.iter().for_each(|v| v.unresovled_ids(ids));
 
         let mut body_ids = HashSet::new();
@@ -259,13 +257,7 @@ impl Callable for UserDefinedFunction {
                     ids.insert(id_val);
                 }
             } else {
-                // If it's not an identifier, it could be a complex expression
-                // that needs its own unresolved ids checked, but Value::unresovled_ids
-                // should handle nesting. However, direct insertion if not an identifier
-                // might be needed if other Value types can be 'unresolved' in a special way.
-                // For now, only add if it's an identifier not masked by args.
-                // Consider if other Value types (like OpCall within the body) need specific handling here.
-                 ids.insert(id_val); // Or potentially recurse/delegate if id_val itself can contain unresolved ids
+                 ids.insert(id_val); 
             }
         }
     }
@@ -273,14 +265,13 @@ impl Callable for UserDefinedFunction {
 
 impl ScriptContext {
     pub fn new(parent: Option<ScriptContextRef>) -> Self {
-        //let parent = unsafe { std::mem::transmute(parent) };
         Self {
             parent,
-            varibles: Default::default(),
+            varibles: RwLock::new(Default::default()), 
         }
     }
     pub fn lookup(&self, id: &str) -> Result<Value, Error> {
-        if let Some(r) = self.varibles.get(id) {
+        if let Some(r) = self.varibles.read().unwrap().get(id) { 
             tracing::trace!("lookup({})={}", id, r);
             Ok(r.clone())
         } else if let Some(p) = &self.parent {
@@ -289,28 +280,27 @@ impl ScriptContext {
             bail!("\"{}\" is undefined", id)
         }
     }
-    pub fn set(&mut self, id: String, value: Value) {
-        self.varibles.insert(id, value);
+    pub fn set(&self, id: String, value: Value) { 
+        self.varibles.write().unwrap().insert(id, value); 
     }
 }
 
 impl Default for ScriptContext {
     fn default() -> Self {
-        let mut varibles = HashMap::default();
-        varibles.insert("to_string".to_string(), stdlib::ToString::stub().into());
-        varibles.insert("to_integer".to_string(), stdlib::ToInteger::stub().into());
-        varibles.insert("split".to_string(), stdlib::Split::stub().into());
-        varibles.insert("strcat".to_string(), stdlib::StringConcat::stub().into());
+        let mut map = HashMap::default(); 
+        map.insert("to_string".to_string(), stdlib::ToString::stub().into());
+        map.insert("to_integer".to_string(), stdlib::ToInteger::stub().into());
+        map.insert("split".to_string(), stdlib::Split::stub().into());
+        map.insert("strcat".to_string(), stdlib::StringConcat::stub().into());
         Self {
             parent: None,
-            varibles,
+            varibles: RwLock::new(map), 
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)] // Removed Hash from derive
+#[derive(Debug, PartialEq, Eq, Clone)] 
 pub enum Value {
-    // Null,
     Integer(i64),
     Boolean(bool),
     String(String),
@@ -324,9 +314,6 @@ pub enum Value {
 }
 
 impl Value {
-    // fn unsafe_clone(&self) -> Value {
-    //     unsafe { std::mem::transmute(self.clone()) }
-    // }
     fn as_vec(&self) -> &Vec<Value> {
         match self {
             Self::Array(a) => a,
@@ -334,7 +321,6 @@ impl Value {
             _ => panic!("as_vec: type mismatch, possible bug in parse"),
         }
     }
-    // Removed fn as_str(&self) -> &str { ... }
     #[allow(dead_code)]
     fn as_i64(&self) -> i64 {
         match self {
@@ -349,61 +335,41 @@ impl Value {
             }
             Self::Array(a) => a.iter().for_each(|v| v.unresovled_ids(ids)),
             Self::Tuple(a) => a.iter().for_each(|v| v.unresovled_ids(ids)),
-            Self::OpCall(a) => a.unresovled_ids(ids),
+            Self::OpCall(a) => a.unresovled_ids(ids), // This line is important!
             Self::UserDefined(udf_arc) => {
                 let mut body_ids = HashSet::new();
                 udf_arc.body.unresovled_ids(&mut body_ids);
-
-                // Filter out argument names (udf_arc.arg_names are Vec<String>)
                 body_ids.retain(|val_in_body| {
                     if let Value::Identifier(id_str_in_body) = val_in_body {
                         !udf_arc.arg_names.contains(id_str_in_body)
                     } else {
-                        true // Keep non-identifiers (e.g., nested OpCalls that might resolve to functions)
+                        true 
                     }
                 });
                 ids.extend(body_ids);
             }
             Self::ParsedFunction(parsed_fn_arc) => {
-                // The name_ident of ParsedFunction (e.g., 'f' in 'let f(x) = ...') is handled
-                // by the Identifier case if 'f' is used later.
-                // Here, we are interested in unresolved IDs within the body of the ParsedFunction,
-                // excluding its own arguments.
-
                 let mut body_ids = HashSet::new();
                 parsed_fn_arc.body.unresovled_ids(&mut body_ids);
-
-                // Filter out argument names (arg_idents are Value::Identifier)
                 body_ids.retain(|val_in_body| {
-                    // val_in_body is &Value. We only care if it's an Identifier.
                     if let Value::Identifier(id_in_body) = val_in_body {
-                        // Check if this identifier matches any of the argument names.
-                        // parsed_fn_arc.arg_idents contains Value::Identifier items.
                         !parsed_fn_arc.arg_idents.iter().any(|arg_ident_val| {
                             if let Value::Identifier(arg_id_str) = arg_ident_val {
                                 arg_id_str == id_in_body
                             } else {
-                                false // Should not happen as parser ensures arg_idents are Value::Identifier
+                                false 
                             }
                         })
                     } else {
-                        true // Keep non-identifiers (e.g., nested OpCalls, Literals that resolve to functions)
+                        true 
                     }
                 });
                 ids.extend(body_ids);
-
-                // Arg_idents themselves are Value::Identifier. They are not expressions that can have unresolved IDs.
-                // Their "unresolved" status is determined when the function is defined or called,
-                // not when the ParsedFunction value itself is traversed.
             }
-            // NativeObject, String, Integer, Boolean do not contain script sub-expressions with identifiers.
-            _ => (),
+            _ => (), // NativeObject, Literals don't have script unresolved IDs within themselves
         }
     }
 
-    /// Returns `true` if the value is [`Identifier`].
-    ///
-    /// [`Identifier`]: Value::Identifier
     pub fn is_identifier(&self) -> bool {
         matches!(self, Self::Identifier(..))
     }
@@ -439,7 +405,6 @@ impl Evaluatable for Value {
         tracing::trace!("type_of={}", self);
         use Value::*;
         match self {
-            // Null => Ok(Type::Null),
             String(_) => Ok(Type::String),
             Boolean(_) => Ok(Type::Boolean),
             Integer(_) => Ok(Type::Integer),
@@ -470,19 +435,9 @@ impl Evaluatable for Value {
             }
             NativeObject(o) => Ok(Type::NativeObject(o.clone())),
             UserDefined(_udf_arc) => {
-                // A UserDefinedFunction's type when treated as a value is not directly its signature's return type.
-                // Its signature's return type is for when it's *called*.
-                // For now, we'll treat the "type of a function value" as Type::Any.
-                // A more sophisticated type system might have a Type::Function variant.
-                // If we wanted to get the return type of its signature:
-                // udf_arc.signature(ctx, &[]) // This would require ctx, and might not be what's intended here.
                 Ok(Type::Any)
             }
             ParsedFunction(_) => {
-                // ParsedFunction is an intermediate representation and ideally should not be directly evaluated for type
-                // in a fully resolved AST. If it occurs, it implies an incomplete processing step.
-                // However, to make the match exhaustive, we return Type::Any.
-                // Consider if an internal error or a more specific "untyped" or "function definition" type is better.
                 Ok(Type::Any)
             }
         }
@@ -493,14 +448,6 @@ impl Evaluatable for Value {
         match self {
             Self::Identifier(id) => ctx.lookup(id).and_then(|x| x.value_of(ctx)),
             Self::OpCall(f) => f.call(ctx),
-            // Self::NativeObject(f) => {
-            //     let e = f.as_evaluatable();
-            //     if let Some(e) = e {
-            //         e.value_of(ctx)
-            //     } else {
-            //         Ok(self.clone())
-            //     }
-            // }
             _ => Ok(self.clone()),
         }
     }
@@ -579,7 +526,6 @@ impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use Value::*;
         match self {
-            // Null => write!(f, "null"),
             String(s) => write!(f, "{:?}", s),
             Integer(i) => write!(f, "{}", i),
             Boolean(b) => write!(f, "{}", b),
@@ -609,7 +555,7 @@ impl std::fmt::Display for Value {
             ParsedFunction(x) => {
                 let arg_names_str = x.arg_idents.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
                 write!(f, "<parsed_fn {}({})>", x.name_ident, arg_names_str)
-            } // _ => panic!("not implemented"),
+            } 
         }
     }
 }
@@ -619,9 +565,6 @@ impl std::hash::Hash for UserDefinedFunction {
         self.name.hash(state);
         self.arg_names.hash(state);
         self.body.hash(state);
-        // We cannot hash captured_context as it would lead to infinite recursion
-        // if the context captures a function that captures the context.
-        // Arc::as_ptr(&self.captured_context).hash(state);
     }
 }
 
@@ -637,7 +580,6 @@ impl std::hash::Hash for Value {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         use Value::*;
         match self {
-            // Null => 0.hash(state),
             Integer(i) => i.hash(state),
             Boolean(b) => b.hash(state),
             String(s) => s.hash(state),
@@ -732,21 +674,34 @@ impl Call {
             }
         }
     }
-    fn unresovled_ids<'s: 'o, 'o>(&'s self, list: &mut HashSet<&'o Value>) {
-        // If self.func is an identifier, it's an unresolved ID.
-        if self.func.is_identifier() {
-            list.insert(&self.func);
-        } else {
-            // If self.func is not an identifier, it's some other Value.
-            // This Value might itself contain unresolved identifiers (e.g., if it's an OpCall, Array, UserDefined, etc.).
-            // So, we call its unresovled_ids method.
-            self.func.unresovled_ids(list);
-        }
-
-        // Process all arguments for unresolved identifiers.
-        // This is the default behavior from the Callable trait, but we are overriding, so we must do it explicitly.
-        for arg in &self.args {
-            arg.unresovled_ids(list);
+    // CORRECTED VERSION OF unresovled_ids:
+    fn unresovled_ids<'s: 'o, 'o>(&'s self, ids: &mut HashSet<&'o Value>) {
+        match &self.func {
+            Value::Identifier(_) => {
+                ids.insert(&self.func); 
+                for arg in &self.args {
+                    arg.unresovled_ids(ids);
+                }
+            }
+            Value::UserDefined(udf_arc) => {
+                udf_arc.unresovled_ids(&self.args, ids);
+            }
+            Value::NativeObject(nobj_arc) => {
+                if let Some(callable_trait_obj) = nobj_arc.as_callable() {
+                    callable_trait_obj.unresovled_ids(&self.args, ids);
+                } else {
+                    self.func.unresovled_ids(ids); 
+                    for arg in &self.args {
+                        arg.unresovled_ids(ids);
+                    }
+                }
+            }
+            _ => { 
+                self.func.unresovled_ids(ids); 
+                for arg in &self.args {       
+                    arg.unresovled_ids(ids);
+                }
+            }
         }
     }
 }
@@ -756,14 +711,14 @@ mod tests {
     use super::super::parser::parse;
     use super::*;
     // For Value::Integer, etc.
-    use super::Value; // Changed from specific imports to `use super::Value;`
+    use super::Value; 
 
 
     macro_rules! eval_test {
         ($input: expr, $output: expr) => {{
             let ctx = Default::default();
             let value = parse($input).unwrap();
-            println!("ast={}", value);
+            // println!("ast={{}}", value); // Keep this commented out for less noise unless debugging
             let value = value.value_of(ctx).unwrap();
             assert_eq!(value, $output);
         }};
@@ -793,13 +748,14 @@ mod tests {
         let value = parse("let a=1;b=2 in a+b").unwrap();
         let mut unresovled_ids = HashSet::new();
         value.unresovled_ids(&mut unresovled_ids);
-        assert!(unresovled_ids.is_empty());
+        assert!(unresovled_ids.is_empty(), "Test 1 failed: expected empty, got {:?}", unresovled_ids);
 
-        let value = parse("let a=1;b=a+1 in a+b+c").unwrap();
+        let value = parse("let a=1;b=a+1 in a+b+c").unwrap(); 
         let mut unresovled_ids = HashSet::new();
         value.unresovled_ids(&mut unresovled_ids);
-        assert!(unresovled_ids.contains(&Value::Identifier("a".into())));
-        assert!(unresovled_ids.contains(&Value::Identifier("c".into())))
+        assert_eq!(unresovled_ids.len(), 2, "Test 2 failed: Expected 2 unresolved IDs, got {:?} with count {}", unresovled_ids, unresovled_ids.len()); 
+        assert!(unresovled_ids.contains(&Value::Identifier("a".into())), "Test 2 failed: expected 'a' to be unresolved");
+        assert!(unresovled_ids.contains(&Value::Identifier("c".into())), "Test 2 failed: expected 'c' to be unresolved");
     }
 
     #[test]
@@ -816,16 +772,17 @@ mod tests {
         let input = "[1,\"true\",false]";
         let ctx = Default::default();
         let value = parse(input).unwrap().type_of(ctx);
-        println!("t={:?}", value);
+        // println!("t={:?}", value); // Keep this commented out
         assert!(value.is_err());
     }
 
     #[test]
     fn ctx_chain() {
-        let ctx = Default::default();
-        let mut ctx2 = ScriptContext::new(Some(ctx));
-        ctx2.set("a".into(), 1.into());
-        let value = parse("a+1").unwrap().value_of(ctx2.into()).unwrap();
+        let ctx: ScriptContextRef = Default::default();
+        let ctx2_instance = ScriptContext::new(Some(ctx)); // Create instance first
+        ctx2_instance.set("a".into(), 1.into());           // Call set on the instance
+        let ctx2_arc = Arc::new(ctx2_instance);            // Then wrap in Arc
+        let value = parse("a+1").unwrap().value_of(ctx2_arc).unwrap();
         assert_eq!(value, 2.into());
     }
 
@@ -843,8 +800,8 @@ mod tests {
 
     #[test]
     fn strcat() {
-        type_test(r#" strcat(["1","2",to_string(3)]) "#, Type::String);
-        eval_test!(r#" strcat(["1","2",to_string(3)]) "#, Value::String("123".to_string()).into());
+        type_test(r#" strcat([\"1\",\"2\",to_string(3)]) "#, Type::String);
+        eval_test!(r#" strcat([\"1\",\"2\",to_string(3)]) "#, Value::String("123".to_string()).into());
     }
 
     #[test]
@@ -859,18 +816,17 @@ ${to_string(1+2)}` "#,
 
     #[test]
     fn native_objects() {
-        let mut ctx = ScriptContext::new(Some(Default::default()));
-        ctx.set("a".into(), ("xx".to_owned(), 1).into());
-        let ctx: ScriptContextRef = ctx.into();
+        let ctx_instance = ScriptContext::new(Some(Default::default()));
+        ctx_instance.set("a".into(), ("xx".to_owned(), 1).into());
+        let ctx_arc: ScriptContextRef = Arc::new(ctx_instance);
         let value = parse("a.length+1+a.x")
             .unwrap()
-            .value_of(ctx.clone())
+            .value_of(ctx_arc.clone())
             .unwrap();
         assert_eq!(value, 4.into());
-        // this test if "a" could be used as Indexable, Accessible, Evaluatable at sametime
         let value = parse("a[a.x] > 200 ? a : \"yy\"")
             .unwrap()
-            .value_of(ctx)
+            .value_of(ctx_arc)
             .unwrap();
         assert_eq!(value, "yy".into());
     }
@@ -878,7 +834,7 @@ ${to_string(1+2)}` "#,
     #[test]
     fn eval_simple_function_call() {
         eval_test!("let f(a) = a + 1 in f(5)", Value::Integer(6));
-        type_test("let f(a) = a + 1 in f(5)", Type::Any); // UDF returns Type::Any
+        type_test("let f(a) = a + 1 in f(5)", Type::Any); 
     }
 
     #[test]
@@ -909,9 +865,9 @@ ${to_string(1+2)}` "#,
 
     #[test]
     fn eval_closure_inner_let_shadows_outer_scope() {
-        eval_test!("let x = 10; f() = (let x = 5 in x + 1) in f()", Value::Integer(6)); // Corrected: single let, removed semicolon before 'in' for f() body.
+        eval_test!("let x = 10; f() = (let x = 5 in x + 1) in f()", Value::Integer(6)); 
         type_test("let x = 10; f() = (let x = 5 in x + 1) in f()", Type::Any);
-        eval_test!("let x = 10; f() = (let y = 5 in x + y) in f()", Value::Integer(15)); // Corrected: single let, removed semicolon before 'in' for f() body.
+        eval_test!("let x = 10; f() = (let y = 5 in x + y) in f()", Value::Integer(15)); 
         type_test("let x = 10; f() = (let y = 5 in x + y) in f()", Type::Any);
     }
 
@@ -925,33 +881,20 @@ ${to_string(1+2)}` "#,
 
     #[test]
     fn eval_mutually_recursive_functions() {
-        let script_even = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_even(4)"; // Corrected
+        let script_even = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_even(4)"; 
         eval_test!(script_even, Value::Boolean(true));
         type_test(script_even, Type::Any);
 
-        let script_odd = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_odd(3)"; // Corrected
+        let script_odd = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_odd(3)"; 
         eval_test!(script_odd, Value::Boolean(true));
         type_test(script_odd, Type::Any);
     }
     
     #[test]
     fn eval_function_uses_another_in_same_block() {
-        eval_test!("let g() = 10; f(a) = a + g() in f(5)", Value::Integer(15)); // Corrected
+        eval_test!("let g() = 10; f(a) = a + g() in f(5)", Value::Integer(15)); 
         type_test("let g() = 10; f(a) = a + g() in f(5)", Type::Any);
     }
-
-    // Optional: Type of function itself.
-    // `UserDefinedFunction::signature` returns Type::Any for the *call result*.
-    // The type of the function *value* itself, when looked up or passed around, is not explicitly `Type::Function`.
-    // It's `Value::UserDefined`, and its `type_of` method in `impl Evaluatable for Value` would need
-    // a specific branch for `UserDefined` returning a distinct `Type::Function` or similar.
-    // Currently, `Value::UserDefined(_).type_of(ctx)` is not implemented in `Evaluatable for Value`.
-    // It would fall into the `Identifier(id) => ctx.lookup(id).and_then(|x| x.type_of(ctx))` if it's an identifier,
-    // or not directly handled if it's a raw UDF value.
-    // Let's test what `type_of` on an identifier bound to a function returns.
-    // Based on current `Value::type_of` and `UserDefinedFunction::signature`, this will try to *call* it.
-    // `type_test!("let f()=1 in f", Type::Any);` // This implies calling f, which is correct for type_test as is.
-    // If we wanted a `Type::Function`, `Value::type_of` would need a new arm for `UserDefined`.
 
     impl NativeObject for (String, u32) {
         fn as_accessible(&self) -> Option<&dyn Accessible> {
@@ -996,12 +939,12 @@ ${to_string(1+2)}` "#,
         }
 
         fn get(&self, index: i64) -> Result<Value, Error> {
-            let n = self
+            let n_char_val = self 
                 .0
                 .chars()
                 .nth(index as usize)
                 .ok_or_else(|| err_msg("index out of range"))? as i64;
-            Ok(n.into())
+            Ok(n_char_val.into()) 
         }
     }
 

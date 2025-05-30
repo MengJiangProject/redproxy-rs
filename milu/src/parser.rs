@@ -449,8 +449,8 @@ rule!(op_assign -> Value, {
             nom_tuple((
                 identifier,
                 ws(func_args_def),
-                cut(ws(char('='))), // cut after '='
-                cut(op_0)           // cut before body
+                ws(char('=')), // Ensure it's this version (NO cut)
+                cut(op_0)      
             )),
             |(name_ident, arg_idents, _, body)| { // _ for char('=')
                 Value::ParsedFunction(Arc::new(ParsedFunction {
