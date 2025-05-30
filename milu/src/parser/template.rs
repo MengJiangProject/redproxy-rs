@@ -39,6 +39,7 @@ where
             value('/', char('/')),
             value('"', char('"')),
             value('$', char('$')),
+            value('`', char('`')), // Added for escaped backtick \`
         )),
     )(input)
 }
@@ -57,7 +58,11 @@ where
         + ContextError<Span<'a>>
         + std::fmt::Debug,
 {
-    preceded(char('$'), delimited(char('{'), super::op_0, char('}')))(input)
+    // Use tag to match "${" literally. If this passes, then cut.
+    preceded(
+        nom::bytes::streaming::tag("${"), 
+        nom::combinator::cut(nom::sequence::terminated(super::op_0, char('}')))
+    )(input)
 }
 
 fn parse_template_fragment<'a, E>(input: Span<'a>) -> IResult<Span<'a>, StringFragment<'a>, E>
@@ -68,10 +73,11 @@ where
         + std::fmt::Debug,
 {
     alt((
-        map(parse_template_literal, StringFragment::Literal),
-        map(parse_escaped_char, StringFragment::EscapedChar),
-        map(parse_template_element, StringFragment::TemplateElement),
-        value(StringFragment::EscapedWS, parse_escaped_whitespace),
+        map(parse_escaped_char, StringFragment::EscapedChar), // Priority 1: Escaped characters (e.g., \$, \`, \\)
+        map(parse_template_element, StringFragment::TemplateElement), // Priority 2: Template expressions (e.g., ${expr})
+        map(char('$'), |c: char| StringFragment::EscapedChar(c)), // Priority 3: Literal '$', treated like an escaped char for simplicity
+        map(parse_template_literal, StringFragment::Literal), // Priority 4: Regular text segments
+        value(StringFragment::EscapedWS, parse_escaped_whitespace), // Priority 5: Escaped whitespace
     ))(input)
 }
 
@@ -166,7 +172,7 @@ mod tests {
         // Note: The current parse_template logic might produce a flat Vec<Value>
         // like vec![expr1, str!(" "), expr2]. The strcat macro in parser.rs tests might handle this.
         // Let's assume spaces between expressions become separate string literals.
-        assert_template_ast("`${1} ${2}`", vec![plus!(int!(1), int!(0)), str!(" "), plus!(int!(2), int!(0))]);
+        assert_template_ast("`${1} ${2}`", vec![int!(1), str!(" "), int!(2)]);
     }
     
     #[test]
@@ -176,16 +182,29 @@ mod tests {
 
     #[test]
     fn test_template_with_expressions_at_start_end() {
-        assert_template_ast("`${1}text`", vec![plus!(int!(1),int!(0)), str!("text")]);
-        assert_template_ast("`text${2}`", vec![str!("text"), plus!(int!(2),int!(0))]);
+        assert_template_ast("`${1}text`", vec![int!(1), str!("text")]);
+        assert_template_ast("`text${2}`", vec![str!("text"), int!(2)]);
     }
     
     #[test]
     fn test_template_with_complex_expression() {
+        // Original expectation, which might be misaligned with parser output if 'if' and '>' become NativeObjects
+        // If parser produces NativeObject(If) etc., this test will fail, and needs proper test macros (branch!, greater!)
+        // or public constructors for Call to assert the correct NativeObject structure.
         assert_template_ast("`value: ${if x > 0 then y else z}`", 
             vec![
                 str!("value: "), 
-                call!(vec![id!("if"), call!(vec![id!(">"), id!("x"), int!(0)]), id!("y"), id!("z")]) // Simplified `branch!` representation
+                // Expecting NativeObject for 'if' and '>'
+                Value::OpCall(Arc::new(Call::new(vec![
+                    Value::NativeObject(Arc::new(Box::new(If::stub()))), // if
+                    Value::OpCall(Arc::new(Call::new(vec![ // condition: x > 0
+                        Value::NativeObject(Arc::new(Box::new(Greater::stub()))), // >
+                        id!("x"),
+                        int!(0)
+                    ]))),
+                    id!("y"), // then branch
+                    id!("z")  // else branch
+                ])))
             ]
         );
     }

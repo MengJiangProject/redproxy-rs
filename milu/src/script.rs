@@ -446,9 +446,16 @@ impl Evaluatable for Value {
     fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
         tracing::trace!("value_of={}", self);
         match self {
-            Self::Identifier(id) => ctx.lookup(id).and_then(|x| x.value_of(ctx)),
+            Self::Identifier(id) => ctx.lookup(id).and_then(|x| x.value_of(ctx)), // This recursively calls value_of
             Self::OpCall(f) => f.call(ctx),
-            _ => Ok(self.clone()),
+            Self::NativeObject(o) => {
+                if let Some(e) = o.as_evaluatable() {
+                    e.value_of(ctx) // Call the evaluatable's value_of
+                } else {
+                    Ok(self.clone()) // Not evaluatable, return self
+                }
+            }
+            _ => Ok(self.clone()), // Other literals
         }
     }
 }

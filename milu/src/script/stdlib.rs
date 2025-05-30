@@ -295,8 +295,10 @@ impl Evaluatable for ScopeBinding {
         self.value.type_of(self.ctx.clone())
     }
 
-    fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
-        self.value.value_of(self.ctx.clone())?.value_of(ctx)
+    fn value_of(&self, _calling_ctx: ScriptContextRef) -> Result<Value, Error> {
+        // A ScopeBinding always evaluates its stored value within its captured context.
+        // The calling_ctx is not used here because the value's resolution is fixed at definition.
+        self.value.real_value_of(self.ctx.clone())
     }
 }
 
@@ -305,32 +307,11 @@ impl NativeObject for ScopeBinding {
         Some(self)
     }
     fn as_callable(&self) -> Option<&dyn Callable> {
-        Some(self) // Allow ScopeBinding to be treated as Callable
+        None // ScopeBinding itself is not callable
     }
 }
 
-impl Callable for ScopeBinding {
-    fn signature(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Type, Error> {
-        // ScopeBinding is not directly callable as a function.
-        // Its purpose is to wrap values in a 'let' binding for lazy evaluation.
-        // However, for type checking or analysis, it might need a signature.
-        // Returning Any, or perhaps the type of the wrapped value.
-        self.value.type_of(self.ctx.clone())
-    }
-
-    fn call(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Value, Error> {
-        // ScopeBinding is not directly callable. It resolves during 'value_of'.
-        bail!("ScopeBinding is not directly callable. It should be resolved via value_of.")
-    }
-
-    fn unresovled_ids<'s: 'o, 'o>(&'s self, _args: &'s [Value], ids: &mut HashSet<&'o Value>) {
-        // A ScopeBinding's unresolved IDs are those in its wrapped value.
-        // The 'args' for Callable are not relevant here as ScopeBinding isn't a function call itself.
-        // The context for these unresolved IDs is implicitly the one where 'value' is defined,
-        // but unresovled_ids is a static check.
-        self.value.unresovled_ids(ids);
-    }
-}
+// Removed impl Callable for ScopeBinding block
 
 
 function_head!(Scope(vars: Array, expr: Any) => Any);
@@ -531,6 +512,19 @@ function!(Negative(b:Integer)=>Integer, {
     Ok((-b).into())
 });
 
+macro_rules! int_op_div_mod {
+    ($name:ident, $op:tt) => {
+        function!($name(a: Integer, b: Integer) => Integer, {
+            let a: i64 = a.try_into()?;
+            let b: i64 = b.try_into()?;
+            if b == 0 {
+                bail!("division by zero");
+            }
+            Ok((a $op b).into())
+        });
+    }
+}
+
 macro_rules! int_op{
     ($name:ident, $op:tt) =>{
         function!($name(a: Integer, b: Integer)=>Integer, {
@@ -544,8 +538,8 @@ macro_rules! int_op{
 int_op!(Plus,+);
 int_op!(Minus,-);
 int_op!(Multiply,*);
-int_op!(Divide,/);
-int_op!(Mod,%);
+int_op_div_mod!(Divide,/);
+int_op_div_mod!(Mod,%);
 int_op!(BitAnd,&);
 int_op!(BitOr,|);
 int_op!(BitXor,^);
@@ -578,25 +572,48 @@ function!(Xor(a: Boolean, b: Boolean)=>Boolean, ctx=ctx, arg_opts=raw,{
     Ok(ret.into())
 });
 
-macro_rules! compare_op{
-    ($name:ident, $op:tt) =>{
-        function!($name(a: Any, b: Any)=>Boolean, {
-            match (a,b) {
-                (Value::Integer(a),Value::Integer(b)) => Ok((a $op b).into()),
-                (Value::String(a),Value::String(b)) => Ok((a $op b).into()),
-                (Value::Boolean(a),Value::Boolean(b)) => Ok((a $op b).into()),
-                _ => panic!("not implemented")
+macro_rules! compare_op {
+    ($name:ident, $op:tt, $fallback_different_types:expr) => {
+        function!($name(a: Any, b: Any) => Boolean, {
+            match (a, b) {
+                (Value::Integer(a_val), Value::Integer(b_val)) => Ok((a_val $op b_val).into()),
+                (Value::String(a_val), Value::String(b_val)) => Ok((a_val $op b_val).into()),
+                (Value::Boolean(a_val), Value::Boolean(b_val)) => Ok((a_val $op b_val).into()),
+                // If types are different, or types are same but not Integer/String/Boolean (e.g. Array, Tuple)
+                _ => Ok($fallback_different_types.into()),
             }
         });
     }
 }
 
-compare_op!(Greater, >);
-compare_op!(GreaterOrEqual, >=);
-compare_op!(Lesser, <);
-compare_op!(LesserOrEqual, <=);
-compare_op!(Equal, == );
-compare_op!(NotEqual, !=);
+// Note: Greater, GreaterOrEqual, Lesser, LesserOrEqual might also need a decision for mixed types.
+// For now, they will use the old panic behavior if we don't update them.
+// Or, if we want them to also return a specific boolean or error for mixed types,
+// they would need to use the new macro or have their own specific logic.
+// The subtask is only for Equal & NotEqual, so only they are changed.
+// To keep the old behavior for other compare_op users if any, we might need two versions of the macro
+// or handle it inside. For now, let's assume only Equal/NotEqual use this for the fix.
+// Reverting to a panic for other comparison ops if they don't match specific types.
+macro_rules! old_compare_op_behavior {
+    ($name:ident, $op:tt) => {
+        function!($name(a: Any, b: Any) => Boolean, {
+            match (a,b) {
+                (Value::Integer(a_val),Value::Integer(b_val)) => Ok((a_val $op b_val).into()),
+                (Value::String(a_val),Value::String(b_val)) => Ok((a_val $op b_val).into()),
+                (Value::Boolean(a_val),Value::Boolean(b_val)) => Ok((a_val $op b_val).into()),
+                _ => panic!("comparison not implemented for these types") // More specific panic
+            }
+        });
+    }
+}
+
+
+old_compare_op_behavior!(Greater, >);
+old_compare_op_behavior!(GreaterOrEqual, >=);
+old_compare_op_behavior!(Lesser, <);
+old_compare_op_behavior!(LesserOrEqual, <=);
+compare_op!(Equal, ==, false); // If types are different, Equal is false
+compare_op!(NotEqual, !=, true); // If types are different, NotEqual is true
 
 function!(Like(a: String, b: String)=>Boolean, {
     let a:String = a.try_into()?;
@@ -888,13 +905,8 @@ mod tests {
 
 
     // Comparison Ops (Equal, NotEqual) Type Mismatch
-    // The `compare_op!` macro currently panics with "not implemented" for different types.
-    // We need to ensure this becomes a proper script error.
-    // The function signature for Equal/NotEqual takes (a: Any, b: Any).
-    // The current impl of `compare_op`'s `call` method will panic.
-    // This panic should be caught by the scripting engine and converted to an Error.
-    // Let's assume the panic is caught and results in an error containing "not implemented" or "type mismatch".
-    op_error_test!(equal_different_types, Equal, [1.into(), "1".into()], "not implemented");
-    op_error_test!(not_equal_different_types, NotEqual, [1.into(), "1".into()], "not implemented");
+    // These tests are changed from op_error_test! to op_test! as they should now return booleans.
+    op_test!(equal_different_types, Equal, [1.into(), "1".into()], false.into());
+    op_test!(not_equal_different_types, NotEqual, [1.into(), "1".into()], true.into());
 
 }
