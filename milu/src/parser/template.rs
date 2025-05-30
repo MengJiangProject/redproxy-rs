@@ -100,11 +100,15 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::script::Value;
     use crate::parser::parse; // For assert_parse_template_error helper
-    use crate::parser::tests::{array, call, id, int, plus, strcat, str}; // Adjust if macros are not public
-
+    use crate::parser::tests::{array,  id, int, plus, str, strcat,call}; // Adjust if macros are not public
+    use crate::script::stdlib::*;
+    use crate::script::Call;
+    
     // Helper for asserting successful template parsing
     fn assert_template_ast(input: &str, expected_vec: Vec<Value>) {
         let result = parse_template::<nom::error::VerboseError<Span>>(Span::new(input));

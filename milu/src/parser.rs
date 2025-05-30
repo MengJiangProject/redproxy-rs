@@ -541,13 +541,8 @@ impl fmt::Debug for SyntaxError {
 
 #[cfg(test)]
 mod tests {
-    // use super::super::filter::Filter;
-    // use super::super::script::stdlib::*;
     use super::*;
-    // Ensure Arc is available, usually through std::sync::Arc, but tests might need explicit import if not re-exported by `super::*`
-    // For ParsedFunction, it should come from `super::super::script::ParsedFunction` or similar if `super::*` doesn't already get it.
-    // Given `use super::script::{Call, Value, ParsedFunction};` at the top of the file, `ParsedFunction` is in scope.
-    // `Value` is also in scope. `Arc` is standard.
+    use crate::script::stdlib::*;
 
     macro_rules! expr {
         ($id:ident,$name:ident) => {
@@ -555,6 +550,7 @@ mod tests {
         };
         ($id:ident,$name:ident,$make_call:ident) => {
             #[allow(unused_macros)]
+            #[macro_export]
             macro_rules! $id {
                 ($p1:expr) => {
                     $name::$make_call($p1).into()
@@ -596,30 +592,35 @@ mod tests {
     //     };
     // }
 
+    #[macro_export]
     macro_rules! id {
         ($st:expr) => {
             Value::Identifier($st.to_string())
         };
     }
 
+    #[macro_export]
     macro_rules! str {
         ($st:expr) => {
             Value::String($st.to_string())
         };
     }
 
+    #[macro_export]
     macro_rules! int {
         ($st:expr) => {
             Value::Integer($st)
         };
     }
 
+    #[macro_export]
     macro_rules! bool {
         ($st:expr) => {
             Value::Boolean($st)
         };
     }
 
+    #[macro_export]
     macro_rules! array {
         ($($st:expr),*) => {
             Value::Array(Arc::new(vec![
@@ -628,6 +629,7 @@ mod tests {
         };
     }
 
+    #[macro_export]
     macro_rules! tuple {
         ($($st:expr),*) => {
             Value::Tuple(Arc::new(vec![
@@ -635,6 +637,8 @@ mod tests {
             ]))
         };
     }
+
+    pub use {array, id, int, str, plus, call,strcat}; // Adjust if macros are not public
 
     #[inline]
     fn assert_ast(input: &str, value: Value) {
