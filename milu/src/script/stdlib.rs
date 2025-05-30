@@ -338,7 +338,7 @@ impl Scope {
     fn make_context(vars: &[Value], outer_ctx: ScriptContextRef) -> Result<ScriptContextRef, Error> {
         // 1. Create the Arc for the new context first. This Arc will be captured by UDFs.
         //    Initialize with an empty variable map for now.
-        let mut new_ctx_arc = Arc::new(ScriptContext::new(Some(outer_ctx.clone())));
+        let new_ctx_arc = Arc::new(ScriptContext::new(Some(outer_ctx.clone())));
 
         // 2. Iterate and prepare bindings. For UDFs, they capture new_ctx_arc.
         //    This means we need to store them temporarily then update new_ctx_arc's internal map.
