@@ -17,7 +17,7 @@ embedded-ui = ["metrics"]
 
 [dependencies]
 milu = { path = "milu" }
-tokio = { version = "1.25.0", features = ["full"] }
+tokio = { version = "1.45.1", features = ["full"] }
 tokio-rustls = { version="0.26" }
 rustls = {version = "0.23"}
 tokio-util = {version="0.7", features = ["full"]}
