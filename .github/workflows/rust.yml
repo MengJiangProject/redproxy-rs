@@ -36,7 +36,9 @@ jobs:
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
       - run: cargo check --workspace
-      - run: cargo clippy --all-features -- -D warnings
+      - uses: clechasseur/rs-clippy-check@main
+        with:
+          args: --all-features
       - run: cargo test --workspace --all-features
       - run: cargo build --workspace --all-targets --all-features
 
