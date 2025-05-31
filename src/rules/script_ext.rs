@@ -52,7 +52,7 @@ impl Accessible for ContextAdaptor {
     async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
         match name {
             "listener" | "connector" | "feature" => Ok(Type::String),
-            "target" | "source" => self.get(name)?.type_of(ctx).await?, // Added await
+            "target" | "source" => self.get(name)?.type_of(ctx).await, // Added await
             _ => bail!("undefined field: {}", name),
         }
     }
@@ -111,7 +111,7 @@ impl Accessible for TargetAddress {
         }
     }
 
-    async fn type_of<'b>(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+    async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
         match name {
             "host" | "port" | "type" => Ok(Type::String),
             _ => bail!("undefined"),
@@ -178,7 +178,7 @@ impl Accessible for SocketAddress {
         }
     }
 
-    async fn type_of<'b>(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+    async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
         match name {
             "host" | "port" | "type" => Ok(Type::String),
             _ => bail!("undefined"),

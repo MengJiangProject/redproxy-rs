@@ -212,7 +212,7 @@ mod tests {
     fn test_invalid_unicode_escape_empty() {
         assert_parse_string_error("\"\\u{}\"");
     }
-    
+
     #[test]
     fn test_invalid_unicode_escape_invalid_char() {
         assert_parse_string_error("\"\\u{FFFG}\""); // G is not a hex digit
@@ -221,11 +221,11 @@ mod tests {
     #[test]
     fn test_invalid_escape_sequence() {
         assert_parse_string_error("\"\\x\""); // \x is not a valid escape in this parser
-        // The following case is handled by parse_escaped_whitespace, so it's not an error.
-        // assert_parse_string_error("\"\\ \"");
+                                              // The following case is handled by parse_escaped_whitespace, so it's not an error.
+                                              // assert_parse_string_error("\"\\ \"");
         assert_parse_string_error("\"\\"); // Dangling backslash
     }
-    
+
     #[test]
     fn test_dangling_backslash_at_end() {
         assert_parse_string_error("\"abc\\");
@@ -251,7 +251,7 @@ mod tests {
         let result = parse_string::<()>(data).unwrap().1;
         assert_eq!(result, String::from("\u{08}\u{0C}\n\r\t\"\\/A"));
     }
-    
+
     #[test]
     fn test_string_with_escaped_whitespace() {
         let data = Span::new("\"a\\   b\\ \t\nc\""); // 'a', escaped spaces, 'b', escaped space, tab, newline, 'c'

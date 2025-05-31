@@ -66,7 +66,7 @@ impl Highlighter for MyHelper {
         self.highlighter.highlight(line, pos)
     }
 
-    fn highlight_char(&self, line: &str, pos: usize, forced:bool) -> bool {
+    fn highlight_char(&self, line: &str, pos: usize, forced: bool) -> bool {
         self.highlighter.highlight_char(line, pos, forced)
     }
 }
@@ -107,11 +107,13 @@ async fn main() -> Result<(), Terminator> {
     Ok(())
 }
 
-async fn repl() -> rustyline::Result<()> { // Added async
+async fn repl() -> rustyline::Result<()> {
+    // Added async
     #[cfg(target_os = "windows")]
     let is_tty = false;
     #[cfg(not(target_os = "windows"))]
-    let is_tty = nix::unistd::isatty(std::io::stdin()).map_err(|_e| std::io::Error::last_os_error())?;
+    let is_tty =
+        nix::unistd::isatty(std::io::stdin()).map_err(|_e| std::io::Error::last_os_error())?;
     macro_rules! println {
         () => (if(is_tty) {println!("\n")});
         ($($arg:tt)*) => ({if(is_tty) {std::println!($($arg)*);}})
@@ -183,14 +185,15 @@ async fn repl() -> rustyline::Result<()> { // Added async
     rl.append_history("history.txt")
 }
 
-async fn eval(ctx: ScriptContextRef, str: &str) -> bool { // Added async
+async fn eval(ctx: ScriptContextRef, str: &str) -> bool {
+    // Added async
     let val_parse_result = parser::parse(str); // Renamed to avoid conflict
     if let Err(e) = val_parse_result {
         eprintln!("parser error: {}", e);
         return false;
     }
     let parsed_val = val_parse_result.unwrap(); // Renamed to avoid conflict
-    let typ_result = parsed_val.type_of(ctx.clone()); // Renamed to avoid conflict
+    let typ_result = parsed_val.type_of(ctx.clone()).await; // Renamed to avoid conflict
     if let Err(e) = typ_result {
         eprintln!("type inference error: {}", e);
         return false;

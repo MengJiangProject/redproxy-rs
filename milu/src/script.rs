@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error, ResultExt};
 use std::{
-    sync::RwLock, // Changed from RefCell
     collections::{HashMap, HashSet},
     convert::TryFrom,
     fmt::Display,
     sync::Arc,
+    sync::RwLock, // Changed from RefCell
 };
 pub mod stdlib;
 
@@ -71,30 +71,32 @@ impl Display for Type {
 }
 
 #[async_trait]
-pub trait Evaluatable {
+pub trait Evaluatable: Send + Sync {
     async fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error>; // Made async
     async fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error>;
 }
 
-pub trait Indexable {
+#[async_trait]
+pub trait Indexable: Send + Sync {
     fn length(&self) -> usize;
-    fn type_of_member(&self, ctx: ScriptContextRef) -> Result<Type, Error>;
+    async fn type_of_member(&self, ctx: ScriptContextRef) -> Result<Type, Error>;
     fn get(&self, index: i64) -> Result<Value, Error>;
 }
 
 #[async_trait]
-pub trait Accessible {
+pub trait Accessible: Send + Sync {
     fn names(&self) -> Vec<&str>;
     async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error>; // Made async
     fn get(&self, name: &str) -> Result<Value, Error>;
 }
 
 #[async_trait]
-pub trait Callable {
+pub trait Callable: Send + Sync {
     // should not return Any
     async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error>; // Made async
     async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error>;
-    fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) { // Changed &self to &'s self
+    fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) {
+        // Changed &self to &'s self
         args.iter().for_each(|v| v.unresovled_ids(ids))
     }
 }
@@ -105,7 +107,8 @@ impl Accessible for HashMap<String, Value> {
         self.keys().map(String::as_str).collect()
     }
 
-    async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+    async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error> {
+        // Made async
         let val = Accessible::get(self, name)?; // get remains sync
         val.type_of(ctx).await // type_of on Value is async
     }
@@ -117,13 +120,15 @@ impl Accessible for HashMap<String, Value> {
     }
 }
 
+#[async_trait]
 impl Indexable for Vec<Value> {
     fn length(&self) -> usize {
         self.len()
     }
 
-    fn type_of_member(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
-        Indexable::get(self, 0).and_then(|x| x.type_of(ctx))
+    async fn type_of_member(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
+        let x = Indexable::get(self, 0)?;
+        x.type_of(ctx).await
     }
 
     fn get(&self, index: i64) -> Result<Value, Error> {
@@ -134,14 +139,25 @@ impl Indexable for Vec<Value> {
             final_idx = index as usize;
         } else {
             // Negative index: calculate from the end.
-            if len == 0 { // Cannot use negative index on empty array
-                bail!("index out of bounds: array is empty, len is 0, index was {}", index);
+            if len == 0 {
+                // Cannot use negative index on empty array
+                bail!(
+                    "index out of bounds: array is empty, len is 0, index was {}",
+                    index
+                );
             }
             // index = -1 means last element (len - 1)
             // index = -len means first element (0)
-            if let Some(positive_offset) = index.checked_neg().and_then(|val| usize::try_from(val).ok()) {
+            if let Some(positive_offset) = index
+                .checked_neg()
+                .and_then(|val| usize::try_from(val).ok())
+            {
                 if positive_offset > len {
-                    bail!("index out of bounds: negative index {} is too large for array of len {}", index, len);
+                    bail!(
+                        "index out of bounds: negative index {} is too large for array of len {}",
+                        index,
+                        len
+                    );
                 }
                 final_idx = len - positive_offset;
             } else {
@@ -150,7 +166,8 @@ impl Indexable for Vec<Value> {
             }
         }
 
-        if final_idx >= len { // Combined check for positive and resolved negative indices
+        if final_idx >= len {
+            // Combined check for positive and resolved negative indices
             // Match the error message format expected by tests like test_index_out_of_bounds_array
             // Using the original index in the error message is more user-friendly.
             bail!("index out of bounds: {}", index);
@@ -208,15 +225,15 @@ impl std::hash::Hash for NativeObjectRef {
     }
 }
 
-#[derive(Debug)] 
+#[derive(Debug)]
 pub struct ScriptContext {
     parent: Option<ScriptContextRef>,
-    varibles: RwLock<HashMap<String, Value>>, 
+    varibles: RwLock<HashMap<String, Value>>,
 }
 
 pub type ScriptContextRef = Arc<ScriptContext>;
 
-#[derive(Debug, Clone)] 
+#[derive(Debug, Clone)]
 pub struct UserDefinedFunction {
     pub name: Option<String>,
     pub arg_names: Vec<String>,
@@ -226,23 +243,22 @@ pub struct UserDefinedFunction {
 
 impl PartialEq for UserDefinedFunction {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name &&
-        self.arg_names == other.arg_names &&
-        self.body == other.body
+        self.name == other.name && self.arg_names == other.arg_names && self.body == other.body
     }
 }
 impl Eq for UserDefinedFunction {}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ParsedFunction {
-    pub name_ident: Value, 
-    pub arg_idents: Vec<Value>, 
+    pub name_ident: Value,
+    pub arg_idents: Vec<Value>,
     pub body: Value,
 }
 
 #[async_trait] // Ensure async_trait is here
 impl Callable for UserDefinedFunction {
-    async fn signature(&self, _ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> { // Made async
+    async fn signature(&self, _ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+        // Made async
         if args.len() != self.arg_names.len() {
             bail!(
                 "expected {} arguments, got {}",
@@ -285,7 +301,7 @@ impl Callable for UserDefinedFunction {
                     ids.insert(id_val);
                 }
             } else {
-                 ids.insert(id_val); 
+                ids.insert(id_val);
             }
         }
     }
@@ -295,11 +311,11 @@ impl ScriptContext {
     pub fn new(parent: Option<ScriptContextRef>) -> Self {
         Self {
             parent,
-            varibles: RwLock::new(Default::default()), 
+            varibles: RwLock::new(Default::default()),
         }
     }
     pub fn lookup(&self, id: &str) -> Result<Value, Error> {
-        if let Some(r) = self.varibles.read().unwrap().get(id) { 
+        if let Some(r) = self.varibles.read().unwrap().get(id) {
             tracing::trace!("lookup({})={}", id, r);
             Ok(r.clone())
         } else if let Some(p) = &self.parent {
@@ -308,26 +324,26 @@ impl ScriptContext {
             bail!("\"{}\" is undefined", id)
         }
     }
-    pub fn set(&self, id: String, value: Value) { 
-        self.varibles.write().unwrap().insert(id, value); 
+    pub fn set(&self, id: String, value: Value) {
+        self.varibles.write().unwrap().insert(id, value);
     }
 }
 
 impl Default for ScriptContext {
     fn default() -> Self {
-        let mut map = HashMap::default(); 
+        let mut map = HashMap::default();
         map.insert("to_string".to_string(), stdlib::ToString::stub().into());
         map.insert("to_integer".to_string(), stdlib::ToInteger::stub().into());
         map.insert("split".to_string(), stdlib::Split::stub().into());
         map.insert("strcat".to_string(), stdlib::StringConcat::stub().into());
         Self {
             parent: None,
-            varibles: RwLock::new(map), 
+            varibles: RwLock::new(map),
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)] 
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Value {
     Integer(i64),
     Boolean(bool),
@@ -371,7 +387,7 @@ impl Value {
                     if let Value::Identifier(id_str_in_body) = val_in_body {
                         !udf_arc.arg_names.contains(id_str_in_body)
                     } else {
-                        true 
+                        true
                     }
                 });
                 ids.extend(body_ids);
@@ -385,11 +401,11 @@ impl Value {
                             if let Value::Identifier(arg_id_str) = arg_ident_val {
                                 arg_id_str == id_in_body
                             } else {
-                                false 
+                                false
                             }
                         })
                     } else {
-                        true 
+                        true
                     }
                 });
                 ids.extend(body_ids);
@@ -402,11 +418,12 @@ impl Value {
         matches!(self, Self::Identifier(..))
     }
 
-    pub async fn real_type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
-        let t = self.type_of(ctx.clone()).await?; // Added await, removed block_on
+    pub async fn real_type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
+        // Made async
+        let t = self.type_of(ctx.clone()).await?;
         if let Type::NativeObject(o) = t {
             if let Some(e) = o.as_evaluatable() {
-                e.type_of(ctx).await? // Added await, removed block_on
+                e.type_of(ctx).await
             } else {
                 Ok(Type::NativeObject(o))
             }
@@ -451,7 +468,8 @@ impl Evaluatable for Value {
                 } else {
                     // Now that real_type_of is async, this loop needs to be async.
                     let t = a[0].real_type_of(ctx.clone()).await?;
-                    for x_val in a.iter().skip(1) { // Start from skip(1) as a[0] is already processed
+                    for x_val in a.iter().skip(1) {
+                        // Start from skip(1) as a[0] is already processed
                         let xt = x_val.real_type_of(ctx.clone()).await?;
                         if xt != t {
                             bail!("array member must have same type: required type={:?}, mismatch type={} item={:?}", t, xt, x_val)
@@ -463,19 +481,16 @@ impl Evaluatable for Value {
             }
             Tuple(t) => {
                 let mut ret = Vec::with_capacity(t.len());
-                for x_val in t.iter() { // Changed to allow break/return for Result
+                for x_val in t.iter() {
+                    // Changed to allow break/return for Result
                     // This type_of call is now async.
                     ret.push(x_val.type_of(ctx.clone()).await?)
                 }
                 Ok(Type::Tuple(ret))
             }
             NativeObject(o) => Ok(Type::NativeObject(o.clone())),
-            UserDefined(_udf_arc) => {
-                Ok(Type::Any)
-            }
-            ParsedFunction(_) => {
-                Ok(Type::Any)
-            }
+            UserDefined(_udf_arc) => Ok(Type::Any),
+            ParsedFunction(_) => Ok(Type::Any),
         }
     }
     // TODO: This should be async too
@@ -595,9 +610,14 @@ impl std::fmt::Display for Value {
                 write!(f, "fn<{}>({})", name, x.arg_names.join(", "))
             }
             ParsedFunction(x) => {
-                let arg_names_str = x.arg_idents.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+                let arg_names_str = x
+                    .arg_idents
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 write!(f, "<parsed_fn {}({})>", x.name_ident, arg_names_str)
-            } 
+            }
         }
     }
 }
@@ -667,14 +687,21 @@ impl Call {
         let func = args.remove(0);
         Self { func, args }
     }
-    async fn signature(&self, ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+    async fn signature(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
+        // Made async
         // TODO: This should be async too
         let resolved_func = self.func(ctx.clone()).await?; // Used await
         match resolved_func {
             ResolvedFunction::Native(native_ref) => {
-                native_ref.as_callable()
-                    .ok_or_else(|| err_msg("Internal error: NativeObject marked callable but as_callable is None"))?
-                    .signature(ctx, &self.args).await // Added await
+                native_ref
+                    .as_callable()
+                    .ok_or_else(|| {
+                        err_msg(
+                            "Internal error: NativeObject marked callable but as_callable is None",
+                        )
+                    })?
+                    .signature(ctx, &self.args)
+                    .await // Added await
             }
             ResolvedFunction::User(udf_ref) => {
                 udf_ref.signature(ctx, &self.args).await // Added await
@@ -687,13 +714,17 @@ impl Call {
         let resolved_func = self.func(ctx.clone()).await?;
         match resolved_func {
             ResolvedFunction::Native(native_ref) => {
-                native_ref.as_callable()
-                    .ok_or_else(|| err_msg("Internal error: NativeObject marked callable but as_callable is None"))?
-                    .call(ctx, &self.args).await
+                native_ref
+                    .as_callable()
+                    .ok_or_else(|| {
+                        err_msg(
+                            "Internal error: NativeObject marked callable but as_callable is None",
+                        )
+                    })?
+                    .call(ctx, &self.args)
+                    .await
             }
-            ResolvedFunction::User(udf_ref) => {
-                udf_ref.call(ctx, &self.args).await
-            }
+            ResolvedFunction::User(udf_ref) => udf_ref.call(ctx, &self.args).await,
         }
     }
     // TODO: This should be async too
@@ -710,22 +741,24 @@ impl Call {
                 if arc_native_ref.as_callable().is_some() {
                     Ok(ResolvedFunction::Native(arc_native_ref))
                 } else {
-                    Err(err_msg(format!("Value {:?} is not a callable function type", arc_native_ref)))
+                    Err(err_msg(format!(
+                        "Value {:?} is not a callable function type",
+                        arc_native_ref
+                    )))
                 }
             }
-            Value::UserDefined(arc_udf) => {
-                Ok(ResolvedFunction::User(arc_udf))
-            }
-            other_val => {
-                Err(err_msg(format!("Value {:?} is not a callable function type", other_val)))
-            }
+            Value::UserDefined(arc_udf) => Ok(ResolvedFunction::User(arc_udf)),
+            other_val => Err(err_msg(format!(
+                "Value {:?} is not a callable function type",
+                other_val
+            ))),
         }
     }
     // CORRECTED VERSION OF unresovled_ids:
     fn unresovled_ids<'s: 'o, 'o>(&'s self, ids: &mut HashSet<&'o Value>) {
         match &self.func {
             Value::Identifier(_) => {
-                ids.insert(&self.func); 
+                ids.insert(&self.func);
                 for arg in &self.args {
                     arg.unresovled_ids(ids);
                 }
@@ -737,15 +770,15 @@ impl Call {
                 if let Some(callable_trait_obj) = nobj_arc.as_callable() {
                     callable_trait_obj.unresovled_ids(&self.args, ids);
                 } else {
-                    self.func.unresovled_ids(ids); 
+                    self.func.unresovled_ids(ids);
                     for arg in &self.args {
                         arg.unresovled_ids(ids);
                     }
                 }
             }
-            _ => { 
-                self.func.unresovled_ids(ids); 
-                for arg in &self.args {       
+            _ => {
+                self.func.unresovled_ids(ids);
+                for arg in &self.args {
                     arg.unresovled_ids(ids);
                 }
             }
@@ -758,16 +791,15 @@ mod tests {
     use super::super::parser::parse;
     use super::*;
     // For Value::Integer, etc.
-    use super::Value; 
-     // Required for the new NativeObject impls
-    use tokio; // Added tokio
+    use super::Value;
+    // Required for the new NativeObject impls
 
     macro_rules! eval_test {
         ($input: expr, $output: expr) => {{
             let ctx = Default::default();
             let parsed_value = parse($input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", $input, e));
             // println!("ast={{}}", parsed_value); // Keep this commented out for less noise unless debugging
-            let value = tokio::runtime::Runtime::new().unwrap().block_on(parsed_value.value_of(ctx)).unwrap_or_else(|e| panic!("Eval error for '{}': {:?}", $input, e));
+            let value = parsed_value.value_of(ctx).await.unwrap_or_else(|e| panic!("Eval error for '{}': {:?}", $input, e));
             assert_eq!(value, $output);
         }};
     }
@@ -775,24 +807,31 @@ mod tests {
     macro_rules! eval_error_test {
         ($input: expr, $expected_error_substring: expr) => {{
             let ctx = Default::default();
-            let parsed_value = parse($input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", $input, e));
-            let result = tokio::runtime::Runtime::new().unwrap().block_on(parsed_value.value_of(ctx));
-            assert!(result.is_err(), "Expected error for '{}', but got Ok({:?})", $input, result.as_ref().ok());
+            let parsed_value =
+                parse($input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", $input, e));
+            let result = parsed_value.value_of(ctx).await;
+            assert!(
+                result.is_err(),
+                "Expected error for '{}', but got Ok({:?})",
+                $input,
+                result.as_ref().ok()
+            );
             let error_message = result.err().unwrap().to_string();
             assert!(
                 error_message.contains($expected_error_substring),
                 "Error message for '{}' was '{}', expected to contain '{}'",
-                $input, error_message, $expected_error_substring
+                $input,
+                error_message,
+                $expected_error_substring
             );
         }};
     }
 
-
-    fn type_test(input: &str, output: Type) {
+    async fn type_test(input: &str, output: Type) {
         let ctx = Default::default();
-        let parsed_value = parse(input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", input, e));
-        // Value::type_of is now async, so we need to block_on it here.
-        let value_type = tokio::runtime::Runtime::new().unwrap().block_on(parsed_value.type_of(ctx)).unwrap();
+        let parsed_value =
+            parse(input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", input, e));
+        let value_type = parsed_value.type_of(ctx).await.unwrap();
         assert_eq!(value_type, output);
     }
 
@@ -803,15 +842,15 @@ mod tests {
     // unless they also use eval_test! or other async code.
     // For consistency and future-proofing if type_test were to become async itself, making them async is fine.
 
-    #[tokio::test] // Already async due to eval_test
+    #[tokio::test]
     async fn one_plus_one() {
-        type_test("1+1", Type::Integer);
+        type_test("1+1", Type::Integer).await;
         eval_test!("1+1", Value::Integer(2).into());
     }
 
-    #[tokio::test] // Already async due to eval_test
+    #[tokio::test]
     async fn to_string() {
-        type_test("to_string(100*2)", Type::String);
+        type_test("to_string(100*2)", Type::String).await;
         eval_test!("to_string(100*2)", Value::String("200".to_string()).into());
     }
 
@@ -820,19 +859,35 @@ mod tests {
         let value = parse("let a=1;b=2 in a+b").unwrap();
         let mut unresovled_ids = HashSet::new();
         value.unresovled_ids(&mut unresovled_ids);
-        assert!(unresovled_ids.is_empty(), "Test 1 failed: expected empty, got {:?}", unresovled_ids);
+        assert!(
+            unresovled_ids.is_empty(),
+            "Test 1 failed: expected empty, got {:?}",
+            unresovled_ids
+        );
 
-        let value = parse("let a=1;b=a+1 in a+b+c").unwrap(); 
+        let value = parse("let a=1;b=a+1 in a+b+c").unwrap();
         let mut unresovled_ids = HashSet::new();
         value.unresovled_ids(&mut unresovled_ids);
-        assert_eq!(unresovled_ids.len(), 2, "Test 2 failed: Expected 2 unresolved IDs, got {:?} with count {}", unresovled_ids, unresovled_ids.len()); 
-        assert!(unresovled_ids.contains(&Value::Identifier("a".into())), "Test 2 failed: expected 'a' to be unresolved");
-        assert!(unresovled_ids.contains(&Value::Identifier("c".into())), "Test 2 failed: expected 'c' to be unresolved");
+        assert_eq!(
+            unresovled_ids.len(),
+            2,
+            "Test 2 failed: Expected 2 unresolved IDs, got {:?} with count {}",
+            unresovled_ids,
+            unresovled_ids.len()
+        );
+        assert!(
+            unresovled_ids.contains(&Value::Identifier("a".into())),
+            "Test 2 failed: expected 'a' to be unresolved"
+        );
+        assert!(
+            unresovled_ids.contains(&Value::Identifier("c".into())),
+            "Test 2 failed: expected 'c' to be unresolved"
+        );
     }
 
     #[tokio::test] // Already async due to eval_test
     async fn arrays() {
-        type_test("[1,2,3]", Type::array_of(Type::Integer));
+        type_test("[1,2,3]", Type::array_of(Type::Integer)).await;
         eval_test!(
             "[if 1>2||1==1 then 1*1 else 99,2*2,3*3,to_integer(\"4\")][0]",
             1.into()
@@ -845,7 +900,7 @@ mod tests {
         let ctx = Default::default();
         let parsed_value = parse(input).unwrap();
         let value_type_result = parsed_value.type_of(ctx).await; // Added await
-        // println!("t={:?}", value); // Keep this commented out
+                                                                 // println!("t={:?}", value); // Keep this commented out
         assert!(value_type_result.is_err());
     }
 
@@ -853,33 +908,36 @@ mod tests {
     async fn ctx_chain() {
         let ctx: ScriptContextRef = Default::default();
         let ctx2_instance = ScriptContext::new(Some(ctx)); // Create instance first
-        ctx2_instance.set("a".into(), 1.into());           // Call set on the instance
-        let ctx2_arc = Arc::new(ctx2_instance);            // Then wrap in Arc
+        ctx2_instance.set("a".into(), 1.into()); // Call set on the instance
+        let ctx2_arc = Arc::new(ctx2_instance); // Then wrap in Arc
         let value = parse("a+1").unwrap().value_of(ctx2_arc).await.unwrap(); // Added await
         assert_eq!(value, 2.into());
     }
 
     #[tokio::test] // Already async due to eval_test
     async fn scope() {
-        type_test("let a=1;b=2 in a+b", Type::Integer);
+        type_test("let a=1;b=2 in a+b", Type::Integer).await;
         eval_test!("let a=1;b=2 in a+b", Value::Integer(3).into());
     }
 
     #[tokio::test] // Already async due to eval_test
     async fn access_tuple() {
-        type_test("(1,\"2\",false).1", Type::String);
+        type_test("(1,\"2\",false).1", Type::String).await;
         eval_test!("(1,\"2\",false).1", Value::String("2".to_string()).into());
     }
 
     #[tokio::test] // Already async due to eval_test
     async fn strcat() {
-        type_test(r#" strcat(["1","2",to_string(3)]) "#, Type::String);
-        eval_test!(r#" strcat(["1","2",to_string(3)]) "#, Value::String("123".to_string()).into());
+        type_test(r#" strcat(["1","2",to_string(3)]) "#, Type::String).await;
+        eval_test!(
+            r#" strcat(["1","2",to_string(3)]) "#,
+            Value::String("123".to_string()).into()
+        );
     }
 
     #[tokio::test] // Already async due to eval_test
     async fn template() {
-        type_test(r#" `x=${to_string(1+2)}` "#, Type::String);
+        type_test(r#" `x=${to_string(1+2)}` "#, Type::String).await;
         eval_test!(
             r#" `x=
 ${to_string(1+2)}` "#,
@@ -909,66 +967,94 @@ ${to_string(1+2)}` "#,
     #[tokio::test] // Already async
     async fn eval_simple_function_call() {
         eval_test!("let f(a) = a + 1 in f(5)", Value::Integer(6));
-        type_test("let f(a) = a + 1 in f(5)", Type::Integer); 
+        type_test("let f(a) = a + 1 in f(5)", Type::Integer).await;
     }
 
     #[tokio::test] // Already async
     async fn eval_function_multiple_args() {
         eval_test!("let add(x, y) = x + y in add(3, 4)", Value::Integer(7));
-        type_test("let add(x, y) = x + y in add(3, 4)", Type::Integer);
+        type_test("let add(x, y) = x + y in add(3, 4)", Type::Integer).await;
     }
 
     #[tokio::test] // Already async
     async fn eval_function_no_args() {
         eval_test!("let get_num() = 42 in get_num()", Value::Integer(42));
-        type_test("let get_num() = 42 in get_num()", Type::Integer);
+        type_test("let get_num() = 42 in get_num()", Type::Integer).await;
     }
 
     #[tokio::test] // Already async
     async fn eval_closure_lexical_scoping() {
         eval_test!("let x = 10; f(a) = a + x in f(5)", Value::Integer(15));
-        type_test("let x = 10; f(a) = a + x in f(5)", Type::Integer);
+        type_test("let x = 10; f(a) = a + x in f(5)", Type::Integer).await;
         eval_test!("let x = 10; f() = x * 2 in f()", Value::Integer(20));
-        type_test("let x = 10; f() = x * 2 in f()", Type::Integer);
+        type_test("let x = 10; f() = x * 2 in f()", Type::Integer).await;
     }
 
     #[tokio::test] // Already async
     async fn eval_closure_arg_shadows_outer_scope() {
         eval_test!("let x = 10; f(x) = x + 1 in f(5)", Value::Integer(6));
-        type_test("let x = 10; f(x) = x + 1 in f(5)", Type::Integer);
+        type_test("let x = 10; f(x) = x + 1 in f(5)", Type::Integer).await;
     }
 
     #[tokio::test] // Already async
     async fn eval_closure_inner_let_shadows_outer_scope() {
-        eval_test!("let x = 10; f() = (let x = 5 in x + 1) in f()", Value::Integer(6)); 
-        type_test("let x = 10; f() = (let x = 5 in x + 1) in f()", Type::Integer);
-        eval_test!("let x = 10; f() = (let y = 5 in x + y) in f()", Value::Integer(15)); 
-        type_test("let x = 10; f() = (let y = 5 in x + y) in f()", Type::Integer);
+        eval_test!(
+            "let x = 10; f() = (let x = 5 in x + 1) in f()",
+            Value::Integer(6)
+        );
+        type_test(
+            "let x = 10; f() = (let x = 5 in x + 1) in f()",
+            Type::Integer,
+        )
+        .await;
+        eval_test!(
+            "let x = 10; f() = (let y = 5 in x + y) in f()",
+            Value::Integer(15)
+        );
+        type_test(
+            "let x = 10; f() = (let y = 5 in x + y) in f()",
+            Type::Integer,
+        )
+        .await;
     }
 
     #[tokio::test] // Already async
     async fn eval_recursive_function_factorial() {
-        eval_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)", Value::Integer(6));
-        type_test("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)", Type::Integer);
-        eval_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)", Value::Integer(1));
-        type_test("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)", Type::Integer);
+        eval_test!(
+            "let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)",
+            Value::Integer(6)
+        );
+        type_test(
+            "let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)",
+            Type::Integer,
+        )
+        .await;
+        eval_test!(
+            "let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)",
+            Value::Integer(1)
+        );
+        type_test(
+            "let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)",
+            Type::Integer,
+        )
+        .await;
     }
 
     #[tokio::test] // Already async
     async fn eval_mutually_recursive_functions() {
-        let script_even = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_even(4)"; 
+        let script_even = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_even(4)";
         eval_test!(script_even, Value::Boolean(true));
-        type_test(script_even, Type::Integer);
+        type_test(script_even, Type::Integer).await;
 
-        let script_odd = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_odd(3)"; 
+        let script_odd = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_odd(3)";
         eval_test!(script_odd, Value::Boolean(true));
-        type_test(script_odd, Type::Integer);
+        type_test(script_odd, Type::Integer).await;
     }
-    
+
     #[tokio::test] // Already async
     async fn eval_function_uses_another_in_same_block() {
-        eval_test!("let g() = 10; f(a) = a + g() in f(5)", Value::Integer(15)); 
-        type_test("let g() = 10; f(a) = a + g() in f(5)", Type::Integer);
+        eval_test!("let g() = 10; f(a) = a + g() in f(5)", Value::Integer(15));
+        type_test("let g() = 10; f(a) = a + g() in f(5)", Type::Integer).await;
     }
 
     impl NativeObject for (String, u32) {
@@ -989,7 +1075,8 @@ ${to_string(1+2)}` "#,
             vec!["length", "x"]
         }
 
-        async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+        async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
+            // Made async
             match name {
                 "length" | "x" => Ok(Type::Integer),
                 _ => bail!("no such property"),
@@ -1005,22 +1092,23 @@ ${to_string(1+2)}` "#,
         }
     }
 
+    #[async_trait]
     impl Indexable for (String, u32) {
         fn length(&self) -> usize {
             self.0.len()
         }
 
-        fn type_of_member(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
+        async fn type_of_member(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
             Ok(Type::Integer)
         }
 
         fn get(&self, index: i64) -> Result<Value, Error> {
-            let n_char_val = self 
+            let n_char_val = self
                 .0
                 .chars()
                 .nth(index as usize)
                 .ok_or_else(|| err_msg("index out of range"))? as i64;
-            Ok(n_char_val.into()) 
+            Ok(n_char_val.into())
         }
     }
 
@@ -1049,14 +1137,23 @@ ${to_string(1+2)}` "#,
         fn names(&self) -> Vec<&str> {
             vec!["valid_prop"]
         }
-        async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
-            if name == "valid_prop" { Ok(Type::Integer) } else { bail!("no such property") }
+        async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
+            // Made async
+            if name == "valid_prop" {
+                Ok(Type::Integer)
+            } else {
+                bail!("no such property")
+            }
         }
         fn get(&self, name: &str) -> Result<Value, Error> {
-            if name == "valid_prop" { Ok(Value::Integer(123)) } else { bail!("no such property: {}", name) }
+            if name == "valid_prop" {
+                Ok(Value::Integer(123))
+            } else {
+                bail!("no such property: {}", name)
+            }
         }
     }
-    
+
     #[derive(Debug, Hash, Eq, PartialEq)]
     struct TestNativeFailingAccess;
     impl NativeObject for TestNativeFailingAccess {
@@ -1066,8 +1163,12 @@ ${to_string(1+2)}` "#,
     }
     #[async_trait]
     impl Accessible for TestNativeFailingAccess {
-        fn names(&self) -> Vec<&str> { vec!["prop_that_fails"] }
-        async fn type_of(&self, _name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { Ok(Type::Integer) } // Made async
+        fn names(&self) -> Vec<&str> {
+            vec!["prop_that_fails"]
+        }
+        async fn type_of(&self, _name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
+            Ok(Type::Integer)
+        } // Made async
         fn get(&self, name: &str) -> Result<Value, Error> {
             bail!("native error on get for {}", name)
         }
@@ -1080,9 +1181,10 @@ ${to_string(1+2)}` "#,
             Some(self)
         }
     }
+
     #[async_trait] // Ensure async_trait is here, was likely added when Callable was changed
     impl Callable for TestNativeFailingCall {
-        fn signature(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Type, Error> {
+        async fn signature(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Type, Error> {
             Ok(Type::Integer)
         }
         async fn call(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Value, Error> {
@@ -1090,69 +1192,86 @@ ${to_string(1+2)}` "#,
         }
     }
 
-
     // --- Runtime Error Handling Tests ---
     #[tokio::test]
-    async fn test_call_non_existent_function() { // Added async
+    async fn test_call_non_existent_function() {
+        // Added async
         eval_error_test!("non_existent_func()", "\"non_existent_func\" is undefined");
     }
 
     #[tokio::test]
-    async fn test_call_non_callable_value() { // Added async
+    async fn test_call_non_callable_value() {
+        // Added async
         eval_error_test!("let x = 10 in x()", "is not a callable function type");
     }
 
     #[tokio::test]
-    async fn test_incorrect_arg_count_udf() { // Added async
+    async fn test_incorrect_arg_count_udf() {
+        // Added async
         eval_error_test!("let f(a) = a in f(1,2)", "expected 1 arguments, got 2");
     }
 
     #[tokio::test]
-    async fn test_type_mismatch_binary_op() { // Added async
+    async fn test_type_mismatch_binary_op() {
+        // Added async
         eval_error_test!("1 + \"hello\"", "type mismatch"); // Error message might vary based on Plus impl
     }
 
     #[tokio::test]
-    async fn test_index_out_of_bounds_array() { // Added async
+    async fn test_index_out_of_bounds_array() {
+        // Added async
         eval_error_test!("[1,2][2]", "index out of bounds: 2");
         eval_error_test!("[1,2][-3]", "index out of bounds"); // Exact message might differ
     }
 
     #[tokio::test]
-    async fn test_index_out_of_bounds_tuple() { // Added async
+    async fn test_index_out_of_bounds_tuple() {
+        // Added async
         eval_error_test!("(1,2).2", "index out of bounds: 2");
         eval_error_test!("(1,2).-3", "index out of bounds");
     }
-    
+
     #[tokio::test]
-    async fn test_access_non_existent_property_native() { // Added async
+    async fn test_access_non_existent_property_native() {
+        // Added async
         let ctx = ScriptContext::new(Some(Default::default()));
         ctx.set("no_simple".to_string(), TestNativeSimple.into());
         let parsed = parse("no_simple.invalid_prop").unwrap();
         let res = parsed.value_of(Arc::new(ctx)).await; // Added await
         assert!(res.is_err());
-        assert!(res.err().unwrap().to_string().contains("no such property: invalid_prop"));
+        assert!(res
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("no such property: invalid_prop"));
     }
-    
+
     #[tokio::test]
-    async fn test_division_by_zero() { // Added async
+    async fn test_division_by_zero() {
+        // Added async
         eval_error_test!("1 / 0", "division by zero");
     }
 
     #[tokio::test]
-    async fn test_modulo_by_zero() { // Added async
+    async fn test_modulo_by_zero() {
+        // Added async
         eval_error_test!("1 % 0", "division by zero");
     }
 
     // --- Scope and Context Tests ---
     #[tokio::test]
-    async fn test_variable_shadowing_and_unshadowing() { // Added async
+    async fn test_variable_shadowing_and_unshadowing() {
+        // Added async
         eval_test!("let x = 1 in (let x = 2 in x) + x", Value::Integer(3));
-        eval_test!("let x = 1 in let y = (let x = 2 in x) + x in y", Value::Integer(3)); // y = 2 + 1
+        eval_test!(
+            "let x = 1 in let y = (let x = 2 in x) + x in y",
+            Value::Integer(3)
+        ); // y = 2 + 1
     }
 
     #[tokio::test]
-    async fn test_variable_redefinition_in_let_block() { // Added async
+    async fn test_variable_redefinition_in_let_block() {
+        // Added async
         // Current parser allows this, and it shadows.
         // `let a=1; a=2 in a` parses as `let a=1 ; (a=2 in a)`
         // The inner `a=2` is an assignment if `a` is mutable or a new var declaration.
@@ -1165,36 +1284,51 @@ ${to_string(1+2)}` "#,
         // To test if `let a=1, a=2 in a` is an error, that's a parser test.
         // This test is for runtime evaluation of shadowing if allowed.
     }
-    
+
     // --- Native Objects Error Tests ---
     #[tokio::test]
-    async fn test_native_object_failing_get() { // Added async
+    async fn test_native_object_failing_get() {
+        // Added async
         let ctx = ScriptContext::new(Some(Default::default()));
-        ctx.set("native_fail_get".to_string(), TestNativeFailingAccess.into());
+        ctx.set(
+            "native_fail_get".to_string(),
+            TestNativeFailingAccess.into(),
+        );
         let parsed = parse("native_fail_get.prop_that_fails").unwrap();
         let res = parsed.value_of(Arc::new(ctx)).await; // Added await
         assert!(res.is_err());
-        assert!(res.err().unwrap().to_string().contains("native error on get for prop_that_fails"));
+        assert!(res
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("native error on get for prop_that_fails"));
     }
 
     #[tokio::test]
-    async fn test_native_object_failing_call() { // Added async
+    async fn test_native_object_failing_call() {
+        // Added async
         let ctx = ScriptContext::new(Some(Default::default()));
         ctx.set("native_fail_call".to_string(), TestNativeFailingCall.into());
         let parsed = parse("native_fail_call()").unwrap();
         let res = parsed.value_of(Arc::new(ctx)).await; // Added await
         assert!(res.is_err());
-        assert!(res.err().unwrap().to_string().contains("native error on call"));
+        assert!(res
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("native error on call"));
     }
 
     // --- ToString Tests (from original request, placed here for eval_test) ---
     #[tokio::test]
-    async fn test_to_string_empty_array() { // Added async
+    async fn test_to_string_empty_array() {
+        // Added async
         eval_test!("to_string([])", Value::String("[]".to_string()));
     }
 
     #[tokio::test]
-    async fn test_to_string_mixed_array() { // Added async
+    async fn test_to_string_mixed_array() {
+        // Added async
         // This depends on array type checking. If an array like [1, "a"] can be formed:
         // The current Array type_of logic would error if members are different.
         // Let's assume if it forms (e.g. array of Any, or if type check is bypassed),
@@ -1205,24 +1339,35 @@ ${to_string(1+2)}` "#,
         // eval_test!("to_string([1, \"a\"])", Value::String("[1,\"a\"]".to_string()));
         // Let's test `to_string` on an array that CAN be formed:
         eval_test!("to_string([1, 2])", Value::String("[1,2]".to_string()));
-        eval_test!("to_string([\"a\", \"b\"])", Value::String("[\"a\",\"b\"]".to_string()));
+        eval_test!(
+            "to_string([\"a\", \"b\"])",
+            Value::String("[\"a\",\"b\"]".to_string())
+        );
     }
 
     #[tokio::test]
-    async fn test_to_string_empty_tuple() { // Added async
+    async fn test_to_string_empty_tuple() {
+        // Added async
         eval_test!("to_string(())", Value::String("()".to_string()));
     }
 
     #[tokio::test]
-    async fn test_to_string_mixed_tuple() { // Added async
-        eval_test!("to_string((1, \"a\"))", Value::String("(1,\"a\")".to_string()));
+    async fn test_to_string_mixed_tuple() {
+        // Added async
+        eval_test!(
+            "to_string((1, \"a\"))",
+            Value::String("(1,\"a\")".to_string())
+        );
     }
 
     #[tokio::test]
-    async fn test_to_string_complex_expression_result() { // Added async
+    async fn test_to_string_complex_expression_result() {
+        // Added async
         // to_string should operate on the *result* of the expression.
         eval_test!("to_string(let x=1 in x+1)", Value::String("2".to_string()));
-        eval_test!("to_string(if true then \"hello\" else \"world\")", Value::String("\"hello\"".to_string()));
+        eval_test!(
+            "to_string(if true then \"hello\" else \"world\")",
+            Value::String("\"hello\"".to_string())
+        );
     }
-
 }

@@ -2,8 +2,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_until, take_while},
     character::complete::{
-        alpha1, alphanumeric1, char, digit1, hex_digit1, multispace1, oct_digit1,
-        one_of,
+        alpha1, alphanumeric1, char, digit1, hex_digit1, multispace1, oct_digit1, one_of,
     },
     combinator::{all_consuming, cut, map, map_opt, map_res, opt, recognize},
     error::{context, convert_error, ContextError, FromExternalError, ParseError, VerboseError},
@@ -17,7 +16,7 @@ use std::{fmt, num::ParseIntError, sync::Arc};
 mod string;
 mod template;
 use super::script::stdlib::*;
-use super::script::{Call, Value, ParsedFunction}; // Added ParsedFunction
+use super::script::{Call, ParsedFunction, Value}; // Added ParsedFunction
 
 pub type Span<'s> = LocatedSpan<&'s str>;
 
@@ -182,7 +181,10 @@ macro_rules! tap {
 }
 
 rule!(eol_comment(i), no_ctx, {
-    recognize(preceded(char('#'), take_while(|c: char| c != '\n' && c != '\r')))(i)
+    recognize(preceded(
+        char('#'),
+        take_while(|c: char| c != '\n' && c != '\r'),
+    ))(i)
 });
 rule!(inline_comment(i), no_ctx, {
     delimited(tag("/*"), take_until("*/"), tag("*/"))(i)
@@ -463,7 +465,7 @@ rule!(op_assign -> Value, {
                 identifier,
                 ws(func_args_def),
                 ws(char('=')), // Ensure it's this version (NO cut)
-                cut(op_0)      
+                cut(op_0)
             )),
             |(name_ident, arg_idents, _, body)| { // _ for char('=')
                 Value::ParsedFunction(Arc::new(ParsedFunction {
@@ -504,7 +506,6 @@ rule!(op_0 -> Value, {
         op_1        // Then other expressions
     ))
 });
-
 
 rule!(root(i)->Value, {
     all_consuming(terminated(op_0, ws(opt(tag(";;")))))
@@ -555,7 +556,6 @@ impl fmt::Debug for SyntaxError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     macro_rules! expr {
         ($id:ident,$name:ident) => {
@@ -651,7 +651,7 @@ mod tests {
         };
     }
 
-    pub use {array, id, int, str, plus, call,strcat}; // Adjust if macros are not public
+    pub use {array, call, id, int, plus, str, strcat}; // Adjust if macros are not public
 
     #[inline]
     fn assert_ast(input: &str, value: Value) {
@@ -806,13 +806,11 @@ mod tests {
     #[test]
     fn parse_simple_function_definition() {
         let input = "let f(a) = a + 1 in f(5)";
-        let expected_vars = array!(
-            Value::ParsedFunction(Arc::new(ParsedFunction {
-                name_ident: id!("f"),
-                arg_idents: vec![id!("a")],
-                body: plus!(id!("a"), int!(1)),
-            }))
-        );
+        let expected_vars = array!(Value::ParsedFunction(Arc::new(ParsedFunction {
+            name_ident: id!("f"),
+            arg_idents: vec![id!("a")],
+            body: plus!(id!("a"), int!(1)),
+        })));
         let expected_expr_in_scope = call!(vec![id!("f"), int!(5)]);
         let expected_value = scope!(expected_vars, expected_expr_in_scope);
         assert_ast(input, expected_value);
@@ -821,13 +819,11 @@ mod tests {
     #[test]
     fn parse_function_definition_multiple_args() {
         let input = "let add(x, y) = x + y in add(3, 4)";
-        let expected_vars = array!(
-            Value::ParsedFunction(Arc::new(ParsedFunction {
-                name_ident: id!("add"),
-                arg_idents: vec![id!("x"), id!("y")],
-                body: plus!(id!("x"), id!("y")),
-            }))
-        );
+        let expected_vars = array!(Value::ParsedFunction(Arc::new(ParsedFunction {
+            name_ident: id!("add"),
+            arg_idents: vec![id!("x"), id!("y")],
+            body: plus!(id!("x"), id!("y")),
+        })));
         let expected_expr_in_scope = call!(vec![id!("add"), int!(3), int!(4)]);
         let expected_value = scope!(expected_vars, expected_expr_in_scope);
         assert_ast(input, expected_value);
@@ -836,13 +832,11 @@ mod tests {
     #[test]
     fn parse_function_definition_no_args() {
         let input = "let get_num() = 42 in get_num()";
-        let expected_vars = array!(
-            Value::ParsedFunction(Arc::new(ParsedFunction {
-                name_ident: id!("get_num"),
-                arg_idents: vec![],
-                body: int!(42),
-            }))
-        );
+        let expected_vars = array!(Value::ParsedFunction(Arc::new(ParsedFunction {
+            name_ident: id!("get_num"),
+            arg_idents: vec![],
+            body: int!(42),
+        })));
         let expected_expr_in_scope = call!(vec![id!("get_num")]);
         let expected_value = scope!(expected_vars, expected_expr_in_scope);
         assert_ast(input, expected_value);
@@ -853,12 +847,13 @@ mod tests {
         let input = "let a = 1; f(b) = b + a; c = 2 in f(c)";
         let expected_vars = array!(
             tuple!(id!("a"), int!(1)), // For a = 1
-            Value::ParsedFunction(Arc::new(ParsedFunction { // For f(b) = b + a
+            Value::ParsedFunction(Arc::new(ParsedFunction {
+                // For f(b) = b + a
                 name_ident: id!("f"),
                 arg_idents: vec![id!("b")],
                 body: plus!(id!("b"), id!("a")),
             })),
-            tuple!(id!("c"), int!(2))  // For c = 2
+            tuple!(id!("c"), int!(2)) // For c = 2
         );
         let expected_expr_in_scope = call!(vec![id!("f"), id!("c")]);
         let expected_value = scope!(expected_vars, expected_expr_in_scope);
@@ -924,7 +919,7 @@ mod tests {
         assert!(parse("let f(a b) = a+b in f(1,2)").is_err()); // Missing comma between args
         assert!(parse("let f(a,) = a in f(1)").is_err()); // Trailing comma in arg list (depends on strictness)
         assert!(parse("f(a) = ").is_err()); // Incomplete function definition
-        // assert!(parse("let f = a+b in f()").is_err()); // This is a runtime type error, not a parse error. Syntax is valid.
+                                            // assert!(parse("let f = a+b in f()").is_err()); // This is a runtime type error, not a parse error. Syntax is valid.
     }
 
     // Tests for Literals
@@ -952,7 +947,7 @@ mod tests {
         assert_ast("[1,]", array!(int!(1)));
         assert_ast("[1,2,]", array!(int!(1), int!(2)));
     }
-    
+
     #[test]
     fn test_tuple_with_trailing_comma() {
         // Current tuple parser `map_opt` logic might disallow single element tuples with trailing comma
@@ -961,7 +956,6 @@ mod tests {
         // assert_ast("(1,)", tuple!(int!(1))); // This might fail based on current tuple parsing logic.
         assert_ast("(1,2,)", tuple!(int!(1), int!(2)));
     }
-
 
     // Tests for Comments
 
@@ -978,10 +972,12 @@ mod tests {
         assert_ast("1 /* comment */ ", int!(1));
     }
 
-
     #[test]
     fn test_comments_interspersed() {
-        assert_ast("1 # comment\n + # another comment\n 2", plus!(int!(1), int!(2)));
+        assert_ast(
+            "1 # comment\n + # another comment\n 2",
+            plus!(int!(1), int!(2)),
+        );
         assert_ast("1 /* block1 */ + /* block2 */ 2", plus!(int!(1), int!(2)));
         assert_ast(
             // Corrected: removed 'let' from 'let b = 2'
@@ -989,9 +985,12 @@ mod tests {
             scope!(
                 array!(tuple!(id!("a"), int!(1)), tuple!(id!("b"), int!(2))),
                 plus!(id!("a"), id!("b"))
-            )
+            ),
         );
-        assert_ast("1 + /* comment before op */ - /* comment after op */ 2", plus!(int!(1), neg!(int!(2))));
+        assert_ast(
+            "1 + /* comment before op */ - /* comment after op */ 2",
+            plus!(int!(1), neg!(int!(2))),
+        );
     }
 
     #[test]
@@ -1005,7 +1004,9 @@ mod tests {
     fn test_semicolon_termination() {
         assert_ast("1+2;;", plus!(int!(1), int!(2)));
         assert_ast("1+2 ;;", plus!(int!(1), int!(2)));
-        assert_ast("let a=1 in a;;", scope!(array!(tuple!(id!("a"),int!(1))),id!("a")));
+        assert_ast(
+            "let a=1 in a;;",
+            scope!(array!(tuple!(id!("a"), int!(1))), id!("a")),
+        );
     }
-
 }

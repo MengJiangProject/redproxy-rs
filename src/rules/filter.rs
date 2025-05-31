@@ -14,9 +14,9 @@ pub struct Filter {
 }
 
 impl Filter {
-    pub fn validate(&self) -> Result<(), Error> {
+    pub async fn validate(&self) -> Result<(), Error> {
         let ctx = create_context(Default::default());
-        let rtype = self.root.type_of(ctx.into())?;
+        let rtype = self.root.type_of(ctx.into()).await?;
         ensure!(
             rtype == Type::Boolean,
             "filter return type mismatch: required boolean, got {}",
@@ -24,9 +24,9 @@ impl Filter {
         );
         Ok(())
     }
-    pub fn evaluate(&self, request: &Context) -> Result<bool, Error> {
+    pub async fn evaluate(&self, request: &Context) -> Result<bool, Error> {
         let ctx = create_context(request.props().clone());
-        let ret = self.root.value_of(ctx.into())?.try_into()?;
+        let ret = self.root.value_of(ctx.into()).await?.try_into()?;
         trace!("filter eval: {:?} => {}", request, ret);
         Ok(ret)
     }

@@ -10,7 +10,6 @@ regex = "1"
 easy-error = "1"
 tracing = "0.1"
 async-trait = "0.1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [dev-dependencies]
 clap = "4.5"
@@ -18,3 +17,4 @@ rustyline = "13.0.0"
 rustyline-derive = "0.11"
 nix = {version = "0.30",features = ["fs"]}
 tokio-test = "0.4"
+tokio = { version = "1", features = ["full"] }

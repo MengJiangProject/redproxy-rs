@@ -61,7 +61,7 @@ where
     // Use tag to match "${" literally. If this passes, then cut.
     preceded(
         nom::bytes::streaming::tag("${"),
-        nom::combinator::cut(nom::sequence::terminated(super::op_0, char('}')))
+        nom::combinator::cut(nom::sequence::terminated(super::op_0, char('}'))),
     )(input)
 }
 
@@ -109,25 +109,24 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::script::Value;
     use crate::parser::parse; // For assert_parse_template_error helper
-    use crate::parser::tests::{array,  id, int, plus, str, strcat}; // Adjust if macros are not public
+    use crate::parser::tests::{array, id, int, plus, str, strcat}; // Adjust if macros are not public
     use crate::script::stdlib::*;
     use crate::script::Call;
-    
+    use crate::script::Value;
+
     // Helper for asserting successful template parsing
     fn assert_template_ast(input: &str, expected_vec: Vec<Value>) {
         let result = parse_template::<nom::error::VerboseError<Span>>(Span::new(input));
         assert!(result.is_ok(), "Parsing failed for input: {}", input);
         let (_, parsed_vec) = result.unwrap();
-        
+
         // Construct the expected Value::OpCall(Arc<Call>) for strcat
         let expected_value = if parsed_vec.is_empty() {
-             strcat!(array!()) // Handles `` ` `` resulting in strcat!([])
+            strcat!(array!()) // Handles `` ` `` resulting in strcat!([])
         } else {
-             strcat!(Value::Array(Arc::new(expected_vec)))
+            strcat!(Value::Array(Arc::new(expected_vec)))
         };
-
 
         // The parse_template function itself returns Vec<Value>,
         // but the overall parser (in parser.rs) wraps this into a strcat call.
@@ -136,10 +135,19 @@ mod tests {
         // The main `parse` function (from parser.rs) does the strcat wrapping.
         // Let's use that for a more integrated test of template parsing.
         let overall_parse_result = crate::parser::parse(input); // Assuming parse() is accessible
-        assert!(overall_parse_result.is_ok(), "Overall parsing failed for input: {}. Error: {:?}", input, overall_parse_result.err());
+        assert!(
+            overall_parse_result.is_ok(),
+            "Overall parsing failed for input: {}. Error: {:?}",
+            input,
+            overall_parse_result.err()
+        );
         let actual_value_from_parser = overall_parse_result.unwrap();
-        
-        assert_eq!(actual_value_from_parser, expected_value, "Mismatch for input: {}", input);
+
+        assert_eq!(
+            actual_value_from_parser, expected_value,
+            "Mismatch for input: {}",
+            input
+        );
     }
 
     // Helper for error tests
@@ -148,7 +156,7 @@ mod tests {
         // are often caught by the surrounding grammar or expression parsing within ${}.
         assert!(parse(input).is_err(), "Expected error for input: {}", input);
     }
-    
+
     // Basic Template Tests
     #[test]
     fn test_empty_template() {
@@ -174,10 +182,13 @@ mod tests {
         // Let's assume spaces between expressions become separate string literals.
         assert_template_ast("`${1} ${2}`", vec![int!(1), str!(" "), int!(2)]);
     }
-    
+
     #[test]
     fn test_template_with_text_and_expressions() {
-        assert_template_ast("`hello ${name} world`", vec![str!("hello "), id!("name"), str!(" world")]);
+        assert_template_ast(
+            "`hello ${name} world`",
+            vec![str!("hello "), id!("name"), str!(" world")],
+        );
     }
 
     #[test]
@@ -185,27 +196,29 @@ mod tests {
         assert_template_ast("`${1}text`", vec![int!(1), str!("text")]);
         assert_template_ast("`text${2}`", vec![str!("text"), int!(2)]);
     }
-    
+
     #[test]
     fn test_template_with_complex_expression() {
         // Original expectation, which might be misaligned with parser output if 'if' and '>' become NativeObjects
         // If parser produces NativeObject(If) etc., this test will fail, and needs proper test macros (branch!, greater!)
         // or public constructors for Call to assert the correct NativeObject structure.
-        assert_template_ast("`value: ${if x > 0 then y else z}`", 
+        assert_template_ast(
+            "`value: ${if x > 0 then y else z}`",
             vec![
-                str!("value: "), 
+                str!("value: "),
                 // Expecting NativeObject for 'if' and '>'
                 Value::OpCall(Arc::new(Call::new(vec![
                     Value::NativeObject(Arc::new(Box::new(If::stub()))), // if
-                    Value::OpCall(Arc::new(Call::new(vec![ // condition: x > 0
+                    Value::OpCall(Arc::new(Call::new(vec![
+                        // condition: x > 0
                         Value::NativeObject(Arc::new(Box::new(Greater::stub()))), // >
                         id!("x"),
-                        int!(0)
+                        int!(0),
                     ]))),
                     id!("y"), // then branch
-                    id!("z")  // else branch
-                ])))
-            ]
+                    id!("z"), // else branch
+                ]))),
+            ],
         );
     }
 
@@ -224,21 +237,24 @@ mod tests {
     #[test]
     fn test_invalid_escape_sequence_in_template() {
         // Note: \x is not a supported escape in the template string parser
-        assert_parse_template_error("`\\x`"); 
+        assert_parse_template_error("`\\x`");
     }
 
     #[test]
     fn test_syntax_error_in_embedded_expression() {
         assert_parse_template_error("`${1 + * 2}`"); // Invalid operator usage inside ${}
     }
-    
+
     #[test]
     fn test_dangling_dollar_in_template() {
         // A single '$' not followed by '{' should be treated as a literal '$' or error.
         // Current parser might treat '$' as start of an escape if not part of ${expr}
         // The provided `parse_escaped_char` for templates includes `value('$', char('$'))`
         // which means `\$` is an escaped dollar. A raw `$` not part of `${` is literal.
-        assert_template_ast("`hello $world`", vec![str!("hello "), str!("$"), str!("world")]);
+        assert_template_ast(
+            "`hello $world`",
+            vec![str!("hello "), str!("$"), str!("world")],
+        );
         assert_template_ast("`$`", vec![str!("$")]);
     }
 
@@ -248,7 +264,10 @@ mod tests {
         // `\` is escaped as `\\`
         // `\${value}` should result in literal "${value}" if $ is only special before {
         // parse_escaped_char in template.rs has: value('$', char('$')), so `\$` -> `$`
-        assert_template_ast("`\\`\\${value}`", vec![str!("`"), str!("$"), str!("{value}")]);
+        assert_template_ast(
+            "`\\`\\${value}`",
+            vec![str!("`"), str!("$"), str!("{value}")],
+        );
     }
 
     #[test]
@@ -256,18 +275,15 @@ mod tests {
         // `${}` is likely a syntax error for the inner expression parser (op_0)
         assert_parse_template_error("`${}`");
     }
-    
+
     #[test]
     fn test_nested_templates_parsed_correctly_by_main_parser() {
         // This relies on the main parser invoking the template parser recursively.
         // The `parse_template` function itself doesn't directly handle nesting,
         // but the `op_0` called inside `${...}` can parse another template.
         assert_template_ast(
-            "`outer: ${`inner: ${x}`}`", 
-            vec![
-                str!("outer: "), 
-                strcat!(array!(str!("inner: "), id!("x")))
-            ]
+            "`outer: ${`inner: ${x}`}`",
+            vec![str!("outer: "), strcat!(array!(str!("inner: "), id!("x")))],
         );
     }
 }

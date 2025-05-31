@@ -116,15 +116,18 @@ impl Callable for Index {
     async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
         let obj_val = &args[0]; // Renamed obj to obj_val to avoid conflict
         let index_val = &args[1]; // Renamed index to index_val
-        if index_val.type_of(ctx.clone()).await? != Type::Integer { // Added await
+        if index_val.type_of(ctx.clone()).await? != Type::Integer {
+            // Added await
             bail!("Index not a integer type")
-        } else if let Value::NativeObject(nobj) = obj_val { // Used obj_val
+        } else if let Value::NativeObject(nobj) = obj_val {
+            // Used obj_val
             if let Some(idx) = nobj.as_indexable() {
-                idx.type_of_member(ctx).await // Added await
+                idx.type_of_member(ctx).await
             } else {
                 bail!("NativeObject not in indexable")
             }
-        } else if let Type::Array(t) = obj_val.type_of(ctx).await? { // Used obj_val, added await
+        } else if let Type::Array(t) = obj_val.type_of(ctx).await? {
+            // Used obj_val, added await
             Ok(*t)
         } else {
             bail!("Object does not implement Indexable: {:?}", obj_val) // Used obj_val
@@ -149,8 +152,10 @@ impl Callable for Index {
 function_head!(Access(obj: Any, index: Any) => Any);
 #[async_trait]
 impl Callable for Access {
-    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> { // Made async
-        async fn accessible( // Made async
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+        // Made async
+        async fn accessible(
+            // Made async
             ctx: ScriptContextRef,
             obj: &dyn Accessible,
             index: &Value,
@@ -213,11 +218,18 @@ impl Callable for Access {
             ret.value_of(ctx).await
         }
 
-        async fn tuple(ctx: ScriptContextRef, obj: Value, index_val: &Value) -> Result<Value, Error> {
+        async fn tuple(
+            ctx: ScriptContextRef,
+            obj: Value,
+            index_val: &Value,
+        ) -> Result<Value, Error> {
             let idx_i64 = if let Value::Integer(i) = index_val {
                 *i
             } else {
-                bail!("Can not access a tuple with: {:?} - index must be an integer", index_val)
+                bail!(
+                    "Can not access a tuple with: {:?} - index must be an integer",
+                    index_val
+                )
             };
             if let Value::Tuple(t) = obj {
                 let t_len = t.len();
@@ -251,7 +263,8 @@ impl Callable for Access {
         }
     }
 
-    fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) { // Changed &self to &'s self
+    fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) {
+        // Changed &self to &'s self
         args[0].unresovled_ids(ids) // args[1] is always literal identifier or integer, thus not unresolved
     }
 }
@@ -304,10 +317,11 @@ impl std::hash::Hash for ScopeBinding {
 
 #[async_trait] // Ensure async_trait is here
 impl Evaluatable for ScopeBinding {
-    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
+        // Made async
         // If self.value.type_of becomes async, this will need .await
         // For now, assuming self.value.type_of is still effectively sync or blocks if it calls async code
-        self.value.type_of(self.ctx.clone())
+        self.value.type_of(self.ctx.clone()).await
     }
 
     async fn value_of(&self, _calling_ctx: ScriptContextRef) -> Result<Value, Error> {
@@ -328,11 +342,12 @@ impl NativeObject for ScopeBinding {
 
 // Removed impl Callable for ScopeBinding block
 
-
 function_head!(Scope(vars: Array, expr: Any) => Any);
-#[async_trait]
 impl Scope {
-    fn make_context(vars: &[Value], outer_ctx: ScriptContextRef) -> Result<ScriptContextRef, Error> {
+    fn make_context(
+        vars: &[Value],
+        outer_ctx: ScriptContextRef,
+    ) -> Result<ScriptContextRef, Error> {
         // 1. Create the Arc for the new context first. This Arc will be captured by UDFs.
         //    Initialize with an empty variable map for now.
         let new_ctx_arc = Arc::new(ScriptContext::new(Some(outer_ctx.clone())));
@@ -420,9 +435,13 @@ impl Callable for Scope {
         args[1].real_value_of(new_scope_ctx).await
     }
 
-    fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], main_output_ids: &mut HashSet<&'o Value>) {
+    fn unresovled_ids<'s: 'o, 'o>(
+        &'s self,
+        args: &'s [Value],
+        main_output_ids: &mut HashSet<&'o Value>,
+    ) {
         let vars_array_val = &args[0]; // Value::Array of bindings
-        let let_body_expr = &args[1];  // The "in" expression
+        let let_body_expr = &args[1]; // The "in" expression
 
         let mut let_defined_names = HashSet::<String>::new();
 
@@ -632,7 +651,6 @@ macro_rules! old_compare_op_behavior {
     }
 }
 
-
 old_compare_op_behavior!(Greater, >);
 old_compare_op_behavior!(GreaterOrEqual, >=);
 old_compare_op_behavior!(Lesser, <);
@@ -686,25 +704,24 @@ mod tests {
     // use super::super::*;
     use super::*;
     use crate::script::Value; // Ensure Value is in scope for macro usage if not already.
-    use tokio_test::block_on; // Added use
 
     macro_rules! op_test {
         ($name:ident, $fn:ident, [ $($in:expr),+ ] , $out:expr) => {
-            #[test]
-            fn $name() {
+            #[tokio::test]
+            async fn $name() {
                 let ctx : ScriptContextRef = Default::default();
                 let func_call_val : Value = $fn::make_call( $($in),+ ).into();
                 let expected_output_val : Value = $out;
 
                 // Test signature (type check)
-                let expected_type = expected_output_val.type_of(ctx.clone())
+                let expected_type = expected_output_val.type_of(ctx.clone()).await
                     .unwrap_or_else(|e| panic!("Error getting type of expected output for {}: {:?}", stringify!($name), e));
-                let actual_type_result = func_call_val.type_of(ctx.clone());
+                let actual_type_result = func_call_val.type_of(ctx.clone()).await; // Changed to async call
                 assert!(actual_type_result.is_ok(), "Type signature check failed for {}: {:?}", stringify!($name), actual_type_result.err().unwrap());
                 assert_eq!(expected_type, actual_type_result.unwrap(), "Type mismatch for {}", stringify!($name));
-                
+
                 // Test call (value evaluation)
-                let actual_value_result = block_on(func_call_val.value_of(ctx)); // Changed to just block_on
+                let actual_value_result = func_call_val.value_of(ctx).await; // Changed to async call
                 assert!(actual_value_result.is_ok(), "Value evaluation failed for {}: {:?}", stringify!($name), actual_value_result.err().unwrap());
                 assert_eq!(actual_value_result.unwrap(), expected_output_val, "Value mismatch for {}", stringify!($name));
             }
@@ -713,15 +730,15 @@ mod tests {
 
     macro_rules! op_error_test {
         ($name:ident, $fn:ident, [ $($in:expr),+ ] , $expected_error_substring:expr) => {
-            #[test]
-            fn $name() {
+            #[tokio::test]
+            async fn $name() {
                 let ctx : ScriptContextRef = Default::default();
                 let func_call_val : Value = $fn::make_call( $($in),+ ).into();
 
                 // Check if signature catches the error (type error)
-                let type_result = func_call_val.type_of(ctx.clone());
-                
-                let value_result = block_on(func_call_val.value_of(ctx)); // Changed to just block_on
+                let type_result = func_call_val.type_of(ctx.clone()).await;
+
+                let value_result = func_call_val.value_of(ctx).await;
 
                 let error_message = match (type_result, value_result) {
                     (Err(type_err), _) => { // If type_of fails, that's the primary error
@@ -734,7 +751,7 @@ mod tests {
                         panic!("Expected error for '{}', but got Ok(type: {:?}, value: {:?})", stringify!($name), t, v)
                     }
                 };
-                
+
                 assert!(
                     error_message.contains($expected_error_substring),
                     "Error message for '{}' was '{}', expected to contain '{}'",
@@ -743,7 +760,6 @@ mod tests {
             }
         };
     }
-
 
     op_test!(
         access_tuple,
@@ -870,54 +886,156 @@ mod tests {
     // --- New Error Condition & Edge Case Tests for stdlib functions ---
 
     // Index Errors
-    op_error_test!(index_with_non_integer, Index, [Value::Array(Arc::new(vec![1.into()])), "a".into()], "Index not a integer type");
+    op_error_test!(
+        index_with_non_integer,
+        Index,
+        [Value::Array(Arc::new(vec![1.into()])), "a".into()],
+        "Index not a integer type"
+    );
     // Note: Testing Index with a non-indexable (e.g. string "abc"[0]) depends on how parser creates the OpCall.
     // If parser directly calls Value::Array().get(), it's not an Index stdlib call.
     // Assuming Index stdlib is used:
-    op_error_test!(index_on_non_indexable_script_value, Index, ["abc".into(), 0.into()], "Object does not implement Indexable");
+    op_error_test!(
+        index_on_non_indexable_script_value,
+        Index,
+        ["abc".into(), 0.into()],
+        "Object does not implement Indexable"
+    );
 
     // Access Errors
-    op_error_test!(access_with_non_string_or_int_key_for_tuple, Access, [Value::Tuple(Arc::new(vec![1.into()])), true.into()], "Can not access a tuple with"); 
+    op_error_test!(
+        access_with_non_string_or_int_key_for_tuple,
+        Access,
+        [Value::Tuple(Arc::new(vec![1.into()])), true.into()],
+        "Can not access a tuple with"
+    );
     // Accessing native object with wrong key type is also tricky if parser handles it.
     // If Access stdlib is called:
     // Assuming Test::new() native object from existing tests, and it's accessible.
     // Accessing TestNativeSimple with a non-string identifier would be a parser error for `obj.true`
     // If it were `obj."true"`, then Access would get Value::String("true")
-    op_error_test!(access_native_with_non_identifier_val, Access, [Test::new().into(), true.into()], "Can not access a NativeObject with");
-
+    op_error_test!(
+        access_native_with_non_identifier_val,
+        Access,
+        [Test::new().into(), true.into()],
+        "Can not access a NativeObject with"
+    );
 
     // IsMemberOf Edge Cases
-    op_test!(is_member_of_empty_array, IsMemberOf, [1.into(), Value::Array(Arc::new(vec![]))], false.into());
-    op_error_test!(is_member_of_array_different_type, IsMemberOf, [1.into(), Value::Array(Arc::new(vec!["a".into()]))], "subject must have on same type with array");
+    op_test!(
+        is_member_of_empty_array,
+        IsMemberOf,
+        [1.into(), Value::Array(Arc::new(vec![]))],
+        false.into()
+    );
+    op_error_test!(
+        is_member_of_array_different_type,
+        IsMemberOf,
+        [1.into(), Value::Array(Arc::new(vec!["a".into()]))],
+        "subject must have on same type with array"
+    );
 
     // Arithmetic Ops Errors
-    op_error_test!(divide_by_zero_stdlib, Divide, [1.into(), 0.into()], "division by zero");
-    op_error_test!(mod_by_zero_stdlib, Mod, [1.into(), 0.into()], "division by zero");
+    op_error_test!(
+        divide_by_zero_stdlib,
+        Divide,
+        [1.into(), 0.into()],
+        "division by zero"
+    );
+    op_error_test!(
+        mod_by_zero_stdlib,
+        Mod,
+        [1.into(), 0.into()],
+        "division by zero"
+    );
 
     // Like / NotLike Errors
-    op_error_test!(like_invalid_regex, Like, ["abc".into(), "[".into()], "failed to compile regex");
+    op_error_test!(
+        like_invalid_regex,
+        Like,
+        ["abc".into(), "[".into()],
+        "failed to compile regex"
+    );
 
     // ToInteger Errors
-    op_error_test!(to_integer_non_integer_string, ToInteger, ["abc".into()], "failed to parse integer: abc");
-    op_error_test!(to_integer_float_string, ToInteger, ["1.0".into()], "failed to parse integer: 1.0");
-    op_error_test!(to_integer_empty_string, ToInteger, ["".into()], "failed to parse integer: ");
+    op_error_test!(
+        to_integer_non_integer_string,
+        ToInteger,
+        ["abc".into()],
+        "failed to parse integer: abc"
+    );
+    op_error_test!(
+        to_integer_float_string,
+        ToInteger,
+        ["1.0".into()],
+        "failed to parse integer: 1.0"
+    );
+    op_error_test!(
+        to_integer_empty_string,
+        ToInteger,
+        ["".into()],
+        "failed to parse integer: "
+    );
 
     // Split Edge Cases
     // Behavior of split by empty string: Rust's split by "" gives ["", "a", "b", "c", ""]. If that's desired:
     // op_test!(split_by_empty_delimiter, Split, ["abc".into(), "".into()], Value::Array(Arc::new(vec!["".into(), "a".into(), "b".into(), "c".into(), "".into()])));
     // However, many languages error or have different behavior. Let's assume it returns array of chars if empty, or error.
     // Current impl of split in Rust would yield ["", "a", "b", "c", ""]. Let's match that.
-    op_test!(split_by_empty_delimiter, Split, ["abc".into(), "".into()], Value::Array(Arc::new(vec!["".into(),"a".into(),"b".into(),"c".into(),"".into()])));
-    op_test!(split_empty_string, Split, ["".into(), ",".into()], Value::Array(Arc::new(vec!["".into()]))); // "".split(",") -> [""]
-    op_test!(split_by_delimiter_not_present, Split, ["abc".into(), "d".into()], Value::Array(Arc::new(vec!["abc".into()])));
-
+    op_test!(
+        split_by_empty_delimiter,
+        Split,
+        ["abc".into(), "".into()],
+        Value::Array(Arc::new(vec![
+            "".into(),
+            "a".into(),
+            "b".into(),
+            "c".into(),
+            "".into()
+        ]))
+    );
+    op_test!(
+        split_empty_string,
+        Split,
+        ["".into(), ",".into()],
+        Value::Array(Arc::new(vec!["".into()]))
+    ); // "".split(",") -> [""]
+    op_test!(
+        split_by_delimiter_not_present,
+        Split,
+        ["abc".into(), "d".into()],
+        Value::Array(Arc::new(vec!["abc".into()]))
+    );
 
     // StringConcat Edge Cases
-    op_test!(strcat_empty_array, StringConcat, [Value::Array(Arc::new(vec![]))], "".into());
-    op_test!(strcat_array_one_string, StringConcat, [Value::Array(Arc::new(vec!["a".into()]))], "a".into());
-    op_test!(strcat_array_with_empty_strings, StringConcat, [Value::Array(Arc::new(vec!["a".into(), "".into(), "b".into()]))], "ab".into());
-    op_error_test!(strcat_array_non_string, StringConcat, [Value::Array(Arc::new(vec![1.into()]))], "type mismatch");
-
+    op_test!(
+        strcat_empty_array,
+        StringConcat,
+        [Value::Array(Arc::new(vec![]))],
+        "".into()
+    );
+    op_test!(
+        strcat_array_one_string,
+        StringConcat,
+        [Value::Array(Arc::new(vec!["a".into()]))],
+        "a".into()
+    );
+    op_test!(
+        strcat_array_with_empty_strings,
+        StringConcat,
+        [Value::Array(Arc::new(vec![
+            "a".into(),
+            "".into(),
+            "b".into()
+        ]))],
+        "ab".into()
+    );
+    op_error_test!(
+        strcat_array_non_string,
+        StringConcat,
+        [Value::Array(Arc::new(vec![1.into()]))],
+        "type mismatch"
+    );
 
     // And / Or Short-circuiting
     // These tests need to be done via eval_test in script.rs as op_test directly calls the function, bypassing script evaluation logic.
@@ -926,13 +1044,31 @@ mod tests {
     // eval_test!("false && (1/0 == 1)", Value::Boolean(false));
     // For stdlib direct call, short-circuiting isn't observable as args are pre-evaluated by script engine.
     // We can test the non-short-circuiting behavior (both args evaluated by `args!` macro):
-    op_test!(and_op_true_true, And, [true.into(), true.into()], true.into());
-    op_test!(or_op_false_false, Or, [false.into(), false.into()], false.into());
-
+    op_test!(
+        and_op_true_true,
+        And,
+        [true.into(), true.into()],
+        true.into()
+    );
+    op_test!(
+        or_op_false_false,
+        Or,
+        [false.into(), false.into()],
+        false.into()
+    );
 
     // Comparison Ops (Equal, NotEqual) Type Mismatch
     // These tests are changed from op_error_test! to op_test! as they should now return booleans.
-    op_test!(equal_different_types, Equal, [1.into(), "1".into()], false.into());
-    op_test!(not_equal_different_types, NotEqual, [1.into(), "1".into()], true.into());
-
+    op_test!(
+        equal_different_types,
+        Equal,
+        [1.into(), "1".into()],
+        false.into()
+    );
+    op_test!(
+        not_equal_different_types,
+        NotEqual,
+        [1.into(), "1".into()],
+        true.into()
+    );
 }
