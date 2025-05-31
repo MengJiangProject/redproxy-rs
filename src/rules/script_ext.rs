@@ -13,7 +13,7 @@ use tracing::warn;
 use crate::context::{ContextProps, TargetAddress};
 
 pub fn create_context(props: Arc<ContextProps>) -> ScriptContext {
-    let mut ctx = ScriptContext::new(Some(Default::default()));
+    let ctx = ScriptContext::new(Some(Default::default()));
     let adapter = ContextAdaptor::new(props);
     ctx.set("request".to_string(), adapter.into());
     ctx.set("cidr_match".to_string(), CidrMatch::stub().into());

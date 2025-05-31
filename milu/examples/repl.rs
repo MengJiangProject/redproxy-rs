@@ -8,7 +8,6 @@ use rustyline::validate::{self, MatchingBracketValidator, Validator};
 use rustyline::{Cmd, CompletionType, Config, Context, EditMode, Editor, KeyEvent};
 use rustyline_derive::Helper;
 use std::borrow::Cow::{self, Borrowed, Owned};
-use std::io::stdin;
 use std::path::PathBuf;
 
 use milu::parser;
@@ -110,7 +109,7 @@ fn repl() -> rustyline::Result<()> {
     #[cfg(target_os = "windows")]
     let is_tty = false;
     #[cfg(not(target_os = "windows"))]
-    let is_tty = nix::unistd::isatty(stdin()).map_err(|_e| std::io::Error::last_os_error())?;
+    let is_tty = nix::unistd::isatty(std::io::stdin()).map_err(|_e| std::io::Error::last_os_error())?;
     macro_rules! println {
         () => (if(is_tty) {println!("\n")});
         ($($arg:tt)*) => ({if(is_tty) {std::println!($($arg)*);}})

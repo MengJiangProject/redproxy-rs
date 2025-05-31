@@ -1,8 +1,8 @@
 use nom::{
     branch::alt,
-    bytes::complete::{is_not, tag, tag_no_case, take_until, take_while},
+    bytes::complete::{tag, tag_no_case, take_until, take_while},
     character::complete::{
-        alpha1, alphanumeric1, char, digit1, hex_digit1, multispace0, multispace1, oct_digit1,
+        alpha1, alphanumeric1, char, digit1, hex_digit1, multispace1, oct_digit1,
         one_of,
     },
     combinator::{all_consuming, cut, map, map_opt, map_res, opt, recognize},
@@ -555,7 +555,7 @@ impl fmt::Debug for SyntaxError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::stdlib::*;
+    
 
     macro_rules! expr {
         ($id:ident,$name:ident) => {

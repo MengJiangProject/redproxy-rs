@@ -2,7 +2,7 @@ use easy_error::{bail, err_msg, Error, ResultExt};
 use std::{
     sync::RwLock, // Changed from RefCell
     collections::{HashMap, HashSet},
-    convert::{TryFrom, TryInto},
+    convert::TryFrom,
     fmt::Display,
     sync::Arc,
 };
@@ -732,7 +732,7 @@ mod tests {
     use super::*;
     // For Value::Integer, etc.
     use super::Value; 
-    use std::fmt; // Required for the new NativeObject impls
+     // Required for the new NativeObject impls
 
     macro_rules! eval_test {
         ($input: expr, $output: expr) => {{

@@ -111,7 +111,7 @@ mod tests {
     use super::*;
     use crate::script::Value;
     use crate::parser::parse; // For assert_parse_template_error helper
-    use crate::parser::tests::{array,  id, int, plus, str, strcat,call}; // Adjust if macros are not public
+    use crate::parser::tests::{array,  id, int, plus, str, strcat}; // Adjust if macros are not public
     use crate::script::stdlib::*;
     use crate::script::Call;
     
