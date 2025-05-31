@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use cidr::AnyIpCidr;
 use easy_error::{bail, Error};
 use milu::script::{Call, ScriptContext};
@@ -83,12 +84,13 @@ impl NativeObject for TargetAddress {
     }
 }
 
+#[async_trait]
 impl Evaluatable for TargetAddress {
     fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
         Ok(Type::String)
     }
 
-    fn value_of(&self, _ctx: ScriptContextRef) -> Result<Value, Error> {
+    async fn value_of(&self, _ctx: ScriptContextRef) -> Result<Value, Error> {
         Ok(self.to_string().into())
     }
 }
@@ -148,12 +150,13 @@ impl NativeObject for SocketAddress {
     }
 }
 
+#[async_trait]
 impl Evaluatable for SocketAddress {
     fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
         Ok(Type::String)
     }
 
-    fn value_of(&self, _ctx: ScriptContextRef) -> Result<Value, Error> {
+    async fn value_of(&self, _ctx: ScriptContextRef) -> Result<Value, Error> {
         Ok(self.0.to_string().into())
     }
 }

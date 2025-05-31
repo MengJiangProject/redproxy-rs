@@ -752,14 +752,14 @@ mod tests {
     // For Value::Integer, etc.
     use super::Value; 
      // Required for the new NativeObject impls
+    use tokio; // Added tokio
 
     macro_rules! eval_test {
         ($input: expr, $output: expr) => {{
             let ctx = Default::default();
             let parsed_value = parse($input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", $input, e));
             // println!("ast={{}}", parsed_value); // Keep this commented out for less noise unless debugging
-            // TODO block_on
-            let value = tokio_test::block_on(parsed_value.value_of(ctx)).unwrap_or_else(|e| panic!("Eval error for '{}': {:?}", $input, e));
+            let value = tokio::runtime::Runtime::new().unwrap().block_on(parsed_value.value_of(ctx)).unwrap_or_else(|e| panic!("Eval error for '{}': {:?}", $input, e));
             assert_eq!(value, $output);
         }};
     }
@@ -768,8 +768,7 @@ mod tests {
         ($input: expr, $expected_error_substring: expr) => {{
             let ctx = Default::default();
             let parsed_value = parse($input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", $input, e));
-            // TODO block_on
-            let result = tokio_test::block_on(parsed_value.value_of(ctx));
+            let result = tokio::runtime::Runtime::new().unwrap().block_on(parsed_value.value_of(ctx));
             assert!(result.is_err(), "Expected error for '{}', but got Ok({:?})", $input, result.as_ref().ok());
             let error_message = result.err().unwrap().to_string();
             assert!(
@@ -788,14 +787,14 @@ mod tests {
         assert_eq!(value, output);
     }
 
-    #[test]
-    fn one_plus_one() {
+    #[tokio::test]
+    async fn one_plus_one() { // Added async
         type_test("1+1", Type::Integer);
         eval_test!("1+1", Value::Integer(2).into());
     }
 
-    #[test]
-    fn to_string() {
+    #[tokio::test]
+    async fn to_string() { // Added async
         type_test("to_string(100*2)", Type::String);
         eval_test!("to_string(100*2)", Value::String("200".to_string()).into());
     }
@@ -815,8 +814,8 @@ mod tests {
         assert!(unresovled_ids.contains(&Value::Identifier("c".into())), "Test 2 failed: expected 'c' to be unresolved");
     }
 
-    #[test]
-    fn arrays() {
+    #[tokio::test]
+    async fn arrays() { // Added async
         type_test("[1,2,3]", Type::array_of(Type::Integer));
         eval_test!(
             "[if 1>2||1==1 then 1*1 else 99,2*2,3*3,to_integer(\"4\")][0]",
@@ -833,37 +832,36 @@ mod tests {
         assert!(value.is_err());
     }
 
-    #[test]
-    fn ctx_chain() {
+    #[tokio::test]
+    async fn ctx_chain() { // Added async
         let ctx: ScriptContextRef = Default::default();
         let ctx2_instance = ScriptContext::new(Some(ctx)); // Create instance first
         ctx2_instance.set("a".into(), 1.into());           // Call set on the instance
         let ctx2_arc = Arc::new(ctx2_instance);            // Then wrap in Arc
-        // TODO block_on
-        let value = tokio_test::block_on(parse("a+1").unwrap().value_of(ctx2_arc)).unwrap();
+        let value = parse("a+1").unwrap().value_of(ctx2_arc).await.unwrap(); // Added await
         assert_eq!(value, 2.into());
     }
 
-    #[test]
-    fn scope() {
+    #[tokio::test]
+    async fn scope() { // Added async
         type_test("let a=1;b=2 in a+b", Type::Integer);
         eval_test!("let a=1;b=2 in a+b", Value::Integer(3).into());
     }
 
-    #[test]
-    fn access_tuple() {
+    #[tokio::test]
+    async fn access_tuple() { // Added async
         type_test("(1,\"2\",false).1", Type::String);
         eval_test!("(1,\"2\",false).1", Value::String("2".to_string()).into());
     }
 
-    #[test]
-    fn strcat() {
+    #[tokio::test]
+    async fn strcat() { // Added async
         type_test(r#" strcat(["1","2",to_string(3)]) "#, Type::String);
         eval_test!(r#" strcat(["1","2",to_string(3)]) "#, Value::String("123".to_string()).into());
     }
 
-    #[test]
-    fn template() {
+    #[tokio::test]
+    async fn template() { // Added async
         type_test(r#" `x=${to_string(1+2)}` "#, Type::String);
         eval_test!(
             r#" `x=
@@ -872,75 +870,75 @@ ${to_string(1+2)}` "#,
         );
     }
 
-    #[test]
-    fn native_objects() {
+    #[tokio::test]
+    async fn native_objects() { // Added async
         let ctx_instance = ScriptContext::new(Some(Default::default()));
         ctx_instance.set("a".into(), ("xx".to_owned(), 1).into());
         let ctx_arc: ScriptContextRef = Arc::new(ctx_instance);
-        // TODO block_on
-        let value = tokio_test::block_on(parse("a.length+1+a.x")
+        let value = parse("a.length+1+a.x") // Removed block_on, using await directly
             .unwrap()
-            .value_of(ctx_arc.clone()))
+            .value_of(ctx_arc.clone())
+            .await
             .unwrap();
         assert_eq!(value, 4.into());
-        // TODO block_on
-        let value = tokio_test::block_on(parse("a[a.x] > 200 ? a : \"yy\"")
+        let value = parse("a[a.x] > 200 ? a : \"yy\"") // Removed block_on, using await directly
             .unwrap()
-            .value_of(ctx_arc))
+            .value_of(ctx_arc)
+            .await
             .unwrap();
         assert_eq!(value, "yy".into());
     }
 
-    #[test]
-    fn eval_simple_function_call() {
+    #[tokio::test]
+    async fn eval_simple_function_call() { // Added async
         eval_test!("let f(a) = a + 1 in f(5)", Value::Integer(6));
         type_test("let f(a) = a + 1 in f(5)", Type::Integer); 
     }
 
-    #[test]
-    fn eval_function_multiple_args() {
+    #[tokio::test]
+    async fn eval_function_multiple_args() { // Added async
         eval_test!("let add(x, y) = x + y in add(3, 4)", Value::Integer(7));
         type_test("let add(x, y) = x + y in add(3, 4)", Type::Integer);
     }
 
-    #[test]
-    fn eval_function_no_args() {
+    #[tokio::test]
+    async fn eval_function_no_args() { // Added async
         eval_test!("let get_num() = 42 in get_num()", Value::Integer(42));
         type_test("let get_num() = 42 in get_num()", Type::Integer);
     }
 
-    #[test]
-    fn eval_closure_lexical_scoping() {
+    #[tokio::test]
+    async fn eval_closure_lexical_scoping() { // Added async
         eval_test!("let x = 10; f(a) = a + x in f(5)", Value::Integer(15));
         type_test("let x = 10; f(a) = a + x in f(5)", Type::Integer);
         eval_test!("let x = 10; f() = x * 2 in f()", Value::Integer(20));
         type_test("let x = 10; f() = x * 2 in f()", Type::Integer);
     }
 
-    #[test]
-    fn eval_closure_arg_shadows_outer_scope() {
+    #[tokio::test]
+    async fn eval_closure_arg_shadows_outer_scope() { // Added async
         eval_test!("let x = 10; f(x) = x + 1 in f(5)", Value::Integer(6));
         type_test("let x = 10; f(x) = x + 1 in f(5)", Type::Integer);
     }
 
-    #[test]
-    fn eval_closure_inner_let_shadows_outer_scope() {
+    #[tokio::test]
+    async fn eval_closure_inner_let_shadows_outer_scope() { // Added async
         eval_test!("let x = 10; f() = (let x = 5 in x + 1) in f()", Value::Integer(6)); 
         type_test("let x = 10; f() = (let x = 5 in x + 1) in f()", Type::Integer);
         eval_test!("let x = 10; f() = (let y = 5 in x + y) in f()", Value::Integer(15)); 
         type_test("let x = 10; f() = (let y = 5 in x + y) in f()", Type::Integer);
     }
 
-    #[test]
-    fn eval_recursive_function_factorial() {
+    #[tokio::test]
+    async fn eval_recursive_function_factorial() { // Added async
         eval_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)", Value::Integer(6));
         type_test("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)", Type::Integer);
         eval_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)", Value::Integer(1));
         type_test("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)", Type::Integer);
     }
 
-    #[test]
-    fn eval_mutually_recursive_functions() {
+    #[tokio::test]
+    async fn eval_mutually_recursive_functions() { // Added async
         let script_even = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_even(4)"; 
         eval_test!(script_even, Value::Boolean(true));
         type_test(script_even, Type::Integer);
@@ -950,8 +948,8 @@ ${to_string(1+2)}` "#,
         type_test(script_odd, Type::Integer);
     }
     
-    #[test]
-    fn eval_function_uses_another_in_same_block() {
+    #[tokio::test]
+    async fn eval_function_uses_another_in_same_block() { // Added async
         eval_test!("let g() = 10; f(a) = a + g() in f(5)", Value::Integer(15)); 
         type_test("let g() = 10; f(a) = a + g() in f(5)", Type::Integer);
     }
@@ -1074,68 +1072,67 @@ ${to_string(1+2)}` "#,
 
 
     // --- Runtime Error Handling Tests ---
-    #[test]
-    fn test_call_non_existent_function() {
+    #[tokio::test]
+    async fn test_call_non_existent_function() { // Added async
         eval_error_test!("non_existent_func()", "\"non_existent_func\" is undefined");
     }
 
-    #[test]
-    fn test_call_non_callable_value() {
+    #[tokio::test]
+    async fn test_call_non_callable_value() { // Added async
         eval_error_test!("let x = 10 in x()", "is not a callable function type");
     }
 
-    #[test]
-    fn test_incorrect_arg_count_udf() {
+    #[tokio::test]
+    async fn test_incorrect_arg_count_udf() { // Added async
         eval_error_test!("let f(a) = a in f(1,2)", "expected 1 arguments, got 2");
     }
 
-    #[test]
-    fn test_type_mismatch_binary_op() {
+    #[tokio::test]
+    async fn test_type_mismatch_binary_op() { // Added async
         eval_error_test!("1 + \"hello\"", "type mismatch"); // Error message might vary based on Plus impl
     }
 
-    #[test]
-    fn test_index_out_of_bounds_array() {
+    #[tokio::test]
+    async fn test_index_out_of_bounds_array() { // Added async
         eval_error_test!("[1,2][2]", "index out of bounds: 2");
         eval_error_test!("[1,2][-3]", "index out of bounds"); // Exact message might differ
     }
 
-    #[test]
-    fn test_index_out_of_bounds_tuple() {
+    #[tokio::test]
+    async fn test_index_out_of_bounds_tuple() { // Added async
         eval_error_test!("(1,2).2", "index out of bounds: 2");
         eval_error_test!("(1,2).-3", "index out of bounds");
     }
     
-    #[test]
-    fn test_access_non_existent_property_native() {
+    #[tokio::test]
+    async fn test_access_non_existent_property_native() { // Added async
         let ctx = ScriptContext::new(Some(Default::default()));
         ctx.set("no_simple".to_string(), TestNativeSimple.into());
         let parsed = parse("no_simple.invalid_prop").unwrap();
-        // TODO block_on
-        let res = tokio_test::block_on(parsed.value_of(Arc::new(ctx)));
+        let res = parsed.value_of(Arc::new(ctx)).await; // Added await
         assert!(res.is_err());
         assert!(res.err().unwrap().to_string().contains("no such property: invalid_prop"));
     }
     
-    #[test]
-    fn test_division_by_zero() {
+    #[tokio::test]
+    async fn test_division_by_zero() { // Added async
         eval_error_test!("1 / 0", "division by zero");
     }
 
-    #[test]
-    fn test_modulo_by_zero() {
+    #[tokio::test]
+    async fn test_modulo_by_zero() { // Added async
         eval_error_test!("1 % 0", "division by zero");
     }
 
     // --- Scope and Context Tests ---
-    #[test]
-    fn test_variable_shadowing_and_unshadowing() {
+    #[tokio::test]
+    async fn test_variable_shadowing_and_unshadowing() { // Added async
         eval_test!("let x = 1 in (let x = 2 in x) + x", Value::Integer(3));
         eval_test!("let x = 1 in let y = (let x = 2 in x) + x in y", Value::Integer(3)); // y = 2 + 1
     }
 
-    #[test]
-    fn test_variable_redefinition_in_let_block() {
+    #[tokio::test]
+    async fn test_variable_redefinition_in_let_block() { // Added async
         // Current parser allows this, and it shadows.
         // `let a=1; a=2 in a` parses as `let a=1 ; (a=2 in a)`
         // The inner `a=2` is an assignment if `a` is mutable or a new var declaration.
@@ -1150,36 +1147,34 @@ ${to_string(1+2)}` "#,
     }
     
     // --- Native Objects Error Tests ---
-    #[test]
-    fn test_native_object_failing_get() {
+    #[tokio::test]
+    async fn test_native_object_failing_get() { // Added async
         let ctx = ScriptContext::new(Some(Default::default()));
         ctx.set("native_fail_get".to_string(), TestNativeFailingAccess.into());
         let parsed = parse("native_fail_get.prop_that_fails").unwrap();
-        // TODO block_on
-        let res = tokio_test::block_on(parsed.value_of(Arc::new(ctx)));
+        let res = parsed.value_of(Arc::new(ctx)).await; // Added await
         assert!(res.is_err());
         assert!(res.err().unwrap().to_string().contains("native error on get for prop_that_fails"));
     }
 
-    #[test]
-    fn test_native_object_failing_call() {
+    #[tokio::test]
+    async fn test_native_object_failing_call() { // Added async
         let ctx = ScriptContext::new(Some(Default::default()));
         ctx.set("native_fail_call".to_string(), TestNativeFailingCall.into());
         let parsed = parse("native_fail_call()").unwrap();
-        // TODO block_on
-        let res = tokio_test::block_on(parsed.value_of(Arc::new(ctx)));
+        let res = parsed.value_of(Arc::new(ctx)).await; // Added await
         assert!(res.is_err());
         assert!(res.err().unwrap().to_string().contains("native error on call"));
     }
 
     // --- ToString Tests (from original request, placed here for eval_test) ---
-    #[test]
-    fn test_to_string_empty_array() {
+    #[tokio::test]
+    async fn test_to_string_empty_array() { // Added async
         eval_test!("to_string([])", Value::String("[]".to_string()));
     }
 
-    #[test]
-    fn test_to_string_mixed_array() {
+    #[tokio::test]
+    async fn test_to_string_mixed_array() { // Added async
         // This depends on array type checking. If an array like [1, "a"] can be formed:
         // The current Array type_of logic would error if members are different.
         // Let's assume if it forms (e.g. array of Any, or if type check is bypassed),
@@ -1193,18 +1188,18 @@ ${to_string(1+2)}` "#,
         eval_test!("to_string([\"a\", \"b\"])", Value::String("[\"a\",\"b\"]".to_string()));
     }
 
-    #[test]
-    fn test_to_string_empty_tuple() {
+    #[tokio::test]
+    async fn test_to_string_empty_tuple() { // Added async
         eval_test!("to_string(())", Value::String("()".to_string()));
     }
 
-    #[test]
-    fn test_to_string_mixed_tuple() {
+    #[tokio::test]
+    async fn test_to_string_mixed_tuple() { // Added async
         eval_test!("to_string((1, \"a\"))", Value::String("(1,\"a\")".to_string()));
     }
 
-    #[test]
-    fn test_to_string_complex_expression_result() {
+    #[tokio::test]
+    async fn test_to_string_complex_expression_result() { // Added async
         // to_string should operate on the *result* of the expression.
         eval_test!("to_string(let x=1 in x+1)", Value::String("2".to_string()));
         eval_test!("to_string(if true then \"hello\" else \"world\")", Value::String("\"hello\"".to_string()));
