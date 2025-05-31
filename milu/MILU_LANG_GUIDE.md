@@ -214,139 +214,174 @@ Milu provides conditional evaluation through `if-then-else` expressions.
     -   Syntax: `my_object.property_name`
     -   Example: `request.source.host`
 
-## Part 2: Standard Library
+## Part 2: Standard Library and Operators
 
-Milu provides a set of built-in functions for common operations. These functions are available globally in any Milu script.
+Milu provides a set of built-in operators and functions for common operations. Operators are the primary way to perform these actions. Underlying functions (like `Plus`, `Not`, etc.) implement these operators but are not typically called directly by name.
 
-### 2.1. Logical Functions
+### 2.1. Unary Operators
 
--   **`Not(value: Boolean) => Boolean`**
-    -   Description: Returns the logical negation of the input Boolean value.
-    -   Example: `Not(true)` evaluates to `false`.
+-   **Logical NOT (`!`)**
+    -   Syntax: `!condition`
+    -   Operand: `condition` must be a Boolean.
+    -   Description: Returns the logical negation of the `condition`.
+    -   Example: `!true` evaluates to `false`.
+    -   *(Internal function: `Not`)*
 
-### 2.2. Bitwise Functions
+-   **Bitwise NOT (`~`)**
+    -   Syntax: `~integer`
+    -   Operand: `integer` must be an Integer.
+    -   Description: Returns the bitwise complement of the `integer`.
+    -   Example: `~0` evaluates to `-1`.
+    -   *(Internal function: `BitNot`)*
 
--   **`BitNot(value: Integer) => Integer`**
-    -   Description: Returns the bitwise NOT of the input Integer.
-    -   Example: `BitNot(0)` evaluates to `-1`.
+-   **Unary Negation (`-`)**
+    -   Syntax: `-number`
+    -   Operand: `number` must be an Integer.
+    -   Description: Returns the negation of the `number`.
+    -   Example: `-5` evaluates to `-5`; `-(-5)` evaluates to `5`.
+    -   *(Internal function: `Negative`)*
 
-### 2.3. Arithmetic Functions
+### 2.2. Arithmetic Operators
 
--   **`Negative(value: Integer) => Integer`**
-    -   Description: Returns the negation of the input Integer.
-    -   Example: `Negative(5)` evaluates to `-5`.
+These operators work on Integer operands.
 
--   **`Plus(a: Integer, b: Integer) => Integer`**
-    -   Description: Returns the sum of two Integers.
-    -   Example: `Plus(5, 3)` evaluates to `8`.
+-   **Multiplication (`*`)**: `a * b`
+-   **Division (`/`)**: `a / b` (Error on division by zero)
+-   **Remainder (`%`)**: `a % b` (Error on division by zero)
+-   **Addition (`+`)**: `a + b`
+-   **Subtraction (`-`)**: `a - b`
+    -   Operands: `a` and `b` must be Integers.
+    -   Return Type: Integer.
+    -   Examples:
+        -   `5 * 3` evaluates to `15`.
+        -   `15 / 3` evaluates to `5`.
+        -   `15 % 4` evaluates to `3`.
+        -   `5 + 3` evaluates to `8`.
+        -   `5 - 3` evaluates to `2`.
+    -   *(Internal functions: `Multiply`, `Divide`, `Mod`, `Plus`, `Minus`)*
 
--   **`Minus(a: Integer, b: Integer) => Integer`**
-    -   Description: Returns the difference of two Integers.
-    -   Example: `Minus(5, 3)` evaluates to `2`.
+### 2.3. Bitwise Shift Operators
 
--   **`Multiply(a: Integer, b: Integer) => Integer`**
-    -   Description: Returns the product of two Integers.
-    -   Example: `Multiply(5, 3)` evaluates to `15`.
+These operators work on Integer operands.
 
--   **`Divide(a: Integer, b: Integer) => Integer`**
-    -   Description: Returns the quotient of two Integers.
-    -   Error: Causes a runtime error if `b` is `0`.
-    -   Example: `Divide(15, 3)` evaluates to `5`.
+-   **Bitwise Left Shift (`<<`)**: `a << b`
+-   **Bitwise Right Shift (`>>`)**: `a >> b` (Arithmetic shift)
+-   **Bitwise Unsigned Right Shift (`>>>`)**: `a >>> b` (Logical shift, treats `a` as unsigned)
+    -   Operands: `a` (value to shift) and `b` (number of positions) must be Integers.
+    -   Return Type: Integer.
+    -   Examples:
+        -   `1 << 2` evaluates to `4`.
+        -   `-8 >> 1` evaluates to `-4`.
+        -   `ShiftRightUnsigned(-8, 1)` (evaluates to `(-8 as u64) >> 1`, a large positive number).
+        -   `8 >>> 1` evaluates to `4`. (Same as `8 >> 1` for positive numbers).
+    -   *(Internal functions: `ShiftLeft`, `ShiftRight`, `ShiftRightUnsigned`)*
 
--   **`Mod(a: Integer, b: Integer) => Integer`**
-    -   Description: Returns the remainder of the division of `a` by `b`.
-    -   Error: Causes a runtime error if `b` is `0`.
-    -   Example: `Mod(15, 4)` evaluates to `3`.
+### 2.4. Comparison Operators
 
--   **`BitAnd(a: Integer, b: Integer) => Integer`**
-    -   Description: Returns the bitwise AND of two Integers.
-    -   Example: `BitAnd(5, 3)` (binary `101 & 011`) evaluates to `1`.
+These operators compare two values. For `==` and `!=`, if types are different, they return `false` and `true` respectively. For other comparison operators, operands are typically expected to be of the same compatible type (Integer, String).
 
--   **`BitOr(a: Integer, b: Integer) => Integer`**
-    -   Description: Returns the bitwise OR of two Integers.
-    -   Example: `BitOr(5, 3)` (binary `101 | 011`) evaluates to `7`.
+-   **Less Than (`<`)**: `a < b`
+-   **Less Than Or Equal (`<=`)**: `a <= b`
+-   **Greater Than (`>`)**: `a > b`
+-   **Greater Than Or Equal (`>=`)**: `a >= b`
+-   **Equality (`==`)**: `a == b`
+-   **Inequality (`!=`)**: `a != b`
+    -   Operands: `a` and `b` can be of type Any.
+    -   Return Type: Boolean.
+    -   Examples:
+        -   `5 > 3` evaluates to `true`.
+        -   `"apple" == "apple"` evaluates to `true`.
+        -   `5 == "5"` evaluates to `false` (different types).
+        -   `5 != "5"` evaluates to `true`.
+    -   *(Internal functions: `Lesser`, `LesserOrEqual`, `Greater`, `GreaterOrEqual`, `Equal`, `NotEqual`)*
 
--   **`BitXor(a: Integer, b: Integer) => Integer`**
-    -   Description: Returns the bitwise XOR of two Integers.
-    -   Example: `BitXor(5, 3)` (binary `101 ^ 011`) evaluates to `6`.
+### 2.5. Regex Operators
 
--   **`ShiftLeft(a: Integer, b: Integer) => Integer`**
-    -   Description: Returns `a` bitwise shifted left by `b` positions.
-    -   Example: `ShiftLeft(1, 2)` evaluates to `4`.
-
--   **`ShiftRight(a: Integer, b: Integer) => Integer`**
-    -   Description: Returns `a` bitwise shifted right by `b` positions (arithmetic shift).
-    -   Example: `ShiftRight(-8, 1)` evaluates to `-4`.
-
--   **`ShiftRightUnsigned(a: Integer, b: Integer) => Integer`**
-    -   Description: Returns `a` bitwise shifted right by `b` positions (logical shift, treats `a` as unsigned for the shift operation).
-    -   Example: `ShiftRightUnsigned(-8, 1)` (evaluates to `(-8 as u64) >> 1`, a large positive number). `ShiftRightUnsigned(16, 2)` evaluates to `4`.
-
-### 2.4. Comparison Functions (Primarily Used via Operators)
-
-These functions underpin the comparison operators (`>`, `>=`, `<`, `<=`, `==`, `!=`). They typically expect arguments of the same type (Integer, String, or Boolean) for meaningful comparison.
-
--   **`Greater(a: Any, b: Any) => Boolean`**
--   **`GreaterOrEqual(a: Any, b: Any) => Boolean`**
--   **`Lesser(a: Any, b: Any) => Boolean`**
--   **`LesserOrEqual(a: Any, b: Any) => Boolean`**
--   **`Equal(a: Any, b: Any) => Boolean`**
-    -   Returns `false` if `a` and `b` are of different types. Otherwise, compares values.
--   **`NotEqual(a: Any, b: Any) => Boolean`**
-    -   Returns `true` if `a` and `b` are of different types. Otherwise, compares values.
-
-### 2.5. String and Regex Functions
-
--   **`Like(text: String, pattern: String) => Boolean`**
-    -   Description: Performs a regular expression match. Returns `true` if `text` matches the regex `pattern`.
+-   **Regex Match (`=~`)**: `text =~ pattern`
+    -   Operands: `text` (String) and `pattern` (String, a valid regex).
+    -   Description: Returns `true` if `text` matches the regex `pattern`.
     -   Error: If `pattern` is an invalid regex.
-    -   Example: `Like("hello world", "h.llo")` evaluates to `true`.
+    -   Example: `"hello" =~ "^h"` evaluates to `true`.
+    -   *(Internal function: `Like`)*
 
--   **`NotLike(text: String, pattern: String) => Boolean`**
+-   **Regex Not Match (`!~`)**: `text !~ pattern`
+    -   Operands: `text` (String) and `pattern` (String, a valid regex).
     -   Description: Returns `true` if `text` does not match the regex `pattern`.
     -   Error: If `pattern` is an invalid regex.
-    -   Example: `NotLike("hello world", "h.llo")` evaluates to `false`.
+    -   Example: `"hello" !~ "^h"` evaluates to `false`.
+    -   *(Internal function: `NotLike`)*
 
--   **`ToString(value: Any) => String`**
+### 2.6. Membership Operator
+
+-   **Member Of (`_:`)**: `element _: list`
+    -   Operands: `element` (Any) and `list` (Array).
+    -   Description: Checks if `element` is present in the `list`. Requires `element` to be of the same type as the elements in `list`.
+    -   Example: `2 _: [1, 2, 3]` evaluates to `true`.
+    -   *(Internal function: `IsMemberOf`)*
+
+### 2.7. Bitwise Logical Operators
+
+These operators work on Integer operands.
+
+-   **Bitwise AND (`&`)**: `a & b`
+-   **Bitwise XOR (`^`)**: `a ^ b`
+-   **Bitwise OR (`|`)**: `a | b`
+    -   Operands: `a` and `b` must be Integers.
+    -   Return Type: Integer.
+    -   Examples:
+        -   `5 & 3` (binary `101 & 011`) evaluates to `1`.
+        -   `5 ^ 3` (binary `101 ^ 011`) evaluates to `6`.
+        -   `5 | 3` (binary `101 | 011`) evaluates to `7`.
+    -   *(Internal functions: `BitAnd`, `BitXor`, `BitOr`)*
+
+### 2.8. Logical Operators
+
+These operators work on Boolean operands. They also have keyword aliases (`and`, `or`, `xor`).
+*(Note: The standard library implementations currently evaluate both operands before performing the logical operation, so they do not short-circuit.)*
+
+-   **Logical AND (`&&` or `and`)**: `a && b` or `a and b`
+-   **Logical XOR (`^^` or `xor`)**: `a ^^ b` or `a xor b` (Note: `xor` alias might not be standard, `^^` is primary)
+-   **Logical OR (`||` or `or`)**: `a || b` or `a or b`
+    -   Operands: `a` and `b` must be Booleans.
+    -   Return Type: Boolean.
+    -   Examples:
+        -   `true && false` evaluates to `false`.
+        -   `true or false` evaluates to `true`.
+    -   *(Internal functions: `And`, `Xor`, `Or`)*
+
+### 2.9. Built-in Functions
+
+These functions are called by their names and do not have direct operator syntax.
+
+-   **`to_string(value: Any) => String`**
     -   Description: Converts any Milu value to its string representation.
     -   Examples:
-        -   `ToString(123)` evaluates to `"123"`.
-        -   `ToString(true)` evaluates to `"true"`.
-        -   `ToString([1, 2])` evaluates to `"[1,2]"`.
-        -   `ToString((1, "a"))` evaluates to `"(1,"a")"`.
+        -   `to_string(123)` evaluates to `"123"`.
+        -   `to_string(true)` evaluates to `"true"`.
+        -   `to_string([1, 2])` evaluates to `"[1,2]"`.
+        -   `to_string((1, "a"))` evaluates to `"(1,"a")"`.
 
--   **`ToInteger(value: String) => Integer`**
+-   **`to_integer(value: String) => Integer`**
     -   Description: Converts a string representation of an integer to an Integer type.
     -   Error: If the string cannot be parsed into an integer.
-    -   Example: `ToInteger("123")` evaluates to `123`.
+    -   Example: `to_integer("123")` evaluates to `123`.
 
--   **`Split(text: String, delimiter: String) => Array[String]`**
+-   **`split(text: String, delimiter: String) => Array[String]`**
     -   Description: Splits the `text` string by the `delimiter` string and returns an array of substrings.
     -   Examples:
-        -   `Split("a,b,c", ",")` evaluates to `["a", "b", "c"]`.
-        -   `Split("apple", "")` evaluates to `["", "a", "p", "p", "l", "e", ""]` (behavior of Rust's split by empty string).
+        -   `split("a,b,c", ",")` evaluates to `["a", "b", "c"]`.
+        -   `split("apple", "")` evaluates to `["", "a", "p", "p", "l", "e", ""]`.
 
--   **`StringConcat(parts: Array[String]) => String`**
-    -   Description: Concatenates an array of strings into a single string.
-    -   Example: `StringConcat(["hello", " ", "world"])` evaluates to `"hello world"`.
-
-### 2.6. Array/Collection Functions
-
--   **`IsMemberOf(element: Any, list: Array) => Boolean`**
-    -   Description: Checks if `element` is present in the `list`. Requires `element` to be of the same type as the elements in `list`.
-    -   Example: `IsMemberOf(2, [1, 2, 3])` evaluates to `true`.
-    -   Example: `1 _: [1,2,3]` (using the `_:` operator)
-
-### 2.7. Context-Specific Functions (e.g., for Rule Filters)
-
-These functions might be provided by the specific environment embedding Milu.
+-   **`strcat(parts: Array[String]) => String`**
+    -   Description: Concatenates an array of strings into a single string. Useful with template strings or `Split`.
+    -   Example: `strcat(["hello", " ", "world"])` evaluates to `"hello world"`.
 
 -   **`cidr_match(ip_address: String, cidr_pattern: String) => Boolean`**
-    -   Description: Checks if the given `ip_address` (string) falls within the specified `cidr_pattern` (string, e.g., "192.168.1.0/24").
+    -   Description: (Context-Specific, e.g., for Rule Filters) Checks if the given `ip_address` (string) falls within the specified `cidr_pattern` (string, e.g., "192.168.1.0/24").
     -   Returns `false` if IP address or CIDR pattern is invalid.
     -   Example: `cidr_match(request.source.host, "192.168.0.0/16")`
 
-*(Note: The functions `And`, `Or`, `Xor` are implemented in stdlib but are typically invoked via their corresponding operators `&&`/`and`, `||`/`or`, `^^`/`xor`. Similarly, comparison functions are used via operators like `==`, `>`, etc. The internal functions `Index`, `Access`, `If`, `Scope` are also invoked via corresponding syntax (`[]`, `.`, `if/?:`, `let in`) rather than direct calls by name.)*
+*(Note: Some internal stdlib function names like `Index`, `Access`, `If`, `Scope` correspond to syntactic constructs (`[]`, `.`, `if/?:`, `let in`) and are not called directly by these names.)*
 
 ## Part 3: Practical Examples
 
@@ -448,7 +483,7 @@ If using `format: {script: "..."}` for `accessLog` in `config.yaml`.
             if request.connector != "" then ", Connector: " + request.connector else ""
         ]
     in
-        StringConcat(log_parts)
+        strcat(log_parts)
     ```
     *Output Example (if `request.connector` is set):*
     `[TODO_GET_TIMESTAMP_FUNCTION] Source: 10.1.1.10:54321, Target: api.example.com:443, TargetType: domain, Listener: https_listener, Connector: upstream_proxy`
