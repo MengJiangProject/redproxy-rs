@@ -72,7 +72,7 @@ impl Display for Type {
 
 #[async_trait]
 pub trait Evaluatable {
-    fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error>;
+    async fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error>; // Made async
     async fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error>;
 }
 
@@ -82,29 +82,32 @@ pub trait Indexable {
     fn get(&self, index: i64) -> Result<Value, Error>;
 }
 
+#[async_trait]
 pub trait Accessible {
     fn names(&self) -> Vec<&str>;
-    fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error>;
+    async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error>; // Made async
     fn get(&self, name: &str) -> Result<Value, Error>;
 }
 
 #[async_trait]
 pub trait Callable {
     // should not return Any
-    fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error>;
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error>; // Made async
     async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error>;
     fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) { // Changed &self to &'s self
         args.iter().for_each(|v| v.unresovled_ids(ids))
     }
 }
 
+#[async_trait]
 impl Accessible for HashMap<String, Value> {
     fn names(&self) -> Vec<&str> {
         self.keys().map(String::as_str).collect()
     }
 
-    fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error> {
-        Accessible::get(self, name).and_then(|x| x.type_of(ctx))
+    async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+        let val = Accessible::get(self, name)?; // get remains sync
+        val.type_of(ctx).await // type_of on Value is async
     }
 
     fn get(&self, name: &str) -> Result<Value, Error> {
@@ -237,8 +240,9 @@ pub struct ParsedFunction {
     pub body: Value,
 }
 
+#[async_trait] // Ensure async_trait is here
 impl Callable for UserDefinedFunction {
-    fn signature(&self, _ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+    async fn signature(&self, _ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> { // Made async
         if args.len() != self.arg_names.len() {
             bail!(
                 "expected {} arguments, got {}",
@@ -398,11 +402,11 @@ impl Value {
         matches!(self, Self::Identifier(..))
     }
 
-    pub fn real_type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
-        let t = self.type_of(ctx.clone())?;
+    pub async fn real_type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+        let t = self.type_of(ctx.clone()).await?; // Added await, removed block_on
         if let Type::NativeObject(o) = t {
             if let Some(e) = o.as_evaluatable() {
-                e.type_of(ctx)
+                e.type_of(ctx).await? // Added await, removed block_on
             } else {
                 Ok(Type::NativeObject(o))
             }
@@ -429,24 +433,28 @@ impl Value {
 
 #[async_trait]
 impl Evaluatable for Value {
-    fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
+    async fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
         tracing::trace!("type_of={}", self);
         use Value::*;
         match self {
             String(_) => Ok(Type::String),
             Boolean(_) => Ok(Type::Boolean),
             Integer(_) => Ok(Type::Integer),
-            Identifier(id) => ctx.lookup(id).and_then(|x| x.type_of(ctx)),
-            OpCall(x) => x.signature(ctx),
+            Identifier(id) => {
+                let val = ctx.lookup(id)?;
+                val.type_of(ctx).await
+            }
+            OpCall(x) => x.signature(ctx).await,
             Array(a) => {
                 if a.is_empty() {
                     Ok(Type::Array(Box::new(Type::Any)))
                 } else {
-                    let t = a[0].real_type_of(ctx.clone())?;
-                    a.iter().try_for_each(|x| {
-                        let xt = x.real_type_of(ctx.clone())?;
+                    // Now that real_type_of is async, this loop needs to be async.
+                    let t = a[0].real_type_of(ctx.clone()).await?;
+                    for x_val in a.iter().skip(1) { // Start from skip(1) as a[0] is already processed
+                        let xt = x_val.real_type_of(ctx.clone()).await?;
                         if xt != t {
-                            bail!("array member must have same type: required type={:?}, mismatch type={} item={:?}", t, xt, x)
+                            bail!("array member must have same type: required type={:?}, mismatch type={} item={:?}", t, xt, x_val)
                         } else {
                             Ok(())
                         }
@@ -456,8 +464,9 @@ impl Evaluatable for Value {
             }
             Tuple(t) => {
                 let mut ret = Vec::with_capacity(t.len());
-                for x in t.iter() {
-                    ret.push(x.type_of(ctx.clone())?)
+                for x_val in t.iter() { // Changed to allow break/return for Result
+                    // This type_of call is now async.
+                    ret.push(x_val.type_of(ctx.clone()).await?)
                 }
                 Ok(Type::Tuple(ret))
             }
@@ -659,17 +668,17 @@ impl Call {
         let func = args.remove(0);
         Self { func, args }
     }
-    fn signature(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
+    async fn signature(&self, ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
         // TODO: This should be async too
-        let resolved_func = tokio_test::block_on(self.func(ctx.clone()))?; // block_on for sync context
+        let resolved_func = self.func(ctx.clone()).await?; // Used await
         match resolved_func {
             ResolvedFunction::Native(native_ref) => {
                 native_ref.as_callable()
                     .ok_or_else(|| err_msg("Internal error: NativeObject marked callable but as_callable is None"))?
-                    .signature(ctx, &self.args)
+                    .signature(ctx, &self.args).await // Added await
             }
             ResolvedFunction::User(udf_ref) => {
-                udf_ref.signature(ctx, &self.args)
+                udf_ref.signature(ctx, &self.args).await // Added await
             }
         }
     }
@@ -966,12 +975,13 @@ ${to_string(1+2)}` "#,
         }
     }
 
+    #[async_trait]
     impl Accessible for (String, u32) {
         fn names(&self) -> Vec<&str> {
             vec!["length", "x"]
         }
 
-        fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
+        async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
             match name {
                 "length" | "x" => Ok(Type::Integer),
                 _ => bail!("no such property"),
@@ -1006,9 +1016,9 @@ ${to_string(1+2)}` "#,
         }
     }
 
-    #[async_trait] // Ensure async_trait is here
+    #[async_trait]
     impl Evaluatable for (String, u32) {
-        fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
+        async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
             Ok(Type::String)
         }
 
@@ -1026,11 +1036,12 @@ ${to_string(1+2)}` "#,
             Some(self)
         }
     }
+    #[async_trait]
     impl Accessible for TestNativeSimple {
         fn names(&self) -> Vec<&str> {
             vec!["valid_prop"]
         }
-        fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
+        async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
             if name == "valid_prop" { Ok(Type::Integer) } else { bail!("no such property") }
         }
         fn get(&self, name: &str) -> Result<Value, Error> {
@@ -1045,9 +1056,10 @@ ${to_string(1+2)}` "#,
             Some(self)
         }
     }
+    #[async_trait]
     impl Accessible for TestNativeFailingAccess {
         fn names(&self) -> Vec<&str> { vec!["prop_that_fails"] }
-        fn type_of(&self, _name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { Ok(Type::Integer) }
+        async fn type_of(&self, _name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { Ok(Type::Integer) } // Made async
         fn get(&self, name: &str) -> Result<Value, Error> {
             bail!("native error on get for {}", name)
         }

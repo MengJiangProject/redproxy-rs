@@ -72,7 +72,7 @@ macro_rules! function {
         $crate::function_head!($name ($($aname : $atype),+) => $rtype);
         #[async_trait]
         impl Callable for $name {
-            fn signature(
+            async fn signature( // Made async
                 &self,
                 $ctx: ScriptContextRef,
                 args: &[Value],
@@ -113,7 +113,7 @@ macro_rules! function {
 function_head!(Index(obj: Any, index: Any) => Any);
 #[async_trait]
 impl Callable for Index {
-    fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> { // Made async
         let obj = &args[0];
         let index = &args[1];
         if index.type_of(ctx.clone())? != Type::Integer {
@@ -149,8 +149,8 @@ impl Callable for Index {
 function_head!(Access(obj: Any, index: Any) => Any);
 #[async_trait]
 impl Callable for Access {
-    fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
-        fn accessible(
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> { // Made async
+        async fn accessible( // Made async
             ctx: ScriptContextRef,
             obj: &dyn Accessible,
             index: &Value,
@@ -160,10 +160,10 @@ impl Callable for Access {
             } else {
                 bail!("Can not access a NativeObject with: {:?}", index)
             };
-            obj.type_of(index, ctx)
+            obj.type_of(index, ctx).await // Added await
         }
 
-        fn tuple(_ctx: ScriptContextRef, obj: Type, index: &Value) -> Result<Type, Error> {
+        async fn tuple(_ctx: ScriptContextRef, obj: Type, index: &Value) -> Result<Type, Error> {
             let index = if let Value::Integer(index) = index {
                 index
             } else {
@@ -178,21 +178,21 @@ impl Callable for Access {
 
         let obj = &args[0];
         // if obj is an identifier, we need to resolve it from context
-        let objt = obj.type_of(ctx.clone())?;
+        let objt = obj.type_of(ctx.clone()).await?; // Added .await as Value::type_of is async
         trace!("obj={:?} objt={:?}", obj, objt);
         // index is always a literal value, either identifier or integer
         let index = &args[1];
-        if let Type::NativeObject(obj) = objt {
-            if let Some(obj) = obj.as_accessible() {
-                accessible(ctx, obj, index)
-            } else if let Some(obj) = obj.as_evaluatable() {
-                let obj = obj.type_of(ctx.clone())?;
-                tuple(ctx, obj, index)
+        if let Type::NativeObject(obj_arc) = objt {
+            if let Some(acc_obj) = obj_arc.as_accessible() {
+                accessible(ctx, acc_obj, index).await
+            } else if let Some(eval_obj) = obj_arc.as_evaluatable() {
+                let inner_obj_type = eval_obj.type_of(ctx.clone()).await?; // Added .await
+                tuple(ctx, inner_obj_type, index).await
             } else {
                 bail!("NativeObject not accessible or tuple")
             }
         } else if let Type::Tuple(_) = objt {
-            tuple(ctx, objt, index)
+            tuple(ctx, objt, index).await // Added await
         } else {
             bail!("Object {:?} is not Tuple nor Accessible", obj)
         }
@@ -259,10 +259,10 @@ impl Callable for Access {
 function_head!(If(cond: Boolean, yes: Any, no: Any) => Any);
 #[async_trait]
 impl Callable for If {
-    fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> { // Made async
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
-            targs.push(x.type_of(ctx.clone())?);
+            targs.push(x.type_of(ctx.clone())?); // This might need .await
         }
         args!(targs, cond, yes, no);
         if Type::Boolean != cond {
@@ -302,8 +302,11 @@ impl std::hash::Hash for ScopeBinding {
     }
 }
 
+#[async_trait] // Ensure async_trait is here
 impl Evaluatable for ScopeBinding {
-    fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
+    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+        // If self.value.type_of becomes async, this will need .await
+        // For now, assuming self.value.type_of is still effectively sync or blocks if it calls async code
         self.value.type_of(self.ctx.clone())
     }
 
@@ -402,10 +405,13 @@ impl Scope {
         Ok(new_ctx_arc)
     }
 }
+// Note: #[async_trait] was already on `impl Scope` which is fine.
+// We are modifying `impl Callable for Scope` which is separate.
+#[async_trait]
 impl Callable for Scope {
-    fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
-        let ctx = Self::make_context(args[0].as_vec(), ctx)?;
-        let expr = args[1].type_of(ctx)?;
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> { // Made async
+        let fn_ctx = Self::make_context(args[0].as_vec(), ctx)?; // Renamed ctx to fn_ctx
+        let expr = args[1].type_of(fn_ctx)?; // This might need .await
         Ok(expr)
     }
     async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
@@ -479,10 +485,10 @@ impl Callable for Scope {
 function_head!(IsMemberOf(a: Any, ary: Array) => Boolean);
 #[async_trait]
 impl Callable for IsMemberOf {
-    fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> { // Made async
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
-            targs.push(x.type_of(ctx.clone())?);
+            targs.push(x.type_of(ctx.clone())?); // This might need .await
         }
         args!(targs, a, ary);
         let ary_type = if let Type::Array(inner_type) = ary {
@@ -680,6 +686,7 @@ mod tests {
     // use super::super::*;
     use super::*;
     use crate::script::Value; // Ensure Value is in scope for macro usage if not already.
+    use tokio_test::block_on; // Added use
 
     macro_rules! op_test {
         ($name:ident, $fn:ident, [ $($in:expr),+ ] , $out:expr) => {
@@ -697,7 +704,7 @@ mod tests {
                 assert_eq!(expected_type, actual_type_result.unwrap(), "Type mismatch for {}", stringify!($name));
                 
                 // Test call (value evaluation)
-                let actual_value_result = tokio_test::block_on(func_call_val.value_of(ctx));
+                let actual_value_result = block_on(func_call_val.value_of(ctx)); // Changed to just block_on
                 assert!(actual_value_result.is_ok(), "Value evaluation failed for {}: {:?}", stringify!($name), actual_value_result.err().unwrap());
                 assert_eq!(actual_value_result.unwrap(), expected_output_val, "Value mismatch for {}", stringify!($name));
             }
@@ -714,7 +721,7 @@ mod tests {
                 // Check if signature catches the error (type error)
                 let type_result = func_call_val.type_of(ctx.clone());
                 
-                let value_result = tokio_test::block_on(func_call_val.value_of(ctx));
+                let value_result = block_on(func_call_val.value_of(ctx)); // Changed to just block_on
 
                 let error_message = match (type_result, value_result) {
                     (Err(type_err), _) => { // If type_of fails, that's the primary error
