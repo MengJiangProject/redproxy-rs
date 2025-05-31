@@ -60,7 +60,7 @@ where
 {
     // Use tag to match "${" literally. If this passes, then cut.
     preceded(
-        nom::bytes::streaming::tag("${"), 
+        nom::bytes::streaming::tag("${"),
         nom::combinator::cut(nom::sequence::terminated(super::op_0, char('}')))
     )(input)
 }

@@ -328,10 +328,18 @@ rule!(op_index -> (Span<'a>,Vec<Value>), {
     )
 });
 
+// New helper rule for signed integers specifically for property/tuple access
+rule!(signed_integer_for_access -> Value, {
+    map_res(
+        recognize(pair(opt(char('-')), decimal)),
+        |s: Span| s.fragment().parse::<i64>().map(Value::Integer)
+    )
+});
+
 rule!(op_access -> (Span<'a>,Vec<Value>), {
     map(
-        preceded(tag("."), alt((identifier,integer))),
-        |id| (Span::new("access"), vec![id])
+        preceded(tag("."), alt((identifier, signed_integer_for_access))),
+        |val| (Span::new("access"), vec![val]) // val can be Identifier or Integer
     )
 });
 
@@ -967,7 +975,7 @@ mod tests {
     #[test]
     fn test_comment_eof_after_spaces() {
         assert_ast("1 + 1   # comment", plus!(int!(1), int!(1)));
-        assert_ast("1 /* comment */ ", int!(1)); 
+        assert_ast("1 /* comment */ ", int!(1));
     }
 
 

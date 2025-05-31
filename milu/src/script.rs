@@ -121,16 +121,35 @@ impl Indexable for Vec<Value> {
     }
 
     fn get(&self, index: i64) -> Result<Value, Error> {
-        let index_val: Result<usize, std::num::TryFromIntError> = if index >= 0 { 
-            index.try_into()
+        let len = self.len();
+        let final_idx: usize;
+
+        if index >= 0 {
+            final_idx = index as usize;
         } else {
-            (-index).try_into().map(|i: usize| self.len() - i)
-        };
-        let i: usize = index_val.context("failed to cast index from i64")?; 
-        if i >= self.len() {
-            bail!("index out of bounds: {}", i)
+            // Negative index: calculate from the end.
+            if len == 0 { // Cannot use negative index on empty array
+                bail!("index out of bounds: array is empty, len is 0, index was {}", index);
+            }
+            // index = -1 means last element (len - 1)
+            // index = -len means first element (0)
+            if let Some(positive_offset) = index.checked_neg().and_then(|val| usize::try_from(val).ok()) {
+                if positive_offset > len {
+                    bail!("index out of bounds: negative index {} is too large for array of len {}", index, len);
+                }
+                final_idx = len - positive_offset;
+            } else {
+                // This case handles index = i64::MIN which cannot be negated.
+                bail!("index out of bounds: invalid negative index {}", index);
+            }
         }
-        Ok(self[i].clone())
+
+        if final_idx >= len { // Combined check for positive and resolved negative indices
+            // Match the error message format expected by tests like test_index_out_of_bounds_array
+            // Using the original index in the error message is more user-friendly.
+            bail!("index out of bounds: {}", index);
+        }
+        Ok(self[final_idx].clone())
     }
 }
 
@@ -446,16 +465,10 @@ impl Evaluatable for Value {
     fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
         tracing::trace!("value_of={}", self);
         match self {
-            Self::Identifier(id) => ctx.lookup(id).and_then(|x| x.value_of(ctx)), // This recursively calls value_of
+            Self::Identifier(id) => ctx.lookup(id).and_then(|x| x.value_of(ctx)),
             Self::OpCall(f) => f.call(ctx),
-            Self::NativeObject(o) => {
-                if let Some(e) = o.as_evaluatable() {
-                    e.value_of(ctx) // Call the evaluatable's value_of
-                } else {
-                    Ok(self.clone()) // Not evaluatable, return self
-                }
-            }
-            _ => Ok(self.clone()), // Other literals
+            // NativeObject and other literals return self.clone(); real_value_of handles unwrapping evaluatables.
+            _ => Ok(self.clone()),
         }
     }
 }

@@ -209,16 +209,23 @@ impl Callable for Access {
             ret.value_of(ctx)
         }
 
-        fn tuple(ctx: ScriptContextRef, obj: Value, index: &Value) -> Result<Value, Error> {
-            let index = if let Value::Integer(index) = index {
-                index
+        fn tuple(ctx: ScriptContextRef, obj: Value, index_val: &Value) -> Result<Value, Error> {
+            let idx_i64 = if let Value::Integer(i) = index_val {
+                *i
             } else {
-                bail!("Can not access a tuple with: {}", index)
+                bail!("Can not access a tuple with: {:?} - index must be an integer", index_val)
             };
             if let Value::Tuple(t) = obj {
-                t[*index as usize].value_of(ctx)
+                let t_len = t.len();
+                // Bounds check
+                if idx_i64 < 0 || (idx_i64 as usize) >= t_len {
+                    // Match the error message format that array tests expect for "index out of bounds: <index>"
+                    bail!("index out of bounds: {}", idx_i64);
+                }
+                let final_idx_usize = idx_i64 as usize;
+                t[final_idx_usize].value_of(ctx)
             } else {
-                bail!("Can not access type: {}", obj)
+                bail!("Can not access type: {:?} - expected a Tuple", obj)
             }
         }
 
@@ -396,8 +403,9 @@ impl Callable for Scope {
         Ok(expr)
     }
     fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
-        let ctx = Self::make_context(args[0].as_vec(), ctx)?;
-        args[1].value_of(ctx)
+        let new_scope_ctx = Self::make_context(args[0].as_vec(), ctx)?;
+        // Use real_value_of to ensure the result of the 'in' expression is fully unwrapped
+        args[1].real_value_of(new_scope_ctx)
     }
 
     fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], main_output_ids: &mut HashSet<&'o Value>) {
@@ -515,22 +523,24 @@ function!(Negative(b:Integer)=>Integer, {
 macro_rules! int_op_div_mod {
     ($name:ident, $op:tt) => {
         function!($name(a: Integer, b: Integer) => Integer, {
-            let a: i64 = a.try_into()?;
-            let b: i64 = b.try_into()?;
-            if b == 0 {
+            // 'a' and 'b' are Value::Integer from args! macro, or Value::Any if type check is loose
+            // try_into() is on Value itself.
+            let a_val: i64 = a.clone().try_into().map_err(|_| err_msg(format!("type mismatch: expected Integer for LHS, got {:?}", a)))?;
+            let b_val: i64 = b.clone().try_into().map_err(|_| err_msg(format!("type mismatch: expected Integer for RHS, got {:?}", b)))?;
+            if b_val == 0 {
                 bail!("division by zero");
             }
-            Ok((a $op b).into())
+            Ok((a_val $op b_val).into())
         });
     }
 }
 
-macro_rules! int_op{
-    ($name:ident, $op:tt) =>{
-        function!($name(a: Integer, b: Integer)=>Integer, {
-            let a:i64 = a.try_into()?;
-            let b:i64 = b.try_into()?;
-            Ok((a $op b).into())
+macro_rules! int_op {
+    ($name:ident, $op:tt) => {
+        function!($name(a: Integer, b: Integer) => Integer, {
+            let a_val: i64 = a.clone().try_into().map_err(|_| err_msg(format!("type mismatch: expected Integer for LHS, got {:?}", a)))?;
+            let b_val: i64 = b.clone().try_into().map_err(|_| err_msg(format!("type mismatch: expected Integer for RHS, got {:?}", b)))?;
+            Ok((a_val $op b_val).into())
         });
     }
 }
