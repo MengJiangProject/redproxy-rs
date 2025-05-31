@@ -9,7 +9,6 @@ use rustyline::{Cmd, CompletionType, Config, Context, EditMode, Editor, KeyEvent
 use rustyline_derive::Helper;
 use std::borrow::Cow::{self, Borrowed, Owned};
 use std::path::PathBuf;
-use tokio;
 
 use milu::parser;
 use milu::script::Evaluatable;

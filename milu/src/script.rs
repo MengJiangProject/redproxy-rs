@@ -917,13 +917,13 @@ mod tests {
     #[tokio::test] // Already async due to eval_test
     async fn scope() {
         type_test("let a=1;b=2 in a+b", Type::Integer).await;
-        eval_test!("let a=1;b=2 in a+b", Value::Integer(3).into());
+        eval_test!("let a=1;b=2 in a+b", Value::Integer(3));
     }
 
     #[tokio::test] // Already async due to eval_test
     async fn access_tuple() {
         type_test("(1,\"2\",false).1", Type::String).await;
-        eval_test!("(1,\"2\",false).1", Value::String("2".to_string()).into());
+        eval_test!("(1,\"2\",false).1", Value::String("2".to_string()));
     }
 
     #[tokio::test] // Already async due to eval_test
@@ -931,7 +931,7 @@ mod tests {
         type_test(r#" strcat(["1","2",to_string(3)]) "#, Type::String).await;
         eval_test!(
             r#" strcat(["1","2",to_string(3)]) "#,
-            Value::String("123".to_string()).into()
+            Value::String("123".to_string())
         );
     }
 
@@ -941,7 +941,7 @@ mod tests {
         eval_test!(
             r#" `x=
 ${to_string(1+2)}` "#,
-            Value::String("x=\n3".to_string()).into()
+            Value::String("x=\n3".to_string())
         );
     }
 
