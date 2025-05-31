@@ -19,7 +19,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - uses: actions/cache@v4
         with:
           path: |
@@ -29,11 +29,12 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-v2
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt,clippy
 
-      - run: |
-          rustup component add clippy
-          rustup component add rustfmt
-      - run: cargo fmt --all -- --check
+      - name: Rustfmt Check
+        uses: actions-rust-lang/rustfmt@v1
       - run: cargo check --workspace
       - run: cargo clippy --all-features -- -D warnings
       - run: cargo test --workspace --all-features
@@ -45,6 +46,7 @@ jobs:
           name: redproxy-rs_debug_${{github.sha}}
           path: target/debug/redproxy-rs
 
+
   build-corss:
     needs: build-dev
     name: ${{ matrix.job.os }} (${{ matrix.job.target }})
@@ -53,21 +55,9 @@ jobs:
       fail-fast: false
       matrix:
         job:
-          # - { os: ubuntu-20.04, target: arm-unknown-linux-gnueabihf , use-cross: true }
-          # - { os: ubuntu-20.04, target: arm-unknown-linux-musleabihf, use-cross: true }
-          - {
-              os: ubuntu-latest,
-              target: aarch64-unknown-linux-gnu,
-              use-cross: true,
-            }
-          # - { os: ubuntu-20.04, target: i686-unknown-linux-gnu      , use-cross: true }
-          # - { os: ubuntu-20.04, target: i686-unknown-linux-musl     , use-cross: true }
+          - {os: ubuntu-latest, target: aarch64-unknown-linux-gnu, use-cross: true }
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
-          # - { os: ubuntu-20.04, target: x86_64-unknown-linux-musl   , use-cross: true }
           - { os: macos-latest, target: x86_64-apple-darwin }
-          # - { os: windows-2019, target: i686-pc-windows-gnu         }  ## disabled; error: linker `i686-w64-mingw32-gcc` not found
-          # - { os: windows-2019, target: i686-pc-windows-msvc        }
-          # - { os: windows-2019, target: x86_64-pc-windows-gnu       }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     steps:
       - name: Checkout source code
@@ -105,7 +95,7 @@ jobs:
       - name: Install cross
         if: ${{ matrix.job.use-cross }}
         shell: bash
-        run: cargo install cross
+        run: cargo install cross --force
 
       - name: Show version information (Rust, cargo, GCC)
         shell: bash
@@ -198,3 +188,22 @@ jobs:
             ${{ steps.package.outputs.PKG_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependabot:
+    needs: [build-corss] # <-- important!
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    if: ${{ github.actor == 'dependabot[bot]' && github.event_name == 'pull_request'}}
+    steps:
+      - id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+      - run: |
+          gh pr review --approve "$PR_URL"
+          gh pr merge --squash --auto "$PR_URL"
+        env:
+          PR_URL: ${{github.event.pull_request.html_url}}
+          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}

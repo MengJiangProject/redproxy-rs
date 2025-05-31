@@ -57,8 +57,8 @@ fn default_inline_udp() -> bool {
     false
 }
 
-pub fn from_value(value: &serde_yaml::Value) -> Result<ConnectorRef, Error> {
-    let ret: QuicConnector = serde_yaml::from_value(value.clone()).context("parse config")?;
+pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef, Error> {
+    let ret: QuicConnector = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
 }
 

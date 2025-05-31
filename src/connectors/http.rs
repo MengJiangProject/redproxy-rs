@@ -24,8 +24,8 @@ pub struct HttpConnector {
     tls: Option<TlsClientConfig>,
 }
 
-pub fn from_value(value: &serde_yaml::Value) -> Result<ConnectorRef, Error> {
-    let ret: HttpConnector = serde_yaml::from_value(value.clone()).context("parse config")?;
+pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef, Error> {
+    let ret: HttpConnector = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
 }
 

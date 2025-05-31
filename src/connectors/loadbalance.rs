@@ -28,7 +28,7 @@ pub struct LoadBalanceConnector {
     #[serde(
         alias = "algo",
         default,
-        with = "serde_yaml::with::singleton_map_recursive"
+        with = "serde_yaml_ng::with::singleton_map_recursive"
     )]
     algorithm: Algorithm,
 
@@ -59,9 +59,9 @@ impl Default for Algorithm {
     }
 }
 
-pub fn from_value(value: &serde_yaml::Value) -> Result<ConnectorRef, Error> {
+pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef, Error> {
     let ret: LoadBalanceConnector =
-        serde_yaml::from_value(value.clone()).context("parse config")?;
+        serde_yaml_ng::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
 }
 

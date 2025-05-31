@@ -44,8 +44,8 @@ fn default_socks_version() -> u8 {
     5
 }
 
-pub fn from_value(value: &serde_yaml::Value) -> Result<ConnectorRef, Error> {
-    let ret: SocksConnector = serde_yaml::from_value(value.clone()).context("parse config")?;
+pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef, Error> {
+    let ret: SocksConnector = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
 }
 

@@ -30,8 +30,8 @@ fn default_bbr() -> bool {
     true
 }
 
-pub fn from_value(value: &serde_yaml::Value) -> Result<Box<dyn Listener>, Error> {
-    let ret: QuicListener = serde_yaml::from_value(value.clone()).context("parse config")?;
+pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>, Error> {
+    let ret: QuicListener = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
 }
 

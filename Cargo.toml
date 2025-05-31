@@ -1,6 +1,6 @@
 [package]
 name = "redproxy-rs"
-version = "0.9.0"
+version = "0.9.1"
 authors = ["Bearice Ren <bearice@icybear.net>"]
 edition = "2021"
 default-run = "redproxy-rs"
@@ -17,7 +17,7 @@ embedded-ui = ["metrics"]
 
 [dependencies]
 milu = { path = "milu" }
-tokio = { version = "1.25.0", features = ["full"] }
+tokio = { version = "1.45.1", features = ["full"] }
 tokio-rustls = { version="0.26" }
 rustls = {version = "0.23"}
 tokio-util = {version="0.7", features = ["full"]}
@@ -30,14 +30,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 yaml-rust = "0.4"
 serde = { version = "1.0", features = ["derive","rc"] }
-serde_yaml = "0.9"
+serde_yaml_ng = "0.10"
 serde_json = "1.0"
 clap = "4.5"
 futures = "0.3.25"
 cidr = "0.3"
 rand = "0.9"
 libc = "0.2"
-trust-dns-resolver = "0.23"
+hickory-resolver = "0.25"
 chashmap-async = "0.1.0"
 lru = "0.14"
 

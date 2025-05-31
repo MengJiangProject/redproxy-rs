@@ -4,14 +4,15 @@ use std::{
 };
 
 use easy_error::{err_msg, Error, ResultExt};
+use hickory_resolver::{
+    config::{NameServerConfig, ResolverConfig, ResolverOpts},
+    name_server::TokioConnectionProvider,
+    proto::xfer::Protocol,
+    system_conf::read_system_conf,
+    Resolver,
+};
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
-use trust_dns_resolver::{
-    config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts},
-    name_server::TokioConnectionProvider,
-    system_conf::read_system_conf,
-    AsyncResolver,
-};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DnsConfig {
@@ -19,7 +20,7 @@ pub struct DnsConfig {
     #[serde(default)]
     pub family: AddressFamily,
     #[serde(skip)]
-    resolver: Option<Arc<AsyncResolver<TokioConnectionProvider>>>,
+    resolver: Option<Arc<Resolver<TokioConnectionProvider>>>,
 }
 
 impl Default for DnsConfig {
@@ -44,7 +45,11 @@ pub enum AddressFamily {
 impl DnsConfig {
     pub fn init(&mut self) -> Result<(), Error> {
         let config = Self::parse_servers(&self.servers)?;
-        self.resolver = Some(Arc::new(AsyncResolver::tokio(config.0, config.1)));
+        self.resolver = Some(Arc::new(
+            Resolver::builder_with_config(config.0, TokioConnectionProvider::default())
+                .with_options(config.1)
+                .build(),
+        ));
         Ok(())
     }
 
@@ -70,6 +75,7 @@ impl DnsConfig {
                     tls_dns_name: None,
                     bind_addr: None,
                     trust_negative_responses: true,
+                    http_endpoint: None,
                 });
             }
             Ok((config, ResolverOpts::default()))

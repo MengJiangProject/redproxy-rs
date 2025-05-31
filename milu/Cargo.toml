@@ -13,7 +13,7 @@ async-trait = "0.1"
 
 [dev-dependencies]
 clap = "4.5"
-rustyline = "13.0.0"
+rustyline = "16"
 rustyline-derive = "0.11"
 nix = {version = "0.30",features = ["fs"]}
 tokio-test = "0.4"

@@ -41,7 +41,7 @@ impl Config {
     pub async fn load(path: &str) -> Result<Self, Error> {
         let s = tokio::fs::read(path).await.context("read file")?;
         let s = String::from_utf8(s).context("parse utf8")?;
-        serde_yaml::from_str(&s).context("parse yaml")
+        serde_yaml_ng::from_str(&s).context("parse yaml")
     }
 }
 
