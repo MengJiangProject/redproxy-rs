@@ -9,8 +9,6 @@ use crate::metrics::MetricsServer;
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
-    pub api_version: String,
-    pub kind: String,
     pub listeners: serde_yaml::Sequence,
     pub connectors: serde_yaml::Sequence,
     pub rules: serde_yaml::Sequence,
