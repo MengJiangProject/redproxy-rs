@@ -72,7 +72,6 @@ impl GlobalState {
         }
         None
     }
-
 }
 #[tokio::main]
 async fn main() -> Result<(), Terminator> {

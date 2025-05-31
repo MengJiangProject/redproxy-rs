@@ -49,7 +49,8 @@ impl Accessible for ContextAdaptor {
         }
     }
 
-    async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+    async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error> {
+        // Made async
         match name {
             "listener" | "connector" | "feature" => Ok(Type::String),
             "target" | "source" => self.get(name)?.type_of(ctx).await, // Added await
@@ -87,7 +88,8 @@ impl NativeObject for TargetAddress {
 
 #[async_trait]
 impl Evaluatable for TargetAddress {
-    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
+        // Made async
         Ok(Type::String)
     }
 
@@ -111,7 +113,8 @@ impl Accessible for TargetAddress {
         }
     }
 
-    async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+    async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
+        // Made async
         match name {
             "host" | "port" | "type" => Ok(Type::String),
             _ => bail!("undefined"),
@@ -154,7 +157,8 @@ impl NativeObject for SocketAddress {
 
 #[async_trait]
 impl Evaluatable for SocketAddress {
-    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
+        // Made async
         Ok(Type::String)
     }
 
@@ -178,7 +182,8 @@ impl Accessible for SocketAddress {
         }
     }
 
-    async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> { // Made async
+    async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
+        // Made async
         match name {
             "host" | "port" | "type" => Ok(Type::String),
             _ => bail!("undefined"),

@@ -137,7 +137,12 @@ impl LoadBalanceConnector {
         ctx: &ContextRef,
     ) -> Result<Arc<dyn Connector>, Error> {
         let ctx = create_context(ctx.read().await.props().clone());
-        let result = self.hash_by.as_ref().unwrap().real_value_of(ctx.into()).await?;
+        let result = self
+            .hash_by
+            .as_ref()
+            .unwrap()
+            .real_value_of(ctx.into())
+            .await?;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         use std::hash::Hasher;
         result.hash(&mut hasher);

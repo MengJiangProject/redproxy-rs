@@ -2,6 +2,7 @@ use easy_error::{Error, ResultExt};
 use serde::{Deserialize, Serialize};
 
 use crate::access_log::AccessLog;
+use serde_yaml_ng::Sequence;
 
 #[cfg(feature = "metrics")]
 use crate::metrics::MetricsServer;
@@ -9,9 +10,9 @@ use crate::metrics::MetricsServer;
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
-    pub listeners: serde_yaml::Sequence,
-    pub connectors: serde_yaml::Sequence,
-    pub rules: serde_yaml::Sequence,
+    pub listeners: Sequence,
+    pub connectors: Sequence,
+    pub rules: Sequence,
     #[cfg(feature = "metrics")]
     pub metrics: Option<MetricsServer>,
     pub access_log: Option<AccessLog>,
