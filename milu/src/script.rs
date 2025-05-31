@@ -455,10 +455,9 @@ impl Evaluatable for Value {
                         let xt = x_val.real_type_of(ctx.clone()).await?;
                         if xt != t {
                             bail!("array member must have same type: required type={:?}, mismatch type={} item={:?}", t, xt, x_val)
-                        } else {
-                            Ok(())
                         }
-                    })?;
+                        // No Ok(()) needed here, bail! handles errors. Loop continues if types match.
+                    }
                     Ok(Type::Array(Box::new(t)))
                 }
             }
@@ -791,19 +790,27 @@ mod tests {
 
     fn type_test(input: &str, output: Type) {
         let ctx = Default::default();
-        let value = parse(input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", input, e));
-        let value = value.type_of(ctx).unwrap();
-        assert_eq!(value, output);
+        let parsed_value = parse(input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", input, e));
+        // Value::type_of is now async, so we need to block_on it here.
+        let value_type = tokio::runtime::Runtime::new().unwrap().block_on(parsed_value.type_of(ctx)).unwrap();
+        assert_eq!(value_type, output);
     }
 
-    #[tokio::test]
-    async fn one_plus_one() { // Added async
+    // Tests that call eval_test! are already #[tokio::test] async fn.
+    // Tests that *only* call type_test still need to be updated if type_test itself becomes async
+    // or if they need to run in an async context for other reasons (not the case here as type_test blocks).
+    // However, since type_test now *internally* blocks, the calling test functions do not *need* to be async
+    // unless they also use eval_test! or other async code.
+    // For consistency and future-proofing if type_test were to become async itself, making them async is fine.
+
+    #[tokio::test] // Already async due to eval_test
+    async fn one_plus_one() {
         type_test("1+1", Type::Integer);
         eval_test!("1+1", Value::Integer(2).into());
     }
 
-    #[tokio::test]
-    async fn to_string() { // Added async
+    #[tokio::test] // Already async due to eval_test
+    async fn to_string() {
         type_test("to_string(100*2)", Type::String);
         eval_test!("to_string(100*2)", Value::String("200".to_string()).into());
     }
@@ -823,8 +830,8 @@ mod tests {
         assert!(unresovled_ids.contains(&Value::Identifier("c".into())), "Test 2 failed: expected 'c' to be unresolved");
     }
 
-    #[tokio::test]
-    async fn arrays() { // Added async
+    #[tokio::test] // Already async due to eval_test
+    async fn arrays() {
         type_test("[1,2,3]", Type::array_of(Type::Integer));
         eval_test!(
             "[if 1>2||1==1 then 1*1 else 99,2*2,3*3,to_integer(\"4\")][0]",
@@ -832,17 +839,18 @@ mod tests {
         )
     }
 
-    #[test]
-    fn array_type() {
+    #[tokio::test] // Make async due to direct call to type_of
+    async fn array_type() {
         let input = "[1,\"true\",false]";
         let ctx = Default::default();
-        let value = parse(input).unwrap().type_of(ctx);
+        let parsed_value = parse(input).unwrap();
+        let value_type_result = parsed_value.type_of(ctx).await; // Added await
         // println!("t={:?}", value); // Keep this commented out
-        assert!(value.is_err());
+        assert!(value_type_result.is_err());
     }
 
     #[tokio::test]
-    async fn ctx_chain() { // Added async
+    async fn ctx_chain() {
         let ctx: ScriptContextRef = Default::default();
         let ctx2_instance = ScriptContext::new(Some(ctx)); // Create instance first
         ctx2_instance.set("a".into(), 1.into());           // Call set on the instance
@@ -851,26 +859,26 @@ mod tests {
         assert_eq!(value, 2.into());
     }
 
-    #[tokio::test]
-    async fn scope() { // Added async
+    #[tokio::test] // Already async due to eval_test
+    async fn scope() {
         type_test("let a=1;b=2 in a+b", Type::Integer);
         eval_test!("let a=1;b=2 in a+b", Value::Integer(3).into());
     }
 
-    #[tokio::test]
-    async fn access_tuple() { // Added async
+    #[tokio::test] // Already async due to eval_test
+    async fn access_tuple() {
         type_test("(1,\"2\",false).1", Type::String);
         eval_test!("(1,\"2\",false).1", Value::String("2".to_string()).into());
     }
 
-    #[tokio::test]
-    async fn strcat() { // Added async
+    #[tokio::test] // Already async due to eval_test
+    async fn strcat() {
         type_test(r#" strcat(["1","2",to_string(3)]) "#, Type::String);
         eval_test!(r#" strcat(["1","2",to_string(3)]) "#, Value::String("123".to_string()).into());
     }
 
-    #[tokio::test]
-    async fn template() { // Added async
+    #[tokio::test] // Already async due to eval_test
+    async fn template() {
         type_test(r#" `x=${to_string(1+2)}` "#, Type::String);
         eval_test!(
             r#" `x=
@@ -879,18 +887,18 @@ ${to_string(1+2)}` "#,
         );
     }
 
-    #[tokio::test]
-    async fn native_objects() { // Added async
+    #[tokio::test] // Already async
+    async fn native_objects() {
         let ctx_instance = ScriptContext::new(Some(Default::default()));
         ctx_instance.set("a".into(), ("xx".to_owned(), 1).into());
         let ctx_arc: ScriptContextRef = Arc::new(ctx_instance);
-        let value = parse("a.length+1+a.x") // Removed block_on, using await directly
+        let value = parse("a.length+1+a.x")
             .unwrap()
             .value_of(ctx_arc.clone())
             .await
             .unwrap();
         assert_eq!(value, 4.into());
-        let value = parse("a[a.x] > 200 ? a : \"yy\"") // Removed block_on, using await directly
+        let value = parse("a[a.x] > 200 ? a : \"yy\"")
             .unwrap()
             .value_of(ctx_arc)
             .await
@@ -898,56 +906,56 @@ ${to_string(1+2)}` "#,
         assert_eq!(value, "yy".into());
     }
 
-    #[tokio::test]
-    async fn eval_simple_function_call() { // Added async
+    #[tokio::test] // Already async
+    async fn eval_simple_function_call() {
         eval_test!("let f(a) = a + 1 in f(5)", Value::Integer(6));
         type_test("let f(a) = a + 1 in f(5)", Type::Integer); 
     }
 
-    #[tokio::test]
-    async fn eval_function_multiple_args() { // Added async
+    #[tokio::test] // Already async
+    async fn eval_function_multiple_args() {
         eval_test!("let add(x, y) = x + y in add(3, 4)", Value::Integer(7));
         type_test("let add(x, y) = x + y in add(3, 4)", Type::Integer);
     }
 
-    #[tokio::test]
-    async fn eval_function_no_args() { // Added async
+    #[tokio::test] // Already async
+    async fn eval_function_no_args() {
         eval_test!("let get_num() = 42 in get_num()", Value::Integer(42));
         type_test("let get_num() = 42 in get_num()", Type::Integer);
     }
 
-    #[tokio::test]
-    async fn eval_closure_lexical_scoping() { // Added async
+    #[tokio::test] // Already async
+    async fn eval_closure_lexical_scoping() {
         eval_test!("let x = 10; f(a) = a + x in f(5)", Value::Integer(15));
         type_test("let x = 10; f(a) = a + x in f(5)", Type::Integer);
         eval_test!("let x = 10; f() = x * 2 in f()", Value::Integer(20));
         type_test("let x = 10; f() = x * 2 in f()", Type::Integer);
     }
 
-    #[tokio::test]
-    async fn eval_closure_arg_shadows_outer_scope() { // Added async
+    #[tokio::test] // Already async
+    async fn eval_closure_arg_shadows_outer_scope() {
         eval_test!("let x = 10; f(x) = x + 1 in f(5)", Value::Integer(6));
         type_test("let x = 10; f(x) = x + 1 in f(5)", Type::Integer);
     }
 
-    #[tokio::test]
-    async fn eval_closure_inner_let_shadows_outer_scope() { // Added async
+    #[tokio::test] // Already async
+    async fn eval_closure_inner_let_shadows_outer_scope() {
         eval_test!("let x = 10; f() = (let x = 5 in x + 1) in f()", Value::Integer(6)); 
         type_test("let x = 10; f() = (let x = 5 in x + 1) in f()", Type::Integer);
         eval_test!("let x = 10; f() = (let y = 5 in x + y) in f()", Value::Integer(15)); 
         type_test("let x = 10; f() = (let y = 5 in x + y) in f()", Type::Integer);
     }
 
-    #[tokio::test]
-    async fn eval_recursive_function_factorial() { // Added async
+    #[tokio::test] // Already async
+    async fn eval_recursive_function_factorial() {
         eval_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)", Value::Integer(6));
         type_test("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)", Type::Integer);
         eval_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)", Value::Integer(1));
         type_test("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)", Type::Integer);
     }
 
-    #[tokio::test]
-    async fn eval_mutually_recursive_functions() { // Added async
+    #[tokio::test] // Already async
+    async fn eval_mutually_recursive_functions() {
         let script_even = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_even(4)"; 
         eval_test!(script_even, Value::Boolean(true));
         type_test(script_even, Type::Integer);
@@ -957,8 +965,8 @@ ${to_string(1+2)}` "#,
         type_test(script_odd, Type::Integer);
     }
     
-    #[tokio::test]
-    async fn eval_function_uses_another_in_same_block() { // Added async
+    #[tokio::test] // Already async
+    async fn eval_function_uses_another_in_same_block() {
         eval_test!("let g() = 10; f(a) = a + g() in f(5)", Value::Integer(15)); 
         type_test("let g() = 10; f(a) = a + g() in f(5)", Type::Integer);
     }

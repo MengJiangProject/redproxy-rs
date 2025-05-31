@@ -80,7 +80,7 @@ macro_rules! function {
             {
                 let mut targs : Vec<Type> = Vec::with_capacity(args.len());
                 for x in args {
-                    let t = x.real_type_of($ctx.clone())?;
+                    let t = x.real_type_of($ctx.clone()).await?; // Added await
                     targs.push(t);
                 }
                 $crate::args!(targs, $($aname),+);
@@ -113,21 +113,21 @@ macro_rules! function {
 function_head!(Index(obj: Any, index: Any) => Any);
 #[async_trait]
 impl Callable for Index {
-    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> { // Made async
-        let obj = &args[0];
-        let index = &args[1];
-        if index.type_of(ctx.clone())? != Type::Integer {
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+        let obj_val = &args[0]; // Renamed obj to obj_val to avoid conflict
+        let index_val = &args[1]; // Renamed index to index_val
+        if index_val.type_of(ctx.clone()).await? != Type::Integer { // Added await
             bail!("Index not a integer type")
-        } else if let Value::NativeObject(nobj) = obj {
+        } else if let Value::NativeObject(nobj) = obj_val { // Used obj_val
             if let Some(idx) = nobj.as_indexable() {
-                idx.type_of_member(ctx)
+                idx.type_of_member(ctx).await // Added await
             } else {
                 bail!("NativeObject not in indexable")
             }
-        } else if let Type::Array(t) = obj.type_of(ctx)? {
+        } else if let Type::Array(t) = obj_val.type_of(ctx).await? { // Used obj_val, added await
             Ok(*t)
         } else {
-            bail!("Object does not implement Indexable: {:?}", obj)
+            bail!("Object does not implement Indexable: {:?}", obj_val) // Used obj_val
         }
     }
     async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
@@ -259,10 +259,10 @@ impl Callable for Access {
 function_head!(If(cond: Boolean, yes: Any, no: Any) => Any);
 #[async_trait]
 impl Callable for If {
-    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> { // Made async
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
-            targs.push(x.type_of(ctx.clone())?); // This might need .await
+            targs.push(x.type_of(ctx.clone()).await?); // Added await
         }
         args!(targs, cond, yes, no);
         if Type::Boolean != cond {
@@ -409,9 +409,9 @@ impl Scope {
 // We are modifying `impl Callable for Scope` which is separate.
 #[async_trait]
 impl Callable for Scope {
-    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> { // Made async
-        let fn_ctx = Self::make_context(args[0].as_vec(), ctx)?; // Renamed ctx to fn_ctx
-        let expr = args[1].type_of(fn_ctx)?; // This might need .await
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+        let fn_ctx = Self::make_context(args[0].as_vec(), ctx)?;
+        let expr = args[1].type_of(fn_ctx).await?; // Added await
         Ok(expr)
     }
     async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
@@ -485,10 +485,10 @@ impl Callable for Scope {
 function_head!(IsMemberOf(a: Any, ary: Array) => Boolean);
 #[async_trait]
 impl Callable for IsMemberOf {
-    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> { // Made async
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
-            targs.push(x.type_of(ctx.clone())?); // This might need .await
+            targs.push(x.type_of(ctx.clone()).await?); // Added await
         }
         args!(targs, a, ary);
         let ary_type = if let Type::Array(inner_type) = ary {
