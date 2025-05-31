@@ -42,7 +42,7 @@ pub struct GlobalState {
 impl GlobalState {
     async fn set_rules(&self, mut rules: Vec<Arc<Rule>>) -> Result<(), Error> {
         for r in rules.iter_mut() {
-            Arc::get_mut(r).unwrap().init()?;
+            Arc::get_mut(r).unwrap().init().await?;
         }
 
         let connectors = &self.connectors;
@@ -61,6 +61,16 @@ impl GlobalState {
     }
     async fn rules(&self) -> RwLockReadGuard<'_, Vec<Arc<Rule>>> {
         self.rules.read().await
+    }
+    async fn eval_rules(&self, ctx: &ContextRef) -> Option<Arc<dyn Connector>> {
+        let ctx = &ctx.clone().read_owned().await;
+        let rules = self.rules().await;
+        for rule in rules.iter() {
+            if rule.evaluate(ctx).await {
+                return rule.target.clone();
+            }
+        }
+        None
     }
 }
 #[tokio::main]
@@ -177,27 +187,10 @@ async fn main() -> Result<(), Terminator> {
 }
 
 async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
-    let connector = {
-        let ctx = &ctx.clone().read_owned().await;
-        state.rules().await.iter().find_map(|x| {
-            if x.evaluate(ctx) {
-                Some(x.target.clone())
-            } else {
-                None
-            }
-        })
-    };
+    let connector = state.eval_rules(&ctx).await;
 
-    // Outer Option is None means no filter matches request, thus implicitly denial
     if connector.is_none() {
-        info!("implicitly denied: {}", ctx.to_string().await);
-        return ctx.on_error(err_msg("access denied")).await;
-    }
-    let connector = connector.unwrap();
-
-    // Inner Option is None means matching rule is explicitly denial
-    if connector.is_none() {
-        info!("explicitly denied: {}", ctx.to_string().await);
+        info!("denied: {}", ctx.to_string().await);
         return ctx.on_error(err_msg("access denied")).await;
     }
     let connector = connector.unwrap();

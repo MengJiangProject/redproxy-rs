@@ -29,46 +29,49 @@ enum Format {
     Script(String),
 }
 impl Format {
-    fn create(&self) -> Result<Box<dyn Formater>, Error> {
+    async fn create(&self) -> Result<Box<dyn Formater>, Error> {
         match self {
             Self::Json => Ok(Box::new(JsonFormater)),
-            Self::Script(s) => Ok(Box::new(ScriptFormater::new(s)?)),
+            Self::Script(s) => Ok(Box::new(ScriptFormater::new(s).await?)),
             // _ => bail!("not implemented"),
         }
     }
 }
 
+#[async_trait::async_trait]
 trait Formater: Send + Sync {
-    fn to_string(&self, e: Arc<ContextProps>) -> Result<String, Error>;
+    async fn to_string(&self, e: Arc<ContextProps>) -> Result<String, Error>;
 }
 
 struct JsonFormater;
+#[async_trait::async_trait]
 impl Formater for JsonFormater {
-    fn to_string(&self, e: Arc<ContextProps>) -> Result<String, Error> {
+    async fn to_string(&self, e: Arc<ContextProps>) -> Result<String, Error> {
         serde_json::to_string(&e).context("deserializer failure")
     }
 }
 
 struct ScriptFormater(Value);
 impl ScriptFormater {
-    fn new(s: &str) -> Result<Self, Error> {
+    async fn new(s: &str) -> Result<Self, Error> {
         let value = parse(s).context("fail to compile")?;
         let ctx: Arc<ScriptContext> = create_context(Default::default()).into();
-        let rtype = value.type_of(ctx.clone())?;
+        let rtype = value.type_of(ctx.clone()).await?;
         ensure!(
             rtype == Type::String,
             "log script type mismatch: required string, got {}\nsnippet: {}",
             rtype,
             s
         );
-        value.value_of(ctx)?;
+        value.value_of(ctx).await?;
         Ok(Self(value))
     }
 }
+#[async_trait::async_trait]
 impl Formater for ScriptFormater {
-    fn to_string(&self, e: Arc<ContextProps>) -> Result<String, Error> {
+    async fn to_string(&self, e: Arc<ContextProps>) -> Result<String, Error> {
         let ctx = create_context(e);
-        self.0.value_of(ctx.into())?.try_into()
+        self.0.value_of(ctx.into()).await?.try_into()
     }
 }
 
@@ -87,7 +90,7 @@ impl AccessLog {
         drop(log_open(&path).await?);
         let (tx, rx) = channel(100);
         self.tx = Some(tx.clone());
-        let format = self.format.create()?;
+        let format = self.format.create().await?;
         tokio::spawn(
             log_thread(format, rx, path).unwrap_or_else(|e| panic!("{} cause: {:?}", e, e.cause)),
         );
@@ -133,7 +136,7 @@ async fn log_thread(
     loop {
         let e = rx.recv().await.ok_or_else(|| err_msg("dequeue"))?;
         if let Some(e) = e {
-            let mut line = format.to_string(e).context("deserializer error")?;
+            let mut line = format.to_string(e).await.context("deserializer error")?;
             line += "\r\n";
             stream
                 .write(line.as_bytes())

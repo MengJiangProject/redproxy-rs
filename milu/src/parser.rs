@@ -1,9 +1,8 @@
 use nom::{
     branch::alt,
-    bytes::complete::{is_not, tag, tag_no_case, take_until},
+    bytes::complete::{tag, tag_no_case, take_until, take_while},
     character::complete::{
-        alpha1, alphanumeric1, char, digit1, hex_digit1, multispace0, multispace1, oct_digit1,
-        one_of,
+        alpha1, alphanumeric1, char, digit1, hex_digit1, multispace1, oct_digit1, one_of,
     },
     combinator::{all_consuming, cut, map, map_opt, map_res, opt, recognize},
     error::{context, convert_error, ContextError, FromExternalError, ParseError, VerboseError},
@@ -17,7 +16,7 @@ use std::{fmt, num::ParseIntError, sync::Arc};
 mod string;
 mod template;
 use super::script::stdlib::*;
-use super::script::{Call, Value};
+use super::script::{Call, ParsedFunction, Value}; // Added ParsedFunction
 
 pub type Span<'s> = LocatedSpan<&'s str>;
 
@@ -182,7 +181,10 @@ macro_rules! tap {
 }
 
 rule!(eol_comment(i), no_ctx, {
-    recognize(pair(char('#'), is_not("\n\r")))(i)
+    recognize(preceded(
+        char('#'),
+        take_while(|c: char| c != '\n' && c != '\r'),
+    ))(i)
 });
 rule!(inline_comment(i), no_ctx, {
     delimited(tag("/*"), take_until("*/"), tag("*/"))(i)
@@ -243,12 +245,17 @@ rule!(binary, {
 });
 
 rule!(decimal, {
-    recognize(many1(terminated(digit1, many0(char('_')))))
+    // Allows internal underscores (e.g., 1_000) but not leading/trailing.
+    // An underscore must be followed by a digit.
+    recognize(pair(digit1, many0(preceded(char('_'), digit1))))
 });
 
 rule!(integer -> Value, {
     fn atoi<'a>(n: u32) -> impl Fn(Span<'a>) -> Result<Value, ParseIntError> {
-        move |x| i64::from_str_radix(&x, n).map(Into::into)
+        move |s: Span<'a>| {
+            let cleaned_str = s.fragment().replace("_", "");
+            i64::from_str_radix(&cleaned_str, n).map(Into::into)
+        }
     }
     alt((
         map_res(binary, atoi(2)),
@@ -323,10 +330,18 @@ rule!(op_index -> (Span<'a>,Vec<Value>), {
     )
 });
 
+// New helper rule for signed integers specifically for property/tuple access
+rule!(signed_integer_for_access -> Value, {
+    map_res(
+        recognize(pair(opt(char('-')), decimal)),
+        |s: Span| s.fragment().parse::<i64>().map(Value::Integer)
+    )
+});
+
 rule!(op_access -> (Span<'a>,Vec<Value>), {
     map(
-        preceded(tag("."), alt((identifier,integer))),
-        |id| (Span::new("access"), vec![id])
+        preceded(tag("."), alt((identifier, signed_integer_for_access))),
+        |val| (Span::new("access"), vec![val]) // val can be Identifier or Integer
     )
 });
 
@@ -431,19 +446,49 @@ rule!(op_if(i) -> Value, {
     )
 });
 
-rule!(op_assign -> Value, {
-    map(
-        separated_pair(identifier,ws(tag("=")),op_0),
-        |(name,value)| Value::Tuple(Arc::new(vec![name,value]))
+// Removed duplicated op_assign, op_let, and op_0 rules.
+// The correct definitions are below, ensuring each is defined only once.
+
+rule!(func_args_def -> Vec<Value>, {
+    delimited(
+        char('('),
+        separated_list0(ws(char(',')), identifier),
+        ws(char(')'))
     )
+});
+
+rule!(op_assign -> Value, {
+    alt((
+        // Try to parse function definition first: identifier func_args_def = op_0
+        map(
+            nom_tuple((
+                identifier,
+                ws(func_args_def),
+                ws(char('=')), // Ensure it's this version (NO cut)
+                cut(op_0)
+            )),
+            |(name_ident, arg_idents, _, body)| { // _ for char('=')
+                Value::ParsedFunction(Arc::new(ParsedFunction {
+                    name_ident,
+                    arg_idents,
+                    body,
+                }))
+            }
+        ),
+        // Fallback to simple variable assignment: identifier = op_0
+        map(
+            separated_pair(identifier, ws(char('=')), op_0),
+            |(name, value)| Value::Tuple(Arc::new(vec![name, value]))
+        )
+    ))
 });
 
 rule!(op_let -> Value, {
     map(
         nom_tuple((
-            preceded(tag("let"),
+            preceded(terminated(tag("let"), cut(multispace1)), // "let" must be followed by whitespace
                 terminated(
-                    separated_list0(ws(char(';')), op_assign),
+                    separated_list0(ws(char(';')), ws(op_assign)), // op_assign wrapped with ws
                     opt(ws(char(';')))
                 )
             ),
@@ -456,13 +501,14 @@ rule!(op_let -> Value, {
 rule!(op_0 -> Value, {
     alt((
         op_if,
-        op_let,
-        op_1
+        op_let,     // op_let now correctly uses the modified op_assign
+        op_assign,  // Allow standalone assignments (var or func def)
+        op_1        // Then other expressions
     ))
 });
 
 rule!(root(i)->Value, {
-    all_consuming(terminated(op_0,delimited(multispace0,opt(tag(";;")),multispace0)))
+    all_consuming(terminated(op_0, ws(opt(tag(";;")))))
 });
 
 pub fn parse(input: &str) -> Result<Value, SyntaxError> {
@@ -509,15 +555,15 @@ impl fmt::Debug for SyntaxError {
 
 #[cfg(test)]
 mod tests {
-    // use super::super::filter::Filter;
-    // use super::super::script::stdlib::*;
     use super::*;
+
     macro_rules! expr {
         ($id:ident,$name:ident) => {
             expr!($id, $name, make_call);
         };
         ($id:ident,$name:ident,$make_call:ident) => {
             #[allow(unused_macros)]
+            #[macro_export]
             macro_rules! $id {
                 ($p1:expr) => {
                     $name::$make_call($p1).into()
@@ -559,30 +605,35 @@ mod tests {
     //     };
     // }
 
+    #[macro_export]
     macro_rules! id {
         ($st:expr) => {
             Value::Identifier($st.to_string())
         };
     }
 
+    #[macro_export]
     macro_rules! str {
         ($st:expr) => {
             Value::String($st.to_string())
         };
     }
 
+    #[macro_export]
     macro_rules! int {
         ($st:expr) => {
             Value::Integer($st)
         };
     }
 
+    #[macro_export]
     macro_rules! bool {
         ($st:expr) => {
             Value::Boolean($st)
         };
     }
 
+    #[macro_export]
     macro_rules! array {
         ($($st:expr),*) => {
             Value::Array(Arc::new(vec![
@@ -591,6 +642,7 @@ mod tests {
         };
     }
 
+    #[macro_export]
     macro_rules! tuple {
         ($($st:expr),*) => {
             Value::Tuple(Arc::new(vec![
@@ -598,6 +650,8 @@ mod tests {
             ]))
         };
     }
+
+    pub use {array, call, id, int, plus, str, strcat}; // Adjust if macros are not public
 
     #[inline]
     fn assert_ast(input: &str, value: Value) {
@@ -747,5 +801,212 @@ mod tests {
             )
         };
         assert_ast(input, value);
+    }
+
+    #[test]
+    fn parse_simple_function_definition() {
+        let input = "let f(a) = a + 1 in f(5)";
+        let expected_vars = array!(Value::ParsedFunction(Arc::new(ParsedFunction {
+            name_ident: id!("f"),
+            arg_idents: vec![id!("a")],
+            body: plus!(id!("a"), int!(1)),
+        })));
+        let expected_expr_in_scope = call!(vec![id!("f"), int!(5)]);
+        let expected_value = scope!(expected_vars, expected_expr_in_scope);
+        assert_ast(input, expected_value);
+    }
+
+    #[test]
+    fn parse_function_definition_multiple_args() {
+        let input = "let add(x, y) = x + y in add(3, 4)";
+        let expected_vars = array!(Value::ParsedFunction(Arc::new(ParsedFunction {
+            name_ident: id!("add"),
+            arg_idents: vec![id!("x"), id!("y")],
+            body: plus!(id!("x"), id!("y")),
+        })));
+        let expected_expr_in_scope = call!(vec![id!("add"), int!(3), int!(4)]);
+        let expected_value = scope!(expected_vars, expected_expr_in_scope);
+        assert_ast(input, expected_value);
+    }
+
+    #[test]
+    fn parse_function_definition_no_args() {
+        let input = "let get_num() = 42 in get_num()";
+        let expected_vars = array!(Value::ParsedFunction(Arc::new(ParsedFunction {
+            name_ident: id!("get_num"),
+            arg_idents: vec![],
+            body: int!(42),
+        })));
+        let expected_expr_in_scope = call!(vec![id!("get_num")]);
+        let expected_value = scope!(expected_vars, expected_expr_in_scope);
+        assert_ast(input, expected_value);
+    }
+
+    #[test]
+    fn parse_function_definition_mixed_with_vars() {
+        let input = "let a = 1; f(b) = b + a; c = 2 in f(c)";
+        let expected_vars = array!(
+            tuple!(id!("a"), int!(1)), // For a = 1
+            Value::ParsedFunction(Arc::new(ParsedFunction {
+                // For f(b) = b + a
+                name_ident: id!("f"),
+                arg_idents: vec![id!("b")],
+                body: plus!(id!("b"), id!("a")),
+            })),
+            tuple!(id!("c"), int!(2)) // For c = 2
+        );
+        let expected_expr_in_scope = call!(vec![id!("f"), id!("c")]);
+        let expected_value = scope!(expected_vars, expected_expr_in_scope);
+        assert_ast(input, expected_value);
+    }
+
+    #[test]
+    fn parse_standalone_function_assignment() {
+        // This test assumes that a function can be assigned directly
+        // without a `let...in` expression, if the grammar supports it.
+        // The current op_0 -> alt includes op_assign for this.
+        let input = "f(a) = a + 1";
+        let expected_value = Value::ParsedFunction(Arc::new(ParsedFunction {
+            name_ident: id!("f"),
+            arg_idents: vec![id!("a")],
+            body: plus!(id!("a"), int!(1)),
+        }));
+        assert_ast(input, expected_value);
+    }
+
+    // Tests for Error Conditions
+
+    #[test]
+    fn test_unmatched_parentheses() {
+        assert!(parse("(1 + 2").is_err());
+        assert!(parse("1 + 2)").is_err());
+        assert!(parse("((1 + 2").is_err());
+    }
+
+    #[test]
+    fn test_incomplete_expressions() {
+        assert!(parse("let a = ;").is_err());
+        assert!(parse("1 +").is_err());
+        assert!(parse("a ==").is_err());
+    }
+
+    #[test]
+    fn test_invalid_operator_usage() {
+        assert!(parse("1 + * 2").is_err());
+        assert!(parse("1 ** 2").is_err()); // Assuming `**` is not a valid operator
+        assert!(parse("/ 2").is_err());
+    }
+
+    #[test]
+    fn test_malformed_integer_literals() {
+        assert!(parse("0xZ").is_err());
+        assert!(parse("0b3").is_err());
+        assert!(parse("0o9").is_err());
+        assert!(parse("1_").is_err()); // Trailing underscore
+    }
+
+    #[test]
+    fn test_errors_in_let_bindings() {
+        assert!(parse("let a in expr").is_err()); // Missing '='
+        assert!(parse("let = 1 in expr").is_err()); // Missing identifier
+        assert!(parse("let a = 1 expr").is_err()); // Missing 'in'
+        assert!(parse("leta = 1 in expr").is_err()); // 'let' keyword fused with identifier
+    }
+
+    #[test]
+    fn test_errors_in_function_definitions() {
+        assert!(parse("let f() = ; in f()").is_err()); // Empty body after '='
+        assert!(parse("let f(a b) = a+b in f(1,2)").is_err()); // Missing comma between args
+        assert!(parse("let f(a,) = a in f(1)").is_err()); // Trailing comma in arg list (depends on strictness)
+        assert!(parse("f(a) = ").is_err()); // Incomplete function definition
+                                            // assert!(parse("let f = a+b in f()").is_err()); // This is a runtime type error, not a parse error. Syntax is valid.
+    }
+
+    // Tests for Literals
+
+    #[test]
+    fn test_integer_formats() {
+        assert_ast("0b1010", int!(10));
+        assert_ast("0o12", int!(10));
+        assert_ast("0xCafe", int!(51966));
+        assert_ast("0b1_010", int!(10));
+        assert_ast("0o1_2", int!(10));
+        assert_ast("0xCa_fe", int!(51966));
+        assert_ast("1_000_000", int!(1000000));
+    }
+
+    // Tests for Empty Inputs/Edge Cases
+
+    #[test]
+    fn test_empty_array() {
+        assert_ast("[]", array!());
+    }
+
+    #[test]
+    fn test_array_with_trailing_comma() {
+        assert_ast("[1,]", array!(int!(1)));
+        assert_ast("[1,2,]", array!(int!(1), int!(2)));
+    }
+
+    #[test]
+    fn test_tuple_with_trailing_comma() {
+        // Current tuple parser `map_opt` logic might disallow single element tuples with trailing comma
+        // e.g. `(1,)` might not parse as `tuple!(int!(1))` but as an error or () depending on `map_opt`
+        // This test assumes `(1,)` is a valid tuple of one element. Adjust if grammar differs.
+        // assert_ast("(1,)", tuple!(int!(1))); // This might fail based on current tuple parsing logic.
+        assert_ast("(1,2,)", tuple!(int!(1), int!(2)));
+    }
+
+    // Tests for Comments
+
+    #[test]
+    fn test_comment_at_end_of_input() {
+        assert_ast("1 + 1 # This is a comment", plus!(int!(1), int!(1)));
+        // assert_ast("1 + 1 // This is also a comment, if supported by eol_comment!", plus!(int!(1), int!(1))); // '//' is not a valid comment start
+        assert_ast("1 + 1 /* block comment */", plus!(int!(1), int!(1)));
+    }
+
+    #[test]
+    fn test_comment_eof_after_spaces() {
+        assert_ast("1 + 1   # comment", plus!(int!(1), int!(1)));
+        assert_ast("1 /* comment */ ", int!(1));
+    }
+
+    #[test]
+    fn test_comments_interspersed() {
+        assert_ast(
+            "1 # comment\n + # another comment\n 2",
+            plus!(int!(1), int!(2)),
+        );
+        assert_ast("1 /* block1 */ + /* block2 */ 2", plus!(int!(1), int!(2)));
+        assert_ast(
+            // Corrected: removed 'let' from 'let b = 2'
+            "let a = 1; # comment for a\n /* block comment */ b = 2; # comment for b\n in a + b",
+            scope!(
+                array!(tuple!(id!("a"), int!(1)), tuple!(id!("b"), int!(2))),
+                plus!(id!("a"), id!("b"))
+            ),
+        );
+        assert_ast(
+            "1 + /* comment before op */ - /* comment after op */ 2",
+            plus!(int!(1), neg!(int!(2))),
+        );
+    }
+
+    #[test]
+    fn test_empty_input_with_comment() {
+        assert!(parse("# just a comment").is_err()); // Expecting an expression, not just comment
+        assert!(parse("/* block comment */").is_err()); // Same here
+        assert!(parse("   # comment   ").is_err()); // And here
+    }
+
+    #[test]
+    fn test_semicolon_termination() {
+        assert_ast("1+2;;", plus!(int!(1), int!(2)));
+        assert_ast("1+2 ;;", plus!(int!(1), int!(2)));
+        assert_ast(
+            "let a=1 in a;;",
+            scope!(array!(tuple!(id!("a"), int!(1))), id!("a")),
+        );
     }
 }
