@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use std::convert::TryInto; // Removed RefCell
 
 use easy_error::bail;
@@ -48,7 +49,7 @@ macro_rules! args {
     ($args:ident, ctx=$ctx:ident, opts=expand, $($aname:ident),+) => {
         let mut iter = $args.into_iter();
         $(
-            let $aname = iter.next().unwrap().real_value_of($ctx.clone())?;
+            let $aname = iter.next().unwrap().real_value_of($ctx.clone()).await?;
         )+
     };
     ($args:ident, ctx=$ctx:ident, opts=raw, $($aname:ident),+) => {
@@ -69,6 +70,7 @@ macro_rules! function {
     };
     ($name:ident ($($aname:ident : $atype:expr),+) => $rtype:expr, ctx=$ctx:ident, arg_opts=$arg_opts:ident, $body:tt) => {
         $crate::function_head!($name ($($aname : $atype),+) => $rtype);
+        #[async_trait]
         impl Callable for $name {
             fn signature(
                 &self,
@@ -93,7 +95,7 @@ macro_rules! function {
                 Ok($rtype)
             }
             #[allow(unused_braces)]
-            fn call(
+            async fn call(
                 &self,
                 $ctx: ScriptContextRef,
                 args: &[Value],
@@ -109,6 +111,7 @@ macro_rules! function {
 // Access an array which is a sequence of values in same type with a dynamic index
 // Can not access a tuple dynamically because it's not able to do type inference statically.
 function_head!(Index(obj: Any, index: Any) => Any);
+#[async_trait]
 impl Callable for Index {
     fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
         let obj = &args[0];
@@ -127,10 +130,10 @@ impl Callable for Index {
             bail!("Object does not implement Indexable: {:?}", obj)
         }
     }
-    fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
+    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
         args!(args, obj, index);
-        let index: i64 = index.value_of(ctx.clone())?.try_into()?;
-        let obj = obj.value_of(ctx.clone())?;
+        let index: i64 = index.value_of(ctx.clone()).await?.try_into()?;
+        let obj = obj.value_of(ctx.clone()).await?;
         let obj: &dyn Indexable = match &obj {
             Value::Array(a) => a.as_ref(),
             Value::NativeObject(a) => a
@@ -138,12 +141,13 @@ impl Callable for Index {
                 .ok_or_else(|| err_msg("NativeObject does not implement Indexible"))?,
             _ => bail!("type mismatch"),
         };
-        obj.get(index)?.value_of(ctx)
+        obj.get(index)?.value_of(ctx).await
     }
 }
 
 // Access a nativeobject or a tuple
 function_head!(Access(obj: Any, index: Any) => Any);
+#[async_trait]
 impl Callable for Access {
     fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
         fn accessible(
@@ -194,8 +198,8 @@ impl Callable for Access {
         }
     }
 
-    fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
-        fn accessible(
+    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
+        async fn accessible(
             ctx: ScriptContextRef,
             obj: &dyn Accessible,
             index: &Value,
@@ -206,10 +210,10 @@ impl Callable for Access {
                 bail!("Can not access a NativeObject with: {:?}", index)
             };
             let ret = obj.get(index)?;
-            ret.value_of(ctx)
+            ret.value_of(ctx).await
         }
 
-        fn tuple(ctx: ScriptContextRef, obj: Value, index_val: &Value) -> Result<Value, Error> {
+        async fn tuple(ctx: ScriptContextRef, obj: Value, index_val: &Value) -> Result<Value, Error> {
             let idx_i64 = if let Value::Integer(i) = index_val {
                 *i
             } else {
@@ -223,27 +227,27 @@ impl Callable for Access {
                     bail!("index out of bounds: {}", idx_i64);
                 }
                 let final_idx_usize = idx_i64 as usize;
-                t[final_idx_usize].value_of(ctx)
+                t[final_idx_usize].value_of(ctx).await
             } else {
                 bail!("Can not access type: {:?} - expected a Tuple", obj)
             }
         }
 
-        let obj = args[0].value_of(ctx.clone())?;
-        let index = &args[1]; // index is always a literal value, either identifier or integer
-        if let Value::NativeObject(obj) = obj {
-            if let Some(obj) = obj.as_accessible() {
-                accessible(ctx, obj, index)
-            } else if let Some(obj) = obj.as_evaluatable() {
-                let obj = obj.value_of(ctx.clone())?;
-                tuple(ctx, obj, index)
+        let obj_val = args[0].value_of(ctx.clone()).await?;
+        let index = &args[1];
+        if let Value::NativeObject(native_obj_ref) = &obj_val {
+            if let Some(acc_obj) = native_obj_ref.as_accessible() {
+                accessible(ctx, acc_obj, index).await
+            } else if let Some(eval_obj) = native_obj_ref.as_evaluatable() {
+                let inner_obj = eval_obj.value_of(ctx.clone()).await?;
+                tuple(ctx, inner_obj, index).await
             } else {
                 bail!("NativeObject not accessible or tuple")
             }
-        } else if let Value::Tuple(_) = obj {
-            tuple(ctx, obj, index)
+        } else if let Value::Tuple(_) = &obj_val {
+            tuple(ctx, obj_val, index).await
         } else {
-            bail!("Object {:?} is not Tuple nor Accessible", obj)
+            bail!("Object {:?} is not Tuple nor Accessible", obj_val)
         }
     }
 
@@ -253,6 +257,7 @@ impl Callable for Access {
 }
 
 function_head!(If(cond: Boolean, yes: Any, no: Any) => Any);
+#[async_trait]
 impl Callable for If {
     fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
@@ -268,12 +273,12 @@ impl Callable for If {
         }
         Ok(yes)
     }
-    fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
-        let cond: bool = args[0].value_of(ctx.clone())?.try_into()?;
+    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
+        let cond: bool = args[0].value_of(ctx.clone()).await?.try_into()?;
         if cond {
-            args[1].value_of(ctx)
+            args[1].value_of(ctx).await
         } else {
-            args[2].value_of(ctx)
+            args[2].value_of(ctx).await
         }
     }
 }
@@ -302,10 +307,10 @@ impl Evaluatable for ScopeBinding {
         self.value.type_of(self.ctx.clone())
     }
 
-    fn value_of(&self, _calling_ctx: ScriptContextRef) -> Result<Value, Error> {
+    async fn value_of(&self, _calling_ctx: ScriptContextRef) -> Result<Value, Error> {
         // A ScopeBinding always evaluates its stored value within its captured context.
         // The calling_ctx is not used here because the value's resolution is fixed at definition.
-        self.value.real_value_of(self.ctx.clone())
+        self.value.real_value_of(self.ctx.clone()).await
     }
 }
 
@@ -322,6 +327,7 @@ impl NativeObject for ScopeBinding {
 
 
 function_head!(Scope(vars: Array, expr: Any) => Any);
+#[async_trait]
 impl Scope {
     fn make_context(vars: &[Value], outer_ctx: ScriptContextRef) -> Result<ScriptContextRef, Error> {
         // 1. Create the Arc for the new context first. This Arc will be captured by UDFs.
@@ -402,10 +408,10 @@ impl Callable for Scope {
         let expr = args[1].type_of(ctx)?;
         Ok(expr)
     }
-    fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
+    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
         let new_scope_ctx = Self::make_context(args[0].as_vec(), ctx)?;
         // Use real_value_of to ensure the result of the 'in' expression is fully unwrapped
-        args[1].real_value_of(new_scope_ctx)
+        args[1].real_value_of(new_scope_ctx).await
     }
 
     fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], main_output_ids: &mut HashSet<&'o Value>) {
@@ -471,6 +477,7 @@ impl Callable for Scope {
 }
 
 function_head!(IsMemberOf(a: Any, ary: Array) => Boolean);
+#[async_trait]
 impl Callable for IsMemberOf {
     fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
@@ -478,26 +485,26 @@ impl Callable for IsMemberOf {
             targs.push(x.type_of(ctx.clone())?);
         }
         args!(targs, a, ary);
-        let ary = if let Type::Array(ary) = ary {
-            *ary
+        let ary_type = if let Type::Array(inner_type) = ary {
+            *inner_type
         } else {
             bail!("argument type {:?} is not an Array", ary);
         };
-        if a != ary {
+        if a != ary_type {
             bail!(
-                "subject must have on same type with array: subj={:?} array={:?}",
+                "subject must have on same type with array: subj={:?} array_member_type={:?}",
                 a,
-                ary
+                ary_type
             );
         }
         Ok(Type::Boolean)
     }
-    fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
+    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
         args!(args, ctx = ctx, a, ary);
         let vec: Arc<Vec<Value>> = ary.try_into()?;
-        let iter = vec.iter().map(|v| v.value_of(ctx.clone()));
-        for v in iter {
-            if v? == a {
+        for v_val_in_array in vec.iter() {
+            let v_eval = v_val_in_array.value_of(ctx.clone()).await?;
+            if v_eval == a {
                 return Ok(true.into());
             }
         }
@@ -564,21 +571,23 @@ function!(ShiftRightUnsigned(a: Integer, b: Integer)=>Integer, {
 });
 
 function!(And(a: Boolean, b: Boolean)=>Boolean, ctx=ctx, arg_opts=raw,{
-    let a:bool = a.real_value_of(ctx.clone())?.try_into()?;
-    let ret:bool = a && b.real_value_of(ctx)?.try_into()?;
+    let a_val:bool = a.real_value_of(ctx.clone()).await?.try_into()?;
+    let b_val:bool = b.real_value_of(ctx).await?.try_into()?;
+    let ret:bool = a_val && b_val;
     Ok(ret.into())
 });
 
 function!(Or(a: Boolean, b: Boolean)=>Boolean, ctx=ctx, arg_opts=raw,{
-    let a:bool = a.real_value_of(ctx.clone())?.try_into()?;
-    let ret:bool = a || b.real_value_of(ctx)?.try_into()?;
+    let a_val:bool = a.real_value_of(ctx.clone()).await?.try_into()?;
+    let b_val:bool = b.real_value_of(ctx).await?.try_into()?;
+    let ret:bool = a_val || b_val;
     Ok(ret.into())
 });
 
 function!(Xor(a: Boolean, b: Boolean)=>Boolean, ctx=ctx, arg_opts=raw,{
-    let a:bool = a.real_value_of(ctx.clone())?.try_into()?;
-    let b:bool = b.real_value_of(ctx)?.try_into()?;
-    let ret:bool = a ^ b;
+    let a_val:bool = a.real_value_of(ctx.clone()).await?.try_into()?;
+    let b_val:bool = b.real_value_of(ctx).await?.try_into()?;
+    let ret:bool = a_val ^ b_val;
     Ok(ret.into())
 });
 
@@ -659,7 +668,7 @@ function!(StringConcat(a: Type::array_of(String))=>String, ctx=ctx, {
     let s:Arc<Vec<Value>> = a.try_into()?;
     let mut ret = String::new();
     for sv in s.iter(){
-        let sv = sv.real_value_of(ctx.clone())?;
+        let sv = sv.real_value_of(ctx.clone()).await?;
         let sv: String = sv.try_into()?;
         ret += &sv;
     }
@@ -688,7 +697,7 @@ mod tests {
                 assert_eq!(expected_type, actual_type_result.unwrap(), "Type mismatch for {}", stringify!($name));
                 
                 // Test call (value evaluation)
-                let actual_value_result = func_call_val.value_of(ctx);
+                let actual_value_result = tokio_test::block_on(func_call_val.value_of(ctx));
                 assert!(actual_value_result.is_ok(), "Value evaluation failed for {}: {:?}", stringify!($name), actual_value_result.err().unwrap());
                 assert_eq!(actual_value_result.unwrap(), expected_output_val, "Value mismatch for {}", stringify!($name));
             }
@@ -705,7 +714,7 @@ mod tests {
                 // Check if signature catches the error (type error)
                 let type_result = func_call_val.type_of(ctx.clone());
                 
-                let value_result = func_call_val.value_of(ctx);
+                let value_result = tokio_test::block_on(func_call_val.value_of(ctx));
 
                 let error_message = match (type_result, value_result) {
                     (Err(type_err), _) => { // If type_of fails, that's the primary error

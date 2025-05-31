@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error, ResultExt};
 use std::{
     sync::RwLock, // Changed from RefCell
@@ -69,9 +70,10 @@ impl Display for Type {
     }
 }
 
+#[async_trait]
 pub trait Evaluatable {
     fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error>;
-    fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error>;
+    async fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error>;
 }
 
 pub trait Indexable {
@@ -86,10 +88,11 @@ pub trait Accessible {
     fn get(&self, name: &str) -> Result<Value, Error>;
 }
 
+#[async_trait]
 pub trait Callable {
     // should not return Any
     fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error>;
-    fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error>;
+    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error>;
     fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) { // Changed &self to &'s self
         args.iter().for_each(|v| v.unresovled_ids(ids))
     }
@@ -245,8 +248,8 @@ impl Callable for UserDefinedFunction {
         }
         Ok(Type::Any)
     }
-
-    fn call(&self, caller_context: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
+    // TODO: This should be async too
+    async fn call(&self, caller_context: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
         if args.len() != self.arg_names.len() {
             bail!(
                 "expected {} arguments, got {}",
@@ -255,16 +258,18 @@ impl Callable for UserDefinedFunction {
             );
         }
 
-        let fn_ctx = ScriptContext::new(Some(self.captured_context.clone())); 
+        let fn_ctx = ScriptContext::new(Some(self.captured_context.clone()));
+        // TODO: This should be async too
         for (i, arg_name) in self.arg_names.iter().enumerate() {
-            let arg_value = args[i].real_value_of(caller_context.clone())?;
-            fn_ctx.set(arg_name.clone(), arg_value); 
+            // TODO: This should be async too
+            let arg_value = args[i].real_value_of(caller_context.clone()).await?;
+            fn_ctx.set(arg_name.clone(), arg_value);
         }
-
-        self.body.real_value_of(Arc::new(fn_ctx)) 
+        // TODO: This should be async too
+        self.body.real_value_of(Arc::new(fn_ctx)).await
     }
 
-    fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) { 
+    fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) {
         args.iter().for_each(|v| v.unresovled_ids(ids));
 
         let mut body_ids = HashSet::new();
@@ -405,11 +410,14 @@ impl Value {
             Ok(t)
         }
     }
-    pub fn real_value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
-        let t = self.value_of(ctx.clone())?;
+    // TODO: This should be async too
+    pub async fn real_value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
+        // TODO: This should be async too
+        let t = self.value_of(ctx.clone()).await?;
         if let Self::NativeObject(o) = t {
             if let Some(e) = o.as_evaluatable() {
-                e.value_of(ctx)
+                // TODO: This should be async too
+                e.value_of(ctx).await
             } else {
                 Ok(Self::NativeObject(o))
             }
@@ -419,6 +427,7 @@ impl Value {
     }
 }
 
+#[async_trait]
 impl Evaluatable for Value {
     fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
         tracing::trace!("type_of={}", self);
@@ -461,12 +470,17 @@ impl Evaluatable for Value {
             }
         }
     }
-
-    fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
+    // TODO: This should be async too
+    async fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
         tracing::trace!("value_of={}", self);
         match self {
-            Self::Identifier(id) => ctx.lookup(id).and_then(|x| x.value_of(ctx)),
-            Self::OpCall(f) => f.call(ctx),
+            // TODO: This should be async too
+            Self::Identifier(id) => {
+                let looked_up_value = ctx.lookup(id)?;
+                looked_up_value.value_of(ctx).await
+            }
+            // TODO: This should be async too
+            Self::OpCall(f) => f.call(ctx).await,
             // NativeObject and other literals return self.clone(); real_value_of handles unwrapping evaluatables.
             _ => Ok(self.clone()),
         }
@@ -646,7 +660,8 @@ impl Call {
         Self { func, args }
     }
     fn signature(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
-        let resolved_func = self.func(ctx.clone())?;
+        // TODO: This should be async too
+        let resolved_func = tokio_test::block_on(self.func(ctx.clone()))?; // block_on for sync context
         match resolved_func {
             ResolvedFunction::Native(native_ref) => {
                 native_ref.as_callable()
@@ -658,22 +673,26 @@ impl Call {
             }
         }
     }
-    fn call(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
-        let resolved_func = self.func(ctx.clone())?;
+    // TODO: This should be async too
+    async fn call(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
+        // TODO: This should be async too
+        let resolved_func = self.func(ctx.clone()).await?;
         match resolved_func {
             ResolvedFunction::Native(native_ref) => {
                 native_ref.as_callable()
                     .ok_or_else(|| err_msg("Internal error: NativeObject marked callable but as_callable is None"))?
-                    .call(ctx, &self.args)
+                    .call(ctx, &self.args).await
             }
             ResolvedFunction::User(udf_ref) => {
-                udf_ref.call(ctx, &self.args)
+                udf_ref.call(ctx, &self.args).await
             }
         }
     }
-    fn func(&self, ctx: ScriptContextRef) -> Result<ResolvedFunction, Error> {
+    // TODO: This should be async too
+    async fn func(&self, ctx: ScriptContextRef) -> Result<ResolvedFunction, Error> {
+        // TODO: This should be async too
         let resolved_fn_val = if let Value::Identifier(_) = &self.func {
-            self.func.value_of(ctx)?
+            self.func.value_of(ctx).await?
         } else {
             self.func.clone()
         };
@@ -739,7 +758,8 @@ mod tests {
             let ctx = Default::default();
             let parsed_value = parse($input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", $input, e));
             // println!("ast={{}}", parsed_value); // Keep this commented out for less noise unless debugging
-            let value = parsed_value.value_of(ctx).unwrap_or_else(|e| panic!("Eval error for '{}': {:?}", $input, e));
+            // TODO block_on
+            let value = tokio_test::block_on(parsed_value.value_of(ctx)).unwrap_or_else(|e| panic!("Eval error for '{}': {:?}", $input, e));
             assert_eq!(value, $output);
         }};
     }
@@ -748,7 +768,8 @@ mod tests {
         ($input: expr, $expected_error_substring: expr) => {{
             let ctx = Default::default();
             let parsed_value = parse($input).unwrap_or_else(|e| panic!("Parse error for '{}': {:?}", $input, e));
-            let result = parsed_value.value_of(ctx);
+            // TODO block_on
+            let result = tokio_test::block_on(parsed_value.value_of(ctx));
             assert!(result.is_err(), "Expected error for '{}', but got Ok({:?})", $input, result.as_ref().ok());
             let error_message = result.err().unwrap().to_string();
             assert!(
@@ -818,7 +839,8 @@ mod tests {
         let ctx2_instance = ScriptContext::new(Some(ctx)); // Create instance first
         ctx2_instance.set("a".into(), 1.into());           // Call set on the instance
         let ctx2_arc = Arc::new(ctx2_instance);            // Then wrap in Arc
-        let value = parse("a+1").unwrap().value_of(ctx2_arc).unwrap();
+        // TODO block_on
+        let value = tokio_test::block_on(parse("a+1").unwrap().value_of(ctx2_arc)).unwrap();
         assert_eq!(value, 2.into());
     }
 
@@ -855,14 +877,16 @@ ${to_string(1+2)}` "#,
         let ctx_instance = ScriptContext::new(Some(Default::default()));
         ctx_instance.set("a".into(), ("xx".to_owned(), 1).into());
         let ctx_arc: ScriptContextRef = Arc::new(ctx_instance);
-        let value = parse("a.length+1+a.x")
+        // TODO block_on
+        let value = tokio_test::block_on(parse("a.length+1+a.x")
             .unwrap()
-            .value_of(ctx_arc.clone())
+            .value_of(ctx_arc.clone()))
             .unwrap();
         assert_eq!(value, 4.into());
-        let value = parse("a[a.x] > 200 ? a : \"yy\"")
+        // TODO block_on
+        let value = tokio_test::block_on(parse("a[a.x] > 200 ? a : \"yy\"")
             .unwrap()
-            .value_of(ctx_arc)
+            .value_of(ctx_arc))
             .unwrap();
         assert_eq!(value, "yy".into());
     }
@@ -984,12 +1008,13 @@ ${to_string(1+2)}` "#,
         }
     }
 
+    #[async_trait] // Ensure async_trait is here
     impl Evaluatable for (String, u32) {
         fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
             Ok(Type::String)
         }
 
-        fn value_of(&self, _ctx: ScriptContextRef) -> Result<Value, Error> {
+        async fn value_of(&self, _ctx: ScriptContextRef) -> Result<Value, Error> {
             Ok(self.0.to_owned().into())
         }
     }
@@ -1037,11 +1062,12 @@ ${to_string(1+2)}` "#,
             Some(self)
         }
     }
+    #[async_trait] // Ensure async_trait is here, was likely added when Callable was changed
     impl Callable for TestNativeFailingCall {
         fn signature(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Type, Error> {
             Ok(Type::Integer)
         }
-        fn call(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Value, Error> {
+        async fn call(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Value, Error> {
             bail!("native error on call")
         }
     }
@@ -1085,7 +1111,8 @@ ${to_string(1+2)}` "#,
         let ctx = ScriptContext::new(Some(Default::default()));
         ctx.set("no_simple".to_string(), TestNativeSimple.into());
         let parsed = parse("no_simple.invalid_prop").unwrap();
-        let res = parsed.value_of(Arc::new(ctx));
+        // TODO block_on
+        let res = tokio_test::block_on(parsed.value_of(Arc::new(ctx)));
         assert!(res.is_err());
         assert!(res.err().unwrap().to_string().contains("no such property: invalid_prop"));
     }
@@ -1128,7 +1155,8 @@ ${to_string(1+2)}` "#,
         let ctx = ScriptContext::new(Some(Default::default()));
         ctx.set("native_fail_get".to_string(), TestNativeFailingAccess.into());
         let parsed = parse("native_fail_get.prop_that_fails").unwrap();
-        let res = parsed.value_of(Arc::new(ctx));
+        // TODO block_on
+        let res = tokio_test::block_on(parsed.value_of(Arc::new(ctx)));
         assert!(res.is_err());
         assert!(res.err().unwrap().to_string().contains("native error on get for prop_that_fails"));
     }
@@ -1138,7 +1166,8 @@ ${to_string(1+2)}` "#,
         let ctx = ScriptContext::new(Some(Default::default()));
         ctx.set("native_fail_call".to_string(), TestNativeFailingCall.into());
         let parsed = parse("native_fail_call()").unwrap();
-        let res = parsed.value_of(Arc::new(ctx));
+        // TODO block_on
+        let res = tokio_test::block_on(parsed.value_of(Arc::new(ctx)));
         assert!(res.is_err());
         assert!(res.err().unwrap().to_string().contains("native error on call"));
     }
