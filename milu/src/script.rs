@@ -683,7 +683,7 @@ impl Call {
                 if arc_native_ref.as_callable().is_some() {
                     Ok(ResolvedFunction::Native(arc_native_ref))
                 } else {
-                    Err(err_msg(format!("Value {:?} is a NativeObject but not callable", arc_native_ref)))
+                    Err(err_msg(format!("Value {:?} is not a callable function type", arc_native_ref)))
                 }
             }
             Value::UserDefined(arc_udf) => {
@@ -1103,8 +1103,8 @@ ${to_string(1+2)}` "#,
     // --- Scope and Context Tests ---
     #[test]
     fn test_variable_shadowing_and_unshadowing() {
-        eval_test!("let x = 1; (let x = 2 in x) + x", Value::Integer(3));
-        eval_test!("let x = 1; let y = (let x = 2 in x) + x; y", Value::Integer(3)); // y = 2 + 1
+        eval_test!("let x = 1 in (let x = 2 in x) + x", Value::Integer(3));
+        eval_test!("let x = 1 in let y = (let x = 2 in x) + x in y", Value::Integer(3)); // y = 2 + 1
     }
 
     #[test]
