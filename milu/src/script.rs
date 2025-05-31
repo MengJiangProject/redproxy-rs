@@ -870,66 +870,66 @@ ${to_string(1+2)}` "#,
     #[test]
     fn eval_simple_function_call() {
         eval_test!("let f(a) = a + 1 in f(5)", Value::Integer(6));
-        type_test("let f(a) = a + 1 in f(5)", Type::Any); 
+        type_test("let f(a) = a + 1 in f(5)", Type::Integer); 
     }
 
     #[test]
     fn eval_function_multiple_args() {
         eval_test!("let add(x, y) = x + y in add(3, 4)", Value::Integer(7));
-        type_test("let add(x, y) = x + y in add(3, 4)", Type::Any);
+        type_test("let add(x, y) = x + y in add(3, 4)", Type::Integer);
     }
 
     #[test]
     fn eval_function_no_args() {
         eval_test!("let get_num() = 42 in get_num()", Value::Integer(42));
-        type_test("let get_num() = 42 in get_num()", Type::Any);
+        type_test("let get_num() = 42 in get_num()", Type::Integer);
     }
 
     #[test]
     fn eval_closure_lexical_scoping() {
         eval_test!("let x = 10; f(a) = a + x in f(5)", Value::Integer(15));
-        type_test("let x = 10; f(a) = a + x in f(5)", Type::Any);
+        type_test("let x = 10; f(a) = a + x in f(5)", Type::Integer);
         eval_test!("let x = 10; f() = x * 2 in f()", Value::Integer(20));
-        type_test("let x = 10; f() = x * 2 in f()", Type::Any);
+        type_test("let x = 10; f() = x * 2 in f()", Type::Integer);
     }
 
     #[test]
     fn eval_closure_arg_shadows_outer_scope() {
         eval_test!("let x = 10; f(x) = x + 1 in f(5)", Value::Integer(6));
-        type_test("let x = 10; f(x) = x + 1 in f(5)", Type::Any);
+        type_test("let x = 10; f(x) = x + 1 in f(5)", Type::Integer);
     }
 
     #[test]
     fn eval_closure_inner_let_shadows_outer_scope() {
         eval_test!("let x = 10; f() = (let x = 5 in x + 1) in f()", Value::Integer(6)); 
-        type_test("let x = 10; f() = (let x = 5 in x + 1) in f()", Type::Any);
+        type_test("let x = 10; f() = (let x = 5 in x + 1) in f()", Type::Integer);
         eval_test!("let x = 10; f() = (let y = 5 in x + y) in f()", Value::Integer(15)); 
-        type_test("let x = 10; f() = (let y = 5 in x + y) in f()", Type::Any);
+        type_test("let x = 10; f() = (let y = 5 in x + y) in f()", Type::Integer);
     }
 
     #[test]
     fn eval_recursive_function_factorial() {
         eval_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)", Value::Integer(6));
-        type_test("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)", Type::Any);
+        type_test("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)", Type::Integer);
         eval_test!("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)", Value::Integer(1));
-        type_test("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)", Type::Any);
+        type_test("let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)", Type::Integer);
     }
 
     #[test]
     fn eval_mutually_recursive_functions() {
         let script_even = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_even(4)"; 
         eval_test!(script_even, Value::Boolean(true));
-        type_test(script_even, Type::Any);
+        type_test(script_even, Type::Integer);
 
         let script_odd = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_odd(3)"; 
         eval_test!(script_odd, Value::Boolean(true));
-        type_test(script_odd, Type::Any);
+        type_test(script_odd, Type::Integer);
     }
     
     #[test]
     fn eval_function_uses_another_in_same_block() {
         eval_test!("let g() = 10; f(a) = a + g() in f(5)", Value::Integer(15)); 
-        type_test("let g() = 10; f(a) = a + g() in f(5)", Type::Any);
+        type_test("let g() = 10; f(a) = a + g() in f(5)", Type::Integer);
     }
 
     impl NativeObject for (String, u32) {
