@@ -1,5 +1,8 @@
-apiVersion: v1alpha
-kind: ProxyDefinition
+# For a detailed explanation of all configuration options, default values,
+# and examples, please refer to the CONFIG_GUIDE.md file available in
+# the root of this repository.
+#
+# -----------------------------------------------------------------------------
 
 # fine tuning the io parameters, following are default values and you dont have to change it unless you know what you are doing
 ioParams:
