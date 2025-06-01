@@ -4,8 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     convert::TryFrom,
     fmt::Display,
-    sync::Arc,
-    sync::RwLock, // Changed from RefCell
+    sync::{Arc, Weak},
 };
 pub mod stdlib;
 
@@ -228,17 +227,17 @@ impl std::hash::Hash for NativeObjectRef {
 #[derive(Debug)]
 pub struct ScriptContext {
     parent: Option<ScriptContextRef>,
-    varibles: RwLock<HashMap<String, Value>>,
+    varibles: HashMap<String, Value>,
 }
 
 pub type ScriptContextRef = Arc<ScriptContext>;
-
+pub type ScriptContextWeakRef = Weak<ScriptContext>;
 #[derive(Debug, Clone)]
 pub struct UserDefinedFunction {
     pub name: Option<String>,
     pub arg_names: Vec<String>,
     pub body: Value,
-    pub captured_context: ScriptContextRef,
+    pub captured_context: ScriptContextWeakRef,
 }
 
 impl PartialEq for UserDefinedFunction {
@@ -255,10 +254,9 @@ pub struct ParsedFunction {
     pub body: Value,
 }
 
-#[async_trait] // Ensure async_trait is here
+#[async_trait]
 impl Callable for UserDefinedFunction {
     async fn signature(&self, _ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
-        // Made async
         if args.len() != self.arg_names.len() {
             bail!(
                 "expected {} arguments, got {}",
@@ -268,7 +266,6 @@ impl Callable for UserDefinedFunction {
         }
         Ok(Type::Any)
     }
-    // TODO: This should be async too
     async fn call(&self, caller_context: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
         if args.len() != self.arg_names.len() {
             bail!(
@@ -278,14 +275,11 @@ impl Callable for UserDefinedFunction {
             );
         }
 
-        let fn_ctx = ScriptContext::new(Some(self.captured_context.clone()));
-        // TODO: This should be async too
+        let mut fn_ctx = ScriptContext::new(Some(self.captured_context.upgrade().unwrap()));
         for (i, arg_name) in self.arg_names.iter().enumerate() {
-            // TODO: This should be async too
             let arg_value = args[i].real_value_of(caller_context.clone()).await?;
             fn_ctx.set(arg_name.clone(), arg_value);
         }
-        // TODO: This should be async too
         self.body.real_value_of(Arc::new(fn_ctx)).await
     }
 
@@ -311,11 +305,11 @@ impl ScriptContext {
     pub fn new(parent: Option<ScriptContextRef>) -> Self {
         Self {
             parent,
-            varibles: RwLock::new(Default::default()),
+            varibles: Default::default(),
         }
     }
     pub fn lookup(&self, id: &str) -> Result<Value, Error> {
-        if let Some(r) = self.varibles.read().unwrap().get(id) {
+        if let Some(r) = self.varibles.get(id) {
             tracing::trace!("lookup({})={}", id, r);
             Ok(r.clone())
         } else if let Some(p) = &self.parent {
@@ -324,8 +318,8 @@ impl ScriptContext {
             bail!("\"{}\" is undefined", id)
         }
     }
-    pub fn set(&self, id: String, value: Value) {
-        self.varibles.write().unwrap().insert(id, value);
+    pub fn set(&mut self, id: String, value: Value) {
+        self.varibles.insert(id, value);
     }
 }
 
@@ -338,7 +332,7 @@ impl Default for ScriptContext {
         map.insert("strcat".to_string(), stdlib::StringConcat::stub().into());
         Self {
             parent: None,
-            varibles: RwLock::new(map),
+            varibles: map,
         }
     }
 }
@@ -353,7 +347,7 @@ pub enum Value {
     Tuple(Arc<Vec<Value>>),
     OpCall(Arc<Call>),
     NativeObject(Arc<NativeObjectRef>),
-    UserDefined(Arc<UserDefinedFunction>),
+    Function(Arc<UserDefinedFunction>),
     ParsedFunction(Arc<ParsedFunction>),
 }
 
@@ -380,7 +374,7 @@ impl Value {
             Self::Array(a) => a.iter().for_each(|v| v.unresovled_ids(ids)),
             Self::Tuple(a) => a.iter().for_each(|v| v.unresovled_ids(ids)),
             Self::OpCall(a) => a.unresovled_ids(ids), // This line is important!
-            Self::UserDefined(udf_arc) => {
+            Self::Function(udf_arc) => {
                 let mut body_ids = HashSet::new();
                 udf_arc.body.unresovled_ids(&mut body_ids);
                 body_ids.retain(|val_in_body| {
@@ -419,7 +413,6 @@ impl Value {
     }
 
     pub async fn real_type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
-        // Made async
         let t = self.type_of(ctx.clone()).await?;
         if let Type::NativeObject(o) = t {
             if let Some(e) = o.as_evaluatable() {
@@ -431,13 +424,10 @@ impl Value {
             Ok(t)
         }
     }
-    // TODO: This should be async too
     pub async fn real_value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
-        // TODO: This should be async too
         let t = self.value_of(ctx.clone()).await?;
         if let Self::NativeObject(o) = t {
             if let Some(e) = o.as_evaluatable() {
-                // TODO: This should be async too
                 e.value_of(ctx).await
             } else {
                 Ok(Self::NativeObject(o))
@@ -489,20 +479,20 @@ impl Evaluatable for Value {
                 Ok(Type::Tuple(ret))
             }
             NativeObject(o) => Ok(Type::NativeObject(o.clone())),
-            UserDefined(_udf_arc) => Ok(Type::Any),
+            Function(_udf_arc) => Ok(Type::Any),
             ParsedFunction(_) => Ok(Type::Any),
         }
     }
-    // TODO: This should be async too
+    
     async fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
         tracing::trace!("value_of={}", self);
         match self {
-            // TODO: This should be async too
+            
             Self::Identifier(id) => {
                 let looked_up_value = ctx.lookup(id)?;
                 looked_up_value.value_of(ctx).await
             }
-            // TODO: This should be async too
+            
             Self::OpCall(f) => f.call(ctx).await,
             // NativeObject and other literals return self.clone(); real_value_of handles unwrapping evaluatables.
             _ => Ok(self.clone()),
@@ -605,7 +595,7 @@ impl std::fmt::Display for Value {
                     .join(",")
             ),
             NativeObject(x) => write!(f, "{:?}", x),
-            UserDefined(x) => {
+            Function(x) => {
                 let name = x.name.as_deref().unwrap_or("");
                 write!(f, "fn<{}>({})", name, x.arg_names.join(", "))
             }
@@ -650,7 +640,7 @@ impl std::hash::Hash for Value {
             Tuple(t) => t.hash(state),
             OpCall(c) => c.hash(state),
             NativeObject(o) => o.hash(state),
-            UserDefined(f) => f.hash(state),
+            Function(f) => f.hash(state),
             ParsedFunction(f) => f.hash(state),
         }
     }
@@ -689,7 +679,7 @@ impl Call {
     }
     async fn signature(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
         // Made async
-        // TODO: This should be async too
+        
         let resolved_func = self.func(ctx.clone()).await?; // Used await
         match resolved_func {
             ResolvedFunction::Native(native_ref) => {
@@ -708,9 +698,9 @@ impl Call {
             }
         }
     }
-    // TODO: This should be async too
+    
     async fn call(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
-        // TODO: This should be async too
+        
         let resolved_func = self.func(ctx.clone()).await?;
         match resolved_func {
             ResolvedFunction::Native(native_ref) => {
@@ -727,9 +717,9 @@ impl Call {
             ResolvedFunction::User(udf_ref) => udf_ref.call(ctx, &self.args).await,
         }
     }
-    // TODO: This should be async too
+    
     async fn func(&self, ctx: ScriptContextRef) -> Result<ResolvedFunction, Error> {
-        // TODO: This should be async too
+        
         let resolved_fn_val = if let Value::Identifier(_) = &self.func {
             self.func.value_of(ctx).await?
         } else {
@@ -747,7 +737,7 @@ impl Call {
                     )))
                 }
             }
-            Value::UserDefined(arc_udf) => Ok(ResolvedFunction::User(arc_udf)),
+            Value::Function(arc_udf) => Ok(ResolvedFunction::User(arc_udf)),
             other_val => Err(err_msg(format!(
                 "Value {:?} is not a callable function type",
                 other_val
@@ -763,7 +753,7 @@ impl Call {
                     arg.unresovled_ids(ids);
                 }
             }
-            Value::UserDefined(udf_arc) => {
+            Value::Function(udf_arc) => {
                 udf_arc.unresovled_ids(&self.args, ids);
             }
             Value::NativeObject(nobj_arc) => {
@@ -845,13 +835,13 @@ mod tests {
     #[tokio::test]
     async fn one_plus_one() {
         type_test("1+1", Type::Integer).await;
-        eval_test!("1+1", Value::Integer(2).into());
+        eval_test!("1+1", Value::Integer(2));
     }
 
     #[tokio::test]
     async fn to_string() {
         type_test("to_string(100*2)", Type::String).await;
-        eval_test!("to_string(100*2)", Value::String("200".to_string()).into());
+        eval_test!("to_string(100*2)", Value::String("200".to_string()));
     }
 
     #[test]
@@ -907,7 +897,7 @@ mod tests {
     #[tokio::test]
     async fn ctx_chain() {
         let ctx: ScriptContextRef = Default::default();
-        let ctx2_instance = ScriptContext::new(Some(ctx)); // Create instance first
+        let mut ctx2_instance = ScriptContext::new(Some(ctx)); // Create instance first
         ctx2_instance.set("a".into(), 1.into()); // Call set on the instance
         let ctx2_arc = Arc::new(ctx2_instance); // Then wrap in Arc
         let value = parse("a+1").unwrap().value_of(ctx2_arc).await.unwrap(); // Added await
@@ -947,7 +937,7 @@ ${to_string(1+2)}` "#,
 
     #[tokio::test] // Already async
     async fn native_objects() {
-        let ctx_instance = ScriptContext::new(Some(Default::default()));
+        let mut ctx_instance = ScriptContext::new(Some(Default::default()));
         ctx_instance.set("a".into(), ("xx".to_owned(), 1).into());
         let ctx_arc: ScriptContextRef = Arc::new(ctx_instance);
         let value = parse("a.length+1+a.x")
@@ -1234,7 +1224,7 @@ ${to_string(1+2)}` "#,
     #[tokio::test]
     async fn test_access_non_existent_property_native() {
         // Added async
-        let ctx = ScriptContext::new(Some(Default::default()));
+        let mut ctx = ScriptContext::new(Some(Default::default()));
         ctx.set("no_simple".to_string(), TestNativeSimple.into());
         let parsed = parse("no_simple.invalid_prop").unwrap();
         let res = parsed.value_of(Arc::new(ctx)).await; // Added await
@@ -1289,7 +1279,7 @@ ${to_string(1+2)}` "#,
     #[tokio::test]
     async fn test_native_object_failing_get() {
         // Added async
-        let ctx = ScriptContext::new(Some(Default::default()));
+        let mut ctx = ScriptContext::new(Some(Default::default()));
         ctx.set(
             "native_fail_get".to_string(),
             TestNativeFailingAccess.into(),
@@ -1307,7 +1297,7 @@ ${to_string(1+2)}` "#,
     #[tokio::test]
     async fn test_native_object_failing_call() {
         // Added async
-        let ctx = ScriptContext::new(Some(Default::default()));
+        let mut ctx = ScriptContext::new(Some(Default::default()));
         ctx.set("native_fail_call".to_string(), TestNativeFailingCall.into());
         let parsed = parse("native_fail_call()").unwrap();
         let res = parsed.value_of(Arc::new(ctx)).await; // Added await

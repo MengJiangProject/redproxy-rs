@@ -297,7 +297,7 @@ impl Callable for If {
 }
 
 struct ScopeBinding {
-    ctx: ScriptContextRef,
+    ctx: ScriptContextWeakRef,
     value: Value,
 }
 
@@ -321,13 +321,13 @@ impl Evaluatable for ScopeBinding {
         // Made async
         // If self.value.type_of becomes async, this will need .await
         // For now, assuming self.value.type_of is still effectively sync or blocks if it calls async code
-        self.value.type_of(self.ctx.clone()).await
+        self.value.type_of(self.ctx.upgrade().unwrap()).await
     }
 
     async fn value_of(&self, _calling_ctx: ScriptContextRef) -> Result<Value, Error> {
         // A ScopeBinding always evaluates its stored value within its captured context.
         // The calling_ctx is not used here because the value's resolution is fixed at definition.
-        self.value.real_value_of(self.ctx.clone()).await
+        self.value.real_value_of(self.ctx.upgrade().unwrap()).await
     }
 }
 
@@ -348,76 +348,74 @@ impl Scope {
         vars: &[Value],
         outer_ctx: ScriptContextRef,
     ) -> Result<ScriptContextRef, Error> {
-        // 1. Create the Arc for the new context first. This Arc will be captured by UDFs.
-        //    Initialize with an empty variable map for now.
-        let new_ctx_arc = Arc::new(ScriptContext::new(Some(outer_ctx.clone())));
-
-        // 2. Iterate and prepare bindings. For UDFs, they capture new_ctx_arc.
-        //    This means we need to store them temporarily then update new_ctx_arc's internal map.
-        let mut temp_bindings = HashMap::new();
-
-        for v_or_pf in vars.iter() {
-            match v_or_pf {
-                Value::ParsedFunction(parsed_fn_arc) => {
-                    let name_str = match &parsed_fn_arc.name_ident {
-                        Value::Identifier(s) => s.clone(),
-                        _ => return Err(err_msg("Function name must be an identifier")),
-                    };
-                    let mut arg_names_str = Vec::new();
-                    for arg_ident_val in &parsed_fn_arc.arg_idents {
-                        match arg_ident_val {
-                            Value::Identifier(s) => arg_names_str.push(s.clone()),
-                            _ => return Err(err_msg("Function arguments must be identifiers")),
+        // Use Arc::new_cyclic to allow self-referential context
+        let mut error: Option<Error> = None;
+        let ctx_arc = Arc::new_cyclic(|weak_self| {
+            let mut new_ctx = ScriptContext::new(Some(outer_ctx.clone()));
+            for v_or_pf in vars.iter() {
+                match v_or_pf {
+                    Value::ParsedFunction(parsed_fn_arc) => {
+                        let name_str = match &parsed_fn_arc.name_ident {
+                            Value::Identifier(s) => s.clone(),
+                            _ => {
+                                error = Some(err_msg("Function name must be an identifier"));
+                                break;
+                            }
+                        };
+                        let mut arg_names_str = Vec::new();
+                        for arg_ident_val in &parsed_fn_arc.arg_idents {
+                            match arg_ident_val {
+                                Value::Identifier(s) => arg_names_str.push(s.clone()),
+                                _ => {
+                                    error = Some(err_msg("Function arguments must be identifiers"));
+                                    break;
+                                }
+                            }
                         }
+                        let udf = UserDefinedFunction {
+                            name: Some(name_str.clone()),
+                            arg_names: arg_names_str,
+                            body: parsed_fn_arc.body.clone(),
+                            captured_context: weak_self.clone(),
+                        };
+                        new_ctx.varibles.insert(name_str, Value::Function(Arc::new(udf)));
                     }
-                    let udf = UserDefinedFunction {
-                        name: Some(name_str.clone()),
-                        arg_names: arg_names_str,
-                        body: parsed_fn_arc.body.clone(),
-                        captured_context: new_ctx_arc.clone(), // CRUCIAL CHANGE HERE
-                    };
-                    temp_bindings.insert(name_str, Value::UserDefined(Arc::new(udf)));
-                }
-                Value::Tuple(pair_arc) => {
-                    let t = pair_arc.as_ref();
-                    if t.len() != 2 {
-                        return Err(err_msg(format!("Invalid variable binding tuple: {:?}", t)));
+                    Value::Tuple(pair_arc) => {
+                        let t = pair_arc.as_ref();
+                        if t.len() != 2 {
+                            error = Some(err_msg(format!("Invalid variable binding tuple: {:?}", t)));
+                            break;
+                        }
+                        let id = match &t[0] {
+                            Value::Identifier(s) => s.clone(),
+                            _ => {
+                                error = Some(err_msg("Binding name must be an identifier"));
+                                break;
+                            }
+                        };
+                        let value = t[1].clone();
+                        let scope_bound_value = ScopeBinding {
+                            ctx: weak_self.clone(),
+                            value,
+                        };
+                        new_ctx.varibles.insert(id, scope_bound_value.into());
                     }
-                    let id = match &t[0] {
-                        Value::Identifier(s) => s.clone(),
-                        _ => return Err(err_msg("Binding name must be an identifier")),
-                    };
-                    let value = t[1].clone();
-                    let scope_bound_value = ScopeBinding {
-                        ctx: outer_ctx.clone(), // ScopeBinding still captures outer_ctx for expression eval
-                        value,
-                    };
-                    temp_bindings.insert(id, scope_bound_value.into());
-                }
-                _ => {
-                    return Err(err_msg(format!(
-                        "Invalid item in let binding list: {:?}. Expected Tuple or ParsedFunction.",
-                        v_or_pf
-                    )));
+                    _ => {
+                        error = Some(err_msg(format!(
+                            "Invalid item in let binding list: {:?}. Expected Tuple or ParsedFunction.",
+                            v_or_pf
+                        )));
+                        break;
+                    }
                 }
             }
+            new_ctx
+        });
+        if let Some(e) = error {
+            Err(e)
+        } else {
+            Ok(ctx_arc)
         }
-
-        // 3. Populate the ScriptContext within the Arc. This requires mutable access.
-        //    If Arc::get_mut returns None (because UDFs have cloned new_ctx_arc),
-        //    this indicates ScriptContext.varibles needs interior mutability (e.g. RefCell/Mutex)
-        //    or ScriptContext needs a method to take ownership of varibles after construction.
-        //    For this exercise, we'll assume Arc::get_mut works for simplicity,
-        //    or that this step conceptually represents correctly initializing the shared context.
-        // if let Some(mutable_ctx) = Arc::get_mut(&mut new_ctx_arc) {
-        //     mutable_ctx.varibles = temp_bindings;
-        // } else {
-        //     return Err(err_msg("Failed to get mutable context; this indicates an issue with shared access for setting up recursive captures."));
-        // }
-        // Directly modify the varibles in the ScriptContext pointed to by new_ctx_arc.
-        // This is possible because varibles is now a RwLock.
-        *new_ctx_arc.varibles.write().unwrap() = temp_bindings;
-        Ok(new_ctx_arc)
     }
 }
 // Note: #[async_trait] was already on `impl Scope` which is fine.
