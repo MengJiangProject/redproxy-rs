@@ -74,17 +74,17 @@ lazy_static::lazy_static! {
 }
 
 impl Rule {
-    pub fn init(&mut self) -> Result<(), Error> {
+    pub async fn init(&mut self) -> Result<(), Error> {
         if let Some(s) = &self.filter_str {
             trace!("compiling filter: {:?}", s);
             let filter: filter::Filter = s.parse().context("parse filter")?;
-            filter.validate()?;
+            filter.validate().await?;
             self.filter = Some(filter);
         }
         Ok(())
     }
 
-    pub fn evaluate(&self, request: &Context) -> bool {
+    pub async fn evaluate(&self, request: &Context) -> bool {
         trace!(
             "evaluate filter={:?} target={}",
             self.filter_str,
@@ -100,7 +100,7 @@ impl Rule {
         let ret = if self.filter.is_none() {
             true
         } else {
-            match self.filter.as_ref().unwrap().evaluate(request) {
+            match self.filter.as_ref().unwrap().evaluate(request).await {
                 Ok(b) => b,
                 Err(e) => {
                     trace!("error evaluating filter: {:?}", e);

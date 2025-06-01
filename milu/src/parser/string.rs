@@ -16,7 +16,7 @@
 use nom::branch::alt;
 use nom::bytes::streaming::{is_not, take_while_m_n};
 use nom::character::streaming::{char, multispace1};
-use nom::combinator::{map, map_opt, map_res, value, verify};
+use nom::combinator::{cut, map, map_opt, map_res, value, verify};
 use nom::error::{FromExternalError, ParseError};
 use nom::multi::fold_many0;
 use nom::sequence::{delimited, preceded};
@@ -71,7 +71,8 @@ where
         char('\\'),
         // `alt` tries each parser in sequence, returning the result of
         // the first successful match
-        alt((
+        // `cut` commits to parsing an escape sequence if a `\` is found
+        cut(alt((
             parse_unicode,
             // The `value` parser returns a fixed value (the first argument) if its
             // parser (the second argument) succeeds. In these cases, it looks for
@@ -85,7 +86,7 @@ where
             value('\\', char('\\')),
             value('/', char('/')),
             value('"', char('"')),
-        )),
+        ))),
     )(input)
 }
 
@@ -130,8 +131,9 @@ where
         // The `map` combinator runs a parser, then applies a function to the output
         // of that parser.
         map(parse_literal, StringFragment::Literal),
-        map(parse_escaped_char, StringFragment::EscapedChar),
+        // Try parsing escaped whitespace first, as it also starts with a '\'
         value(StringFragment::EscapedWS, parse_escaped_whitespace),
+        map(parse_escaped_char, StringFragment::EscapedChar),
     ))(input)
 }
 
@@ -188,5 +190,72 @@ mod tests {
             String::from("tab:\tafter tab, newline:\nnew line, quote: \", emoji: 😂, newline:\nescaped whitespace: abc")
         );
         println!("Result:\n\n{}", result);
+    }
+
+    // Helper for error tests
+    fn assert_parse_string_error(input: &str) {
+        let data = Span::new(input);
+        assert!(parse_string::<nom::error::VerboseError<Span>>(data).is_err());
+    }
+
+    #[test]
+    fn test_unterminated_string() {
+        assert_parse_string_error("\"abc");
+    }
+
+    #[test]
+    fn test_invalid_unicode_escape_too_many_digits() {
+        assert_parse_string_error("\"\\u{FFFFFFF}\""); // More than 6 hex digits
+    }
+
+    #[test]
+    fn test_invalid_unicode_escape_empty() {
+        assert_parse_string_error("\"\\u{}\"");
+    }
+
+    #[test]
+    fn test_invalid_unicode_escape_invalid_char() {
+        assert_parse_string_error("\"\\u{FFFG}\""); // G is not a hex digit
+    }
+
+    #[test]
+    fn test_invalid_escape_sequence() {
+        assert_parse_string_error("\"\\x\""); // \x is not a valid escape in this parser
+                                              // The following case is handled by parse_escaped_whitespace, so it's not an error.
+                                              // assert_parse_string_error("\"\\ \"");
+        assert_parse_string_error("\"\\"); // Dangling backslash
+    }
+
+    #[test]
+    fn test_dangling_backslash_at_end() {
+        assert_parse_string_error("\"abc\\");
+    }
+
+    #[test]
+    fn test_empty_string() {
+        let data = Span::new("\"\"");
+        let result = parse_string::<()>(data).unwrap().1;
+        assert_eq!(result, String::from(""));
+    }
+
+    #[test]
+    fn test_string_with_only_escape_sequences() {
+        let data = Span::new("\"\\n\\t\\\"\\\\\""); // \n, \t, \", \\
+        let result = parse_string::<()>(data).unwrap().1;
+        assert_eq!(result, String::from("\n\t\"\\"));
+    }
+
+    #[test]
+    fn test_string_with_all_valid_escapes() {
+        let data = Span::new("\"\\b\\f\\n\\r\\t\\\"\\\\\\/\\u{0041}\""); // \b \f \n \r \t \" \\ \/ \u{0041} (A)
+        let result = parse_string::<()>(data).unwrap().1;
+        assert_eq!(result, String::from("\u{08}\u{0C}\n\r\t\"\\/A"));
+    }
+
+    #[test]
+    fn test_string_with_escaped_whitespace() {
+        let data = Span::new("\"a\\   b\\ \t\nc\""); // 'a', escaped spaces, 'b', escaped space, tab, newline, 'c'
+        let result = parse_string::<()>(data).unwrap().1;
+        assert_eq!(result, String::from("abc")); // Escaped whitespace should be consumed
     }
 }

@@ -75,7 +75,7 @@ impl Connector for LoadBalanceConnector {
         if let Algorithm::HashBy(str) = &self.algorithm {
             let value = parse(str).context("unable to compile hash script")?;
             let ctx: Arc<ScriptContext> = create_context(Default::default()).into();
-            let rtype = value.real_type_of(ctx)?;
+            let rtype = value.real_type_of(ctx).await?;
             ensure!(
                 rtype == Type::String,
                 "hash script type mismatch: required string, got {}\nsnippet: {}",
@@ -137,7 +137,12 @@ impl LoadBalanceConnector {
         ctx: &ContextRef,
     ) -> Result<Arc<dyn Connector>, Error> {
         let ctx = create_context(ctx.read().await.props().clone());
-        let result = self.hash_by.as_ref().unwrap().real_value_of(ctx.into())?;
+        let result = self
+            .hash_by
+            .as_ref()
+            .unwrap()
+            .real_value_of(ctx.into())
+            .await?;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         use std::hash::Hasher;
         result.hash(&mut hasher);

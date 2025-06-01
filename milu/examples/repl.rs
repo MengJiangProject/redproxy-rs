@@ -2,7 +2,7 @@ use clap::value_parser;
 use easy_error::{ResultExt, Terminator};
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::highlight::{Highlighter, MatchingBracketHighlighter};
+use rustyline::highlight::{CmdKind, Highlighter, MatchingBracketHighlighter};
 use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::{self, MatchingBracketValidator, Validator};
 use rustyline::{Cmd, CompletionType, Config, Context, EditMode, Editor, KeyEvent};
@@ -65,7 +65,7 @@ impl Highlighter for MyHelper {
         self.highlighter.highlight(line, pos)
     }
 
-    fn highlight_char(&self, line: &str, pos: usize, kind: rustyline::highlight::CmdKind) -> bool {
+    fn highlight_char(&self, line: &str, pos: usize, kind: CmdKind) -> bool {
         self.highlighter.highlight_char(line, pos, kind)
     }
 }
@@ -84,7 +84,8 @@ impl Validator for MyHelper {
 }
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-fn main() -> Result<(), Terminator> {
+#[tokio::main]
+async fn main() -> Result<(), Terminator> {
     let args = clap::Command::new("milu-repl")
         .version(VERSION)
         .arg(
@@ -98,14 +99,15 @@ fn main() -> Result<(), Terminator> {
     if let Some(i) = input {
         let buf = std::fs::read(i)?;
         let buf = String::from_utf8(buf)?;
-        eval(Default::default(), &buf);
+        eval(Default::default(), &buf).await; // Added await
     } else {
-        repl().context("repl")?;
+        repl().await.context("repl")?; // Added await
     }
     Ok(())
 }
 
-fn repl() -> rustyline::Result<()> {
+async fn repl() -> rustyline::Result<()> {
+    // Added async
     #[cfg(target_os = "windows")]
     let is_tty = false;
     #[cfg(not(target_os = "windows"))]
@@ -156,7 +158,7 @@ fn repl() -> rustyline::Result<()> {
                 if line.ends_with(";;") {
                     let ctx = global.clone();
                     let sbuf = buf.join(" ");
-                    eval(ctx, &sbuf);
+                    eval(ctx, &sbuf).await; // Added await
                     if let Err(e) = rl.add_history_entry(&sbuf) {
                         eprintln!("Failed to add history entry: {}", e);
                     }
@@ -182,25 +184,26 @@ fn repl() -> rustyline::Result<()> {
     rl.append_history("history.txt")
 }
 
-fn eval(ctx: ScriptContextRef, str: &str) -> bool {
-    let val = parser::parse(str);
-    if let Err(e) = val {
+async fn eval(ctx: ScriptContextRef, str: &str) -> bool {
+    // Added async
+    let val_parse_result = parser::parse(str); // Renamed to avoid conflict
+    if let Err(e) = val_parse_result {
         eprintln!("parser error: {}", e);
         return false;
     }
-    let val = val.unwrap();
-    let typ = val.type_of(ctx.clone());
-    if let Err(e) = typ {
+    let parsed_val = val_parse_result.unwrap(); // Renamed to avoid conflict
+    let typ_result = parsed_val.type_of(ctx.clone()).await; // Renamed to avoid conflict
+    if let Err(e) = typ_result {
         eprintln!("type inference error: {}", e);
         return false;
     }
-    let val = val.value_of(ctx);
-    if let Err(e) = val {
+    let eval_result = parsed_val.value_of(ctx).await; // Added await, renamed
+    if let Err(e) = eval_result {
         eprintln!("eval error: {}", e);
         return false;
     }
-    let val = val.unwrap();
-    let typ = typ.unwrap();
-    println!("{} : {}", val, typ);
+    let final_val = eval_result.unwrap(); // Renamed to avoid conflict
+    let final_typ = typ_result.unwrap(); // Renamed to avoid conflict
+    println!("{} : {}", final_val, final_typ);
     true
 }
