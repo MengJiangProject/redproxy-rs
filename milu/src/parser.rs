@@ -5,13 +5,13 @@ use nom::{
         alpha1, alphanumeric1, char, digit1, hex_digit1, multispace1, oct_digit1, one_of,
     },
     combinator::{all_consuming, cut, map, map_opt, map_res, opt, recognize},
-    error::{context,  ContextError, FromExternalError, ParseError},
+    error::{context, ContextError, FromExternalError, ParseError},
     multi::{many0, many1, separated_list0},
     sequence::{delimited, pair, preceded, separated_pair, terminated},
     IResult, Parser,
 };
+use nom_language::error::{convert_error, VerboseError};
 use nom_locate::LocatedSpan;
-use nom_language::error::{convert_error,VerboseError};
 use std::{fmt, num::ParseIntError, sync::Arc};
 
 mod string;
@@ -185,7 +185,8 @@ rule!(eol_comment(i), no_ctx, {
     recognize(preceded(
         char('#'),
         take_while(|c: char| c != '\n' && c != '\r'),
-    )).parse(i)
+    ))
+    .parse(i)
 });
 rule!(inline_comment(i), no_ctx, {
     delimited(tag("/*"), take_until("*/"), tag("*/")).parse(i)
@@ -195,9 +196,12 @@ rule!(blank(i), no_ctx, {
 });
 
 // ignore leading whitespaces
-fn ws<'a,O, E, F>(f: F) -> impl Parser<Span<'a>, Output = O, Error = E>
+fn ws<'a, O, E, F>(f: F) -> impl Parser<Span<'a>, Output = O, Error = E>
 where
-    E: ParseError<Span<'a>> + ContextError<Span<'a>> + FromExternalError<Span<'a>, ParseIntError> + fmt::Debug,
+    E: ParseError<Span<'a>>
+        + ContextError<Span<'a>>
+        + FromExternalError<Span<'a>, ParseIntError>
+        + fmt::Debug,
     F: Parser<Span<'a>, Output = O, Error = E>,
 {
     preceded(blank, f)

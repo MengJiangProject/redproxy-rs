@@ -41,7 +41,8 @@ where
             value('$', char('$')),
             value('`', char('`')), // Added for escaped backtick \`
         )),
-    ).parse(input)
+    )
+    .parse(input)
 }
 
 fn parse_template_literal<'a, E: ParseError<Span<'a>>>(
@@ -62,7 +63,8 @@ where
     preceded(
         nom::bytes::streaming::tag("${"),
         nom::combinator::cut(nom::sequence::terminated(super::op_0, char('}'))),
-    ).parse(input)
+    )
+    .parse(input)
 }
 
 fn parse_template_fragment<'a, E>(input: Span<'a>) -> IResult<Span<'a>, StringFragment<'a>, E>
@@ -78,7 +80,8 @@ where
         map(char('$'), |c: char| StringFragment::EscapedChar(c)), // Priority 3: Literal '$', treated like an escaped char for simplicity
         map(parse_template_literal, StringFragment::Literal), // Priority 4: Regular text segments
         value(StringFragment::EscapedWS, parse_escaped_whitespace), // Priority 5: Escaped whitespace
-    )).parse(input)
+    ))
+    .parse(input)
 }
 
 pub fn parse_template<'a, E>(input: Span<'a>) -> IResult<Span<'a>, Vec<Value>, E>

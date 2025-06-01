@@ -87,7 +87,8 @@ where
             value('/', char('/')),
             value('"', char('"')),
         ))),
-    ).parse(input)
+    )
+    .parse(input)
 }
 
 /// Parse a backslash, followed by any amount of whitespace. This is used later
@@ -134,7 +135,8 @@ where
         // Try parsing escaped whitespace first, as it also starts with a '\'
         value(StringFragment::EscapedWS, parse_escaped_whitespace),
         map(parse_escaped_char, StringFragment::EscapedChar),
-    )).parse(input)
+    ))
+    .parse(input)
 }
 
 /// Parse a string. Use a loop of parse_fragment and push all of the fragments
