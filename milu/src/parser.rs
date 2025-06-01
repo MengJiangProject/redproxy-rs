@@ -5,11 +5,12 @@ use nom::{
         alpha1, alphanumeric1, char, digit1, hex_digit1, multispace1, oct_digit1, one_of,
     },
     combinator::{all_consuming, cut, map, map_opt, map_res, opt, recognize},
-    error::{context, convert_error, ContextError, FromExternalError, ParseError, VerboseError},
+    error::{context, ContextError, FromExternalError, ParseError},
     multi::{many0, many1, separated_list0},
-    sequence::{delimited, pair, preceded, separated_pair, terminated, tuple as nom_tuple},
+    sequence::{delimited, pair, preceded, separated_pair, terminated},
     IResult, Parser,
 };
+use nom_language::error::{convert_error, VerboseError};
 use nom_locate::LocatedSpan;
 use std::{fmt, num::ParseIntError, sync::Arc};
 
@@ -163,7 +164,7 @@ macro_rules! no_ctx {
 #[allow(unused_macros)]
 macro_rules! ctx {
     ($name:ident, $body:block, $input:ident) => {
-        context(stringify!($name), ws($body))($input)
+        context(stringify!($name), ws($body)).parse($input)
     };
 }
 
@@ -184,23 +185,24 @@ rule!(eol_comment(i), no_ctx, {
     recognize(preceded(
         char('#'),
         take_while(|c: char| c != '\n' && c != '\r'),
-    ))(i)
+    ))
+    .parse(i)
 });
 rule!(inline_comment(i), no_ctx, {
-    delimited(tag("/*"), take_until("*/"), tag("*/"))(i)
+    delimited(tag("/*"), take_until("*/"), tag("*/")).parse(i)
 });
 rule!(blank(i), no_ctx, {
-    recognize(many0(alt((multispace1, eol_comment, inline_comment))))(i)
+    recognize(many0(alt((multispace1, eol_comment, inline_comment)))).parse(i)
 });
 
 // ignore leading whitespaces
-fn ws<'a, O, E, F>(f: F) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, O, E>
+fn ws<'a, O, E, F>(f: F) -> impl Parser<Span<'a>, Output = O, Error = E>
 where
     E: ParseError<Span<'a>>
         + ContextError<Span<'a>>
         + FromExternalError<Span<'a>, ParseIntError>
         + fmt::Debug,
-    F: Parser<Span<'a>, O, E>,
+    F: Parser<Span<'a>, Output = O, Error = E>,
 {
     preceded(blank, f)
 }
@@ -358,14 +360,14 @@ rule!(op_call -> (Span<'a>,Vec<Value>), {
 
 rule!(op_8(i) -> Value, {
     map(
-        nom_tuple((
+        (
             op_value,
             many0(alt((
                 op_index,
                 op_access,
                 op_call
             )))
-        )) ,
+        ),
     |(p1, expr)| {
         // println!("p1={:?} expr={:?}", p1, expr);
         expr.into_iter().fold(p1, |p1, val| {
@@ -379,7 +381,7 @@ rule!(op_8(i) -> Value, {
 //unary opreator
 rule!(op_7(i) -> Value, {
     alt((
-        map(nom_tuple((alt((tag("!"), tag("~"), tag("-"))), op_7)),
+        map((alt((tag("!"), tag("~"), tag("-"))), op_7),
             |(op,p1)|parse1(op, p1)
         ),
         op_8
@@ -390,13 +392,13 @@ macro_rules! op_rule {
     ($name:ident, $next:ident, $tags:expr ) => {
         rule!($name(i) -> Value, {
             map(
-                nom_tuple((
+                (
                     $next,
-                    many0(nom_tuple((
+                    many0((
                         ws($tags),
                         $next
-                    )))
-                )),
+                    ))
+                ),
                 |(p1, expr)|
                     expr.into_iter().fold(p1, |p1, val| {
                         let (op, p2) = val;
@@ -429,16 +431,16 @@ op_rule!(op_1, op_2, alt((tag("||"), tag_no_case("or"))));
 rule!(op_if(i) -> Value, {
     map(
         alt((
-            nom_tuple((
+            (
                 preceded(tag("if"),op_0),
                 preceded(ws(tag("then")),op_0),
                 preceded(ws(tag("else")),op_0),
-            )) ,
-            nom_tuple((
+            ) ,
+            (
                 terminated(op_1,ws(tag("?"))),
                 terminated(op_0,ws(tag(":"))),
                 op_0
-            )) ,
+            ) ,
         )),
         |(cond, yes, no)| {
             If::make_call(cond, yes, no).into()
@@ -461,12 +463,12 @@ rule!(op_assign -> Value, {
     alt((
         // Try to parse function definition first: identifier func_args_def = op_0
         map(
-            nom_tuple((
+            (
                 identifier,
                 ws(func_args_def),
                 ws(char('=')), // Ensure it's this version (NO cut)
                 cut(op_0)
-            )),
+            ),
             |(name_ident, arg_idents, _, body)| { // _ for char('=')
                 Value::ParsedFunction(Arc::new(ParsedFunction {
                     name_ident,
@@ -485,7 +487,7 @@ rule!(op_assign -> Value, {
 
 rule!(op_let -> Value, {
     map(
-        nom_tuple((
+        (
             preceded(terminated(tag("let"), cut(multispace1)), // "let" must be followed by whitespace
                 terminated(
                     separated_list0(ws(char(';')), ws(op_assign)), // op_assign wrapped with ws
@@ -493,7 +495,7 @@ rule!(op_let -> Value, {
                 )
             ),
             preceded(ws(tag("in")),op_0),
-        )),
+        ),
         |(vars,expr)| Scope::make_call(vars.into(),expr).into()
     )
 });

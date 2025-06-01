@@ -4,8 +4,9 @@ version = "0.2.1"
 edition = "2018"
 
 [dependencies]
-nom = "7"
-nom_locate = "4.1.0"
+nom = "8"
+nom_locate = "5"
+nom-language = "0.1"
 regex = "1"
 easy-error = "1"
 tracing = "0.1"
