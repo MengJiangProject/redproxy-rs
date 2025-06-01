@@ -22,23 +22,23 @@ timeouts:
 
 listeners:
   # if type is omited, it trys the name field for type,
-  - name: tproxy
-    bind: 0.0.0.0:8080
-    protocol: tcp # default
+  # - name: tproxy
+  #   bind: 0.0.0.0:8080
+  #   protocol: tcp # default
 
   # udp tproxy listener requires cap_net_admin,
   # set with command `setcap cap_net_admin+ep redproxy-rs` or run with root user
-  - name: tproxy-udp
-    type: tproxy
-    bind: 0.0.0.0:8080
-    protocol: udp
-    # default: false, whether use full cone NAT or restrictive NAT,
-    # full cone NAT is slower and unable to filter with dst address,
-    # restrictive NAT is a little faster and able to filter with dst address
-    # NOTE: socks5 upstreams only supports full cone NAT
-    udpFullCone: false
-    # default: 128, only applies for full cone NAT, controls how many sockets to be cached for sending udp replies.
-    udpMaxSocket: 256
+  # - name: tproxy-udp
+  #   type: tproxy
+  #   bind: 0.0.0.0:8080
+  #   protocol: udp
+  #   # default: false, whether use full cone NAT or restrictive NAT,
+  #   # full cone NAT is slower and unable to filter with dst address,
+  #   # restrictive NAT is a little faster and able to filter with dst address
+  #   # NOTE: socks5 upstreams only supports full cone NAT
+  #   udpFullCone: false
+  #   # default: 128, only applies for full cone NAT, controls how many sockets to be cached for sending udp replies.
+  #   udpMaxSocket: 256
 
   - name: udp-reverse
     type: reverse
