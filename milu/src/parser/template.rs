@@ -6,7 +6,7 @@ use nom::{
     error::{ContextError, FromExternalError, ParseError},
     multi::fold_many0,
     sequence::{delimited, preceded},
-    IResult,
+    IResult, Parser,
 };
 
 use crate::{parser::string::parse_escaped_whitespace, script::Value};
@@ -41,14 +41,14 @@ where
             value('$', char('$')),
             value('`', char('`')), // Added for escaped backtick \`
         )),
-    )(input)
+    ).parse(input)
 }
 
 fn parse_template_literal<'a, E: ParseError<Span<'a>>>(
     input: Span<'a>,
 ) -> IResult<Span<'a>, Span<'a>, E> {
     let not_quote_slash = is_not("`$\\");
-    verify(not_quote_slash, |s: &Span| !s.is_empty())(input)
+    verify(not_quote_slash, |s: &Span| !s.is_empty()).parse(input)
 }
 
 fn parse_template_element<'a, E>(input: Span<'a>) -> IResult<Span<'a>, Value, E>
@@ -62,7 +62,7 @@ where
     preceded(
         nom::bytes::streaming::tag("${"),
         nom::combinator::cut(nom::sequence::terminated(super::op_0, char('}'))),
-    )(input)
+    ).parse(input)
 }
 
 fn parse_template_fragment<'a, E>(input: Span<'a>) -> IResult<Span<'a>, StringFragment<'a>, E>
@@ -78,7 +78,7 @@ where
         map(char('$'), |c: char| StringFragment::EscapedChar(c)), // Priority 3: Literal '$', treated like an escaped char for simplicity
         map(parse_template_literal, StringFragment::Literal), // Priority 4: Regular text segments
         value(StringFragment::EscapedWS, parse_escaped_whitespace), // Priority 5: Escaped whitespace
-    ))(input)
+    )).parse(input)
 }
 
 pub fn parse_template<'a, E>(input: Span<'a>) -> IResult<Span<'a>, Vec<Value>, E>
@@ -101,7 +101,7 @@ where
             acc
         },
     );
-    delimited(char('`'), build_string, char('`'))(input)
+    delimited(char('`'), build_string, char('`')).parse(input)
 }
 
 #[cfg(test)]
@@ -117,7 +117,7 @@ mod tests {
 
     // Helper for asserting successful template parsing
     fn assert_template_ast(input: &str, expected_vec: Vec<Value>) {
-        let result = parse_template::<nom::error::VerboseError<Span>>(Span::new(input));
+        let result = parse_template::<nom_language::error::VerboseError<Span>>(Span::new(input));
         assert!(result.is_ok(), "Parsing failed for input: {}", input);
         let (_, parsed_vec) = result.unwrap();
 

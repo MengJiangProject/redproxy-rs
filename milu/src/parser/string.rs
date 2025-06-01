@@ -20,7 +20,7 @@ use nom::combinator::{cut, map, map_opt, map_res, value, verify};
 use nom::error::{FromExternalError, ParseError};
 use nom::multi::fold_many0;
 use nom::sequence::{delimited, preceded};
-use nom::IResult;
+use nom::{IResult, Parser};
 
 use super::Span;
 // parser combinators are constructed from the bottom up:
@@ -59,7 +59,7 @@ where
     // the function returns None, map_opt returns an error. In this case, because
     // not all u32 values are valid unicode code points, we have to fallibly
     // convert to char with from_u32.
-    map_opt(parse_u32, std::char::from_u32)(input)
+    map_opt(parse_u32, std::char::from_u32).parse(input)
 }
 
 /// Parse an escaped character: \n, \t, \r, \u{00AC}, etc.
@@ -87,7 +87,7 @@ where
             value('/', char('/')),
             value('"', char('"')),
         ))),
-    )(input)
+    ).parse(input)
 }
 
 /// Parse a backslash, followed by any amount of whitespace. This is used later
@@ -95,7 +95,7 @@ where
 pub(crate) fn parse_escaped_whitespace<'a, E: ParseError<Span<'a>>>(
     input: Span<'a>,
 ) -> IResult<Span<'a>, Span<'a>, E> {
-    preceded(char('\\'), multispace1)(input)
+    preceded(char('\\'), multispace1).parse(input)
 }
 
 /// Parse a non-empty block of text that doesn't include \ or "
@@ -108,7 +108,7 @@ fn parse_literal<'a, E: ParseError<Span<'a>>>(input: Span<'a>) -> IResult<Span<'
     // the parser. The verification function accepts out output only if it
     // returns true. In this case, we want to ensure that the output of is_not
     // is non-empty.
-    verify(not_quote_slash, |s: &Span| !s.is_empty())(input)
+    verify(not_quote_slash, |s: &Span| !s.is_empty()).parse(input)
 }
 
 /// A string fragment contains a fragment of a string being parsed: either
@@ -134,7 +134,7 @@ where
         // Try parsing escaped whitespace first, as it also starts with a '\'
         value(StringFragment::EscapedWS, parse_escaped_whitespace),
         map(parse_escaped_char, StringFragment::EscapedChar),
-    ))(input)
+    )).parse(input)
 }
 
 /// Parse a string. Use a loop of parse_fragment and push all of the fragments
@@ -166,7 +166,7 @@ where
     // " character, the closing delimiter " would never match. When using
     // `delimited` with a looping parser (like fold_many0), be sure that the
     // loop won't accidentally match your closing delimiter!
-    delimited(char('"'), build_string, char('"'))(input)
+    delimited(char('"'), build_string, char('"')).parse(input)
 }
 
 #[cfg(test)]
@@ -195,7 +195,7 @@ mod tests {
     // Helper for error tests
     fn assert_parse_string_error(input: &str) {
         let data = Span::new(input);
-        assert!(parse_string::<nom::error::VerboseError<Span>>(data).is_err());
+        assert!(parse_string::<nom_language::error::VerboseError<Span>>(data).is_err());
     }
 
     #[test]
