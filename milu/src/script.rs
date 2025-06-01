@@ -483,16 +483,15 @@ impl Evaluatable for Value {
             ParsedFunction(_) => Ok(Type::Any),
         }
     }
-    
+
     async fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
         tracing::trace!("value_of={}", self);
         match self {
-            
             Self::Identifier(id) => {
                 let looked_up_value = ctx.lookup(id)?;
                 looked_up_value.value_of(ctx).await
             }
-            
+
             Self::OpCall(f) => f.call(ctx).await,
             // NativeObject and other literals return self.clone(); real_value_of handles unwrapping evaluatables.
             _ => Ok(self.clone()),
@@ -679,7 +678,7 @@ impl Call {
     }
     async fn signature(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
         // Made async
-        
+
         let resolved_func = self.func(ctx.clone()).await?; // Used await
         match resolved_func {
             ResolvedFunction::Native(native_ref) => {
@@ -698,9 +697,8 @@ impl Call {
             }
         }
     }
-    
+
     async fn call(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
-        
         let resolved_func = self.func(ctx.clone()).await?;
         match resolved_func {
             ResolvedFunction::Native(native_ref) => {
@@ -717,9 +715,8 @@ impl Call {
             ResolvedFunction::User(udf_ref) => udf_ref.call(ctx, &self.args).await,
         }
     }
-    
+
     async fn func(&self, ctx: ScriptContextRef) -> Result<ResolvedFunction, Error> {
-        
         let resolved_fn_val = if let Value::Identifier(_) = &self.func {
             self.func.value_of(ctx).await?
         } else {

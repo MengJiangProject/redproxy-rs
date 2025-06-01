@@ -378,12 +378,15 @@ impl Scope {
                             body: parsed_fn_arc.body.clone(),
                             captured_context: weak_self.clone(),
                         };
-                        new_ctx.varibles.insert(name_str, Value::Function(Arc::new(udf)));
+                        new_ctx
+                            .varibles
+                            .insert(name_str, Value::Function(Arc::new(udf)));
                     }
                     Value::Tuple(pair_arc) => {
                         let t = pair_arc.as_ref();
                         if t.len() != 2 {
-                            error = Some(err_msg(format!("Invalid variable binding tuple: {:?}", t)));
+                            error =
+                                Some(err_msg(format!("Invalid variable binding tuple: {:?}", t)));
                             break;
                         }
                         let id = match &t[0] {
