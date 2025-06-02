@@ -342,7 +342,7 @@ impl NativeObject for ScopeBinding {
 
 // Removed impl Callable for ScopeBinding block
 
-function_head!(Scope(vars: Array, expr: Any) => Any);
+function_head!(Scope(vars: Type::array_of(Type::Any), expr: Any) => Any);
 impl Scope {
     fn make_context(
         vars: &[Value],
@@ -502,7 +502,7 @@ impl Callable for Scope {
     }
 }
 
-function_head!(IsMemberOf(a: Any, ary: Array) => Boolean);
+function_head!(IsMemberOf(a: Any, ary: Type::array_of(Type::Any)) => Boolean);
 #[async_trait]
 impl Callable for IsMemberOf {
     async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
@@ -1369,7 +1369,7 @@ mod tests {
 // Array operations
 
 // map(array, function)
-function!(Map(array: Array, func: Any) => Type::array_of(Any), ctx=ctx, {
+function!(Map(array: Type::array_of(Type::Any), func: Any) => Type::array_of(Any), ctx=ctx, {
     let arr_val: Arc<Vec<Value>> = array.try_into()?;
     let mut result_array = Vec::with_capacity(arr_val.len());
 
@@ -1385,14 +1385,14 @@ function!(Map(array: Array, func: Any) => Type::array_of(Any), ctx=ctx, {
         let item_val = item.value_of(ctx.clone()).await?;
         // Pass callable_value directly to Call::new
         let call = Call::new(vec![callable_value.clone(), item_val]);
-        let result_item = call.value_of(ctx.clone()).await?;
+        let result_item = call.call(ctx.clone()).await?;
         result_array.push(result_item);
     }
     Ok(Value::Array(Arc::new(result_array)))
 });
 
 // find(array, function) -> Any (element or Null)
-function!(Find(array: Array, func: Any) => Any, ctx=ctx, {
+function!(Find(array: Type::array_of(Type::Any), func: Any) => Any, ctx=ctx, {
     let arr_val: Arc<Vec<Value>> = array.try_into()?;
 
     let func_val = func.value_of(ctx.clone()).await?;
@@ -1408,7 +1408,7 @@ function!(Find(array: Array, func: Any) => Any, ctx=ctx, {
         let item_val_for_fn = item.value_of(ctx.clone()).await?;
 
         let call = Call::new(vec![callable_value.clone(), item_val_for_fn]);
-        let result_val = call.value_of(ctx.clone()).await?;
+        let result_val = call.call(ctx.clone()).await?;
 
         let passes_test: bool = result_val.try_into().map_err(|e| {
             err_msg(format!("Find function must return a Boolean, got {:?} (error: {})", result_val, e))
@@ -1422,7 +1422,7 @@ function!(Find(array: Array, func: Any) => Any, ctx=ctx, {
 });
 
 // findIndex(array, function) -> Integer
-function!(FindIndex(array: Array, func: Any) => Integer, ctx=ctx, {
+function!(FindIndex(array: Type::array_of(Type::Any), func: Any) => Integer, ctx=ctx, {
     let arr_val: Arc<Vec<Value>> = array.try_into()?;
 
     let func_val = func.value_of(ctx.clone()).await?;
@@ -1437,7 +1437,7 @@ function!(FindIndex(array: Array, func: Any) => Integer, ctx=ctx, {
         let item_val_for_fn = item.value_of(ctx.clone()).await?;
 
         let call = Call::new(vec![callable_value.clone(), item_val_for_fn]);
-        let result_val = call.value_of(ctx.clone()).await?;
+        let result_val = call.call(ctx.clone()).await?;
 
         let passes_test: bool = result_val.try_into().map_err(|e| {
             err_msg(format!("FindIndex function must return a Boolean, got {:?} (error: {})", result_val, e))
@@ -1452,7 +1452,7 @@ function!(FindIndex(array: Array, func: Any) => Integer, ctx=ctx, {
 
 // forEach(array, function) -> Null (or some void equivalent)
 // The return type of forEach is now Boolean.
-function!(ForEach(array: Array, func: Any) => Boolean, ctx=ctx, {
+function!(ForEach(array: Type::array_of(Type::Any), func: Any) => Boolean, ctx=ctx, {
     let arr_val: Arc<Vec<Value>> = array.try_into()?;
 
     let func_val = func.value_of(ctx.clone()).await?;
@@ -1467,13 +1467,13 @@ function!(ForEach(array: Array, func: Any) => Boolean, ctx=ctx, {
         let item_val_for_fn = item.value_of(ctx.clone()).await?;
         let call = Call::new(vec![callable_value.clone(), item_val_for_fn]);
         // Execute the call, but ignore its result for forEach
-        call.value_of(ctx.clone()).await?;
+        call.call(ctx.clone()).await?;
     }
     Ok(Value::Boolean(true)) // forEach now returns true.
 });
 
 // indexOf(array, searchElement, fromIndex) -> Integer
-function!(IndexOf(array: Array, search_element: Any, from_index: Integer) => Integer, ctx=ctx, {
+function!(IndexOf(array: Type::array_of(Type::Any), search_element: Any, from_index: Integer) => Integer, ctx=ctx, {
     let arr_val: Arc<Vec<Value>> = array.try_into()?;
     let search_val = search_element.value_of(ctx.clone()).await?;
     let from_idx_i64: i64 = from_index.try_into()?;
@@ -1520,7 +1520,7 @@ function!(IndexOf(array: Array, search_element: Any, from_index: Integer) => Int
 });
 
 // includes(array, valueToFind, fromIndex) -> Boolean
-function!(Includes(array: Array, value_to_find: Any, from_index: Integer) => Boolean, ctx=ctx, {
+function!(Includes(array: Type::array_of(Type::Any), value_to_find: Any, from_index: Integer) => Boolean, ctx=ctx, {
     let arr_val: Arc<Vec<Value>> = array.try_into()?;
     let search_val = value_to_find.value_of(ctx.clone()).await?;
     let from_idx_i64: i64 = from_index.try_into()?;
@@ -1562,7 +1562,7 @@ function!(Includes(array: Array, value_to_find: Any, from_index: Integer) => Boo
 });
 
 // join(array, separator) -> String
-function!(Join(array: Array, separator: String) => String, ctx=ctx, {
+function!(Join(array: Type::array_of(Type::Any), separator: String) => String, ctx=ctx, {
     let arr_val: Arc<Vec<Value>> = array.try_into()?;
     let sep_str: String = separator.try_into()?; // Ensure separator is a string
 
@@ -1570,12 +1570,13 @@ function!(Join(array: Array, separator: String) => String, ctx=ctx, {
 
     for (index, item) in arr_val.iter().enumerate() {
         let item_val = item.value_of(ctx.clone()).await?;
-        let item_str = match item_val {
-            Value::Null => String::new(), // Convert Null to empty string
-            // TODO: Other Value types might need specific string conversions.
-            // Assuming a basic .to_string() for others.
-            // If Value has a more specific string conversion method, use that.
-            _ => item_val.to_string(), // Fallback to Display trait impl
+        // After removing Value::Null, the '_' arm handles all cases.
+        // Value::String should ideally be extracted directly to avoid re-alloc or re-format if to_string() is not optimal.
+        // However, for simplicity and to directly address the error, relying on .to_string() for all non-explicitly handled types is fine.
+        // The prompt's suggested refinement is good:
+        let item_str: String = match item_val {
+            Value::String(s_arc) => s_arc.as_ref().clone(), // Clone the inner String from Arc<String>
+            other => other.to_string(), // Fallback to Display trait impl for other types
         };
 
         result_str.push_str(&item_str);
@@ -1587,7 +1588,7 @@ function!(Join(array: Array, separator: String) => String, ctx=ctx, {
 });
 
 // slice(array, begin, end) -> Array
-function!(Slice(array: Array, begin_index: Integer, end_index: Integer) => Type::array_of(Any), ctx=ctx, {
+function!(Slice(array: Type::array_of(Type::Any), begin_index: Integer, end_index: Integer) => Type::array_of(Any), ctx=ctx, {
     let arr_val: Arc<Vec<Value>> = array.try_into()?;
     let len = arr_val.len();
 
@@ -1610,22 +1611,31 @@ function!(Slice(array: Array, begin_index: Integer, end_index: Integer) => Type:
 
     let mut result_array = Vec::new();
     if begin < end { // Only slice if begin is less than end
-        // .slice in Rust is exclusive for the end, matching JS behavior
-        // Ensure that begin and end are converted to usize for slicing
         let start_usize = begin as usize;
         let end_usize = end as usize;
 
-        // Iterate and clone elements for the new array.
-        // Values in arr_val are already `Value` types.
-        // Shallow copy means cloning the Value references/values.
-        for i in start_usize..end_usize {
-            if let Some(val_ref) = arr_val.get(i) {
-                 result_array.push(val_ref.clone());
-            } else {
-                // This case should ideally not be reached if clamping is correct
-                // and len is derived from arr_val.
-                break;
+        // Assuming the errors refer to using the Indexable trait from the input 'array' Value.
+        if let Some(indexable_array) = array.as_indexable() {
+            for i in start_usize..end_usize {
+                match indexable_array.get(i as i64) { // 1. Cast `i` to `i64`. 2. Match on `Result`.
+                    Ok(value) => {
+                        result_array.push(value); // `Indexable::get` returns owned `Value`.
+                    }
+                    Err(_) => {
+                        // Error during get (e.g. if index was out of bounds for the Indexable,
+                        // though loop bounds should prevent this for standard Vec-backed Indexable
+                        // if len was derived from the same source).
+                        // For Slice, typically we don't error but return what's possible.
+                        // Breaking here means we stop if any element retrieval fails.
+                        break;
+                    }
+                }
             }
+        } else {
+            // This case should not be reached if 'array' is indeed Type::array_of(Type::Any)
+            // as it would imply it's not Indexable, which would be a type system violation.
+            // However, to be safe:
+            return Err(err_msg("Input to Slice is not an indexable array"));
         }
     }
     // If begin >= end, an empty array is returned, which is correct.
@@ -1995,7 +2005,7 @@ function!(StringIndexOf(text: String, search_value: String, from_index: Integer)
 
 
 // reduce(array, initial_value, function)
-function!(Reduce(array: Array, initial_value: Any, func: Any) => Any, ctx=ctx, {
+function!(Reduce(array: Type::array_of(Type::Any), initial_value: Any, func: Any) => Any, ctx=ctx, {
     let arr_val: Arc<Vec<Value>> = array.try_into()?;
     let mut accumulator = initial_value.value_of(ctx.clone()).await?;
 
@@ -2014,13 +2024,13 @@ function!(Reduce(array: Array, initial_value: Any, func: Any) => Any, ctx=ctx, {
             accumulator.clone(), // Pass current accumulator
             current_value,       // Pass current item
         ]);
-        accumulator = call.value_of(ctx.clone()).await?; // Update accumulator with the result
+        accumulator = call.call(ctx.clone()).await?; // Update accumulator with the result
     }
     Ok(accumulator)
 });
 
 // filter(array, function)
-function!(Filter(array: Array, func: Any) => Type::array_of(Any), ctx=ctx, {
+function!(Filter(array: Type::array_of(Type::Any), func: Any) => Type::array_of(Any), ctx=ctx, {
     let arr_val: Arc<Vec<Value>> = array.try_into()?;
     let mut result_array = Vec::new();
 
@@ -2042,7 +2052,7 @@ function!(Filter(array: Array, func: Any) => Type::array_of(Any), ctx=ctx, {
         let item_val_for_fn = item.value_of(ctx.clone()).await?;
 
         let call = Call::new(vec![callable_value.clone(), item_val_for_fn]);
-        let result_val = call.value_of(ctx.clone()).await?;
+        let result_val = call.call(ctx.clone()).await?;
 
         let passes_test: bool = result_val.try_into().map_err(|e| {
             err_msg(format!("Filter function must return a Boolean, got {:?} (error: {})", result_val, e))
