@@ -326,10 +326,72 @@ impl ScriptContext {
 impl Default for ScriptContext {
     fn default() -> Self {
         let mut map = HashMap::default();
+
+        // Original/Kept
         map.insert("to_string".to_string(), stdlib::ToString::stub().into());
         map.insert("to_integer".to_string(), stdlib::ToInteger::stub().into());
-        map.insert("split".to_string(), stdlib::Split::stub().into());
+        map.insert("split".to_string(), stdlib::Split::stub().into()); // String split
         map.insert("strcat".to_string(), stdlib::StringConcat::stub().into());
+
+        // String general
+        map.insert("like".to_string(), stdlib::Like::stub().into());
+        map.insert("not_like".to_string(), stdlib::NotLike::stub().into());
+
+        // String functions (no "String" prefix, snake_case)
+        map.insert("char_at".to_string(), stdlib::StringCharAt::stub().into());
+        map.insert(
+            "char_code_at".to_string(),
+            stdlib::StringCharCodeAt::stub().into(),
+        );
+        map.insert(
+            "ends_with".to_string(),
+            stdlib::StringEndsWith::stub().into(),
+        );
+        map.insert(
+            "includes".to_string(),
+            stdlib::StringIncludes::stub().into(),
+        ); // String includes
+        map.insert("index_of".to_string(), stdlib::StringIndexOf::stub().into()); // String index_of
+        map.insert("match_str".to_string(), stdlib::StringMatch::stub().into());
+        map.insert("replace".to_string(), stdlib::StringReplace::stub().into());
+        map.insert(
+            "replace_regex".to_string(),
+            stdlib::StringReplaceRegex::stub().into(),
+        );
+        map.insert("slice".to_string(), stdlib::StringSlice::stub().into()); // String slice
+        map.insert(
+            "starts_with".to_string(),
+            stdlib::StringStartsWith::stub().into(),
+        );
+        map.insert(
+            "substring".to_string(),
+            stdlib::StringSubstring::stub().into(),
+        );
+        map.insert(
+            "lower_case".to_string(),
+            stdlib::StringLowerCase::stub().into(),
+        );
+        map.insert(
+            "upper_case".to_string(),
+            stdlib::StringUpperCase::stub().into(),
+        );
+        map.insert("trim".to_string(), stdlib::StringTrim::stub().into());
+
+        // Array functions (snake_case)
+        map.insert("map".to_string(), stdlib::Map::stub().into());
+        map.insert("reduce".to_string(), stdlib::Reduce::stub().into());
+        map.insert("filter".to_string(), stdlib::Filter::stub().into());
+        map.insert("find".to_string(), stdlib::Find::stub().into());
+        map.insert("find_index".to_string(), stdlib::FindIndex::stub().into());
+        map.insert("for_each".to_string(), stdlib::ForEach::stub().into());
+        map.insert("array_index_of".to_string(), stdlib::IndexOf::stub().into()); // Array IndexOf
+        map.insert(
+            "array_includes".to_string(),
+            stdlib::Includes::stub().into(),
+        ); // Array Includes
+        map.insert("join".to_string(), stdlib::Join::stub().into());
+        map.insert("array_slice".to_string(), stdlib::Slice::stub().into()); // Array Slice
+
         Self {
             parent: None,
             varibles: map,
