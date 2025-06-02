@@ -321,13 +321,15 @@ impl Evaluatable for ScopeBinding {
         // Made async
         // If self.value.type_of becomes async, this will need .await
         // For now, assuming self.value.type_of is still effectively sync or blocks if it calls async code
-        self.value.type_of(self.ctx.upgrade().unwrap()).await
+        let strong_ctx = self.ctx.upgrade().ok_or_else(|| err_msg("Scope context lost for type_of"))?;
+        self.value.type_of(strong_ctx).await
     }
 
     async fn value_of(&self, _calling_ctx: ScriptContextRef) -> Result<Value, Error> {
         // A ScopeBinding always evaluates its stored value within its captured context.
         // The calling_ctx is not used here because the value's resolution is fixed at definition.
-        self.value.real_value_of(self.ctx.upgrade().unwrap()).await
+        let strong_ctx = self.ctx.upgrade().ok_or_else(|| err_msg("Scope context lost for value_of"))?;
+        self.value.real_value_of(strong_ctx).await
     }
 }
 
@@ -591,23 +593,38 @@ int_op!(ShiftRight,>>);
 function!(ShiftRightUnsigned(a: Integer, b: Integer)=>Integer, {
     let a:i64 = a.try_into()?;
     let b:i64 = b.try_into()?;
+    if b < 0 || b >= 64 {
+        bail!("Shift amount for ShiftRightUnsigned must be between 0 and 63, got {}", b);
+    }
     let a = a as u64;
     let a = (a >> b) as i64;
     Ok(a.into())
 });
 
 function!(And(a: Boolean, b: Boolean)=>Boolean, ctx=ctx, arg_opts=raw,{
-    let a_val:bool = a.real_value_of(ctx.clone()).await?.try_into()?;
-    let b_val:bool = b.real_value_of(ctx).await?.try_into()?;
-    let ret:bool = a_val && b_val;
-    Ok(ret.into())
+    {
+        let a_val: bool = a.real_value_of(ctx.clone()).await?.try_into()?;
+        if !a_val {
+            return Ok(false.into());
+        }
+        let b_val: bool = b.real_value_of(ctx).await?.try_into()?;
+        // If a_val is true, the result is b_val.
+        // This also correctly handles the case where b_val is false.
+        Ok(b_val.into())
+    }
 });
 
 function!(Or(a: Boolean, b: Boolean)=>Boolean, ctx=ctx, arg_opts=raw,{
-    let a_val:bool = a.real_value_of(ctx.clone()).await?.try_into()?;
-    let b_val:bool = b.real_value_of(ctx).await?.try_into()?;
-    let ret:bool = a_val || b_val;
-    Ok(ret.into())
+    {
+        let a_val: bool = a.real_value_of(ctx.clone()).await?.try_into()?;
+        if a_val {
+            return Ok(true.into());
+        }
+        let b_val: bool = b.real_value_of(ctx).await?.try_into()?;
+        // If a_val is false, the result is b_val.
+        // This also correctly handles the case where b_val is true.
+        Ok(b_val.into())
+    }
 });
 
 function!(Xor(a: Boolean, b: Boolean)=>Boolean, ctx=ctx, arg_opts=raw,{
@@ -646,7 +663,7 @@ macro_rules! old_compare_op_behavior {
                 (Value::Integer(a_val),Value::Integer(b_val)) => Ok((a_val $op b_val).into()),
                 (Value::String(a_val),Value::String(b_val)) => Ok((a_val $op b_val).into()),
                 (Value::Boolean(a_val),Value::Boolean(b_val)) => Ok((a_val $op b_val).into()),
-                _ => panic!("comparison not implemented for these types") // More specific panic
+                _ => bail!("Comparison not implemented for these types: {:?} and {:?}", a, b)
             }
         });
     }
@@ -856,6 +873,8 @@ mod tests {
         [1234.into(), 45.into()],
         ((1234u64 >> 45) as i64).into()
     );
+    op_error_test!(shru_negative_shift, ShiftRightUnsigned, [10.into(), (-1).into()], "Shift amount for ShiftRightUnsigned must be between 0 and 63");
+    op_error_test!(shru_large_shift, ShiftRightUnsigned, [10.into(), 64.into()], "Shift amount for ShiftRightUnsigned must be between 0 and 63");
 
     macro_rules! bool_op_test {
         ($name:ident, $fn:ident, $op:tt) => {
@@ -879,6 +898,13 @@ mod tests {
     cmp_op_test!(lesser_or_equal,LesserOrEqual,<=);
     cmp_op_test!(equal,Equal,==);
     cmp_op_test!(not_equal,NotEqual,!=);
+
+    op_error_test!(greater_int_string, Greater, [1.into(), "hello".into()], "Comparison not implemented for these types");
+    op_error_test!(greater_string_int, Greater, ["hello".into(), 1.into()], "Comparison not implemented for these types");
+    op_error_test!(greater_bool_int, Greater, [true.into(), 1.into()], "Comparison not implemented for these types");
+    op_error_test!(lesser_int_string, Lesser, [1.into(), "hello".into()], "Comparison not implemented for these types");
+    op_error_test!(goe_int_string, GreaterOrEqual, [1.into(), "hello".into()], "Comparison not implemented for these types");
+    op_error_test!(loe_int_string, LesserOrEqual, [1.into(), "hello".into()], "Comparison not implemented for these types");
 
     op_test!(like, Like, ["abc".into(), "a".into()], true.into());
     op_test!(not_like, NotLike, ["abc".into(), "a".into()], false.into());
@@ -1208,7 +1234,7 @@ mod tests {
     op_test!(join_multiple_elements, Join, [Value::Array(Arc::new(vec!["a".into(), "b".into(), "c".into()])), ",".into()], Value::String("a,b,c".into()));
     op_test!(join_with_empty_separator, Join, [Value::Array(Arc::new(vec!["a".into(), "b".into(), "c".into()])), "".into()], Value::String("abc".into()));
     op_test!(join_with_null_like_elements, Join, // Assuming Value::Null.to_string() is empty string as per Join impl.
-        [Value::Array(Arc::new(vec!["a".into(), Value::Null, "c".into()])), ",".into()], Value::String("a,,c".into())
+        [Value::Array(Arc::new(vec!["a".into(), Value::Null, "c".into()])), ",".into()], Value::String("a,null,c".into())
     );
     op_test!(join_with_non_string_elements, Join, // Uses .to_string() for elements
         [Value::Array(Arc::new(vec![1.into(), true.into(), "c".into()])), "-".into()], Value::String("1-true-c".into())
@@ -1282,6 +1308,10 @@ mod tests {
     // StringReplace and StringReplaceRegex
     op_test!(string_replace_literal, StringReplace, ["hello world".into(), "world".into(), "Rust".into()], "hello Rust".into());
     op_test!(string_replace_literal_no_match, StringReplace, ["hello".into(), "x".into(), "y".into()], "hello".into());
+    op_test!(string_replace_unicode_pattern, StringReplace, ["😊😊".into(), "😊".into(), "X".into()], "X😊".into());
+    op_test!(string_replace_unicode_pattern_no_match, StringReplace, ["ab".into(), "😊".into(), "X".into()], "ab".into());
+    op_test!(string_replace_unicode_text, StringReplace, ["hello😊world".into(), "😊".into(), "X".into()], "helloXworld".into());
+    op_test!(string_replace_empty_pattern, StringReplace, ["abc".into(), "".into(), "X".into()], "abc".into()); // Based on proposed fix for empty pattern
     op_test!(string_replace_regex_first, StringReplaceRegex, ["abab".into(), "b".into(), "c".into()], "acac".into()); // Should be "acab" if only first, "acac" if all. Current is all.
     op_test!(string_replace_regex_all, StringReplaceRegex, ["abab".into(), "b".into(), "c".into()], "acac".into());
     op_test!(string_replace_regex_groups_not_supported_yet, StringReplaceRegex, ["hello 123".into(), "(\\w+) (\\d+)".into(), "$2 $1".into()], "$2 $1".into()); // Placeholder, current impl is literal replacement
@@ -1668,24 +1698,34 @@ function!(StringCharAt(text: String, index: Integer) => String, ctx=ctx, {
 // Special replacement patterns in ReplacementString (e.g., $&) are NOT supported initially.
 // This version is for LITERAL string replacement.
 function!(StringReplace(text: String, pattern: String, replacement: String) => String, ctx=ctx, {
-    let s: String = text.try_into()?;
-    let p_str: String = pattern.try_into()?;
-    let repl_text: String = replacement.try_into()?;
+    {
+        let s: String = text.try_into()?;
+        let p_str: String = pattern.try_into()?;
+        let repl_text: String = replacement.try_into()?;
 
-    // Simple string replacement, first occurrence (like Rust's str.replacen(p_str, &repl_text, 1))
-    // For char-based replacement rather than byte-based:
-    // This is tricky with Rust's string.find which is byte-based.
-    // A full char-correct version would be more involved or require iterating chars.
-    // For now, using byte-based find and replace, which is fine if pattern and string are ASCII or pattern appears consistently.
-    // This is equivalent to `s.replacen(&p_str, &repl_text, 1)` but done manually to illustrate.
-    if let Some(byte_idx) = s.find(&p_str) {
-        let mut result = String::with_capacity(s.len() - p_str.len() + repl_text.len());
-        result.push_str(&s[..byte_idx]);
-        result.push_str(&repl_text);
-        result.push_str(&s[byte_idx + p_str.len()..]);
-        Ok(Value::String(result.into()))
-    } else {
-        Ok(Value::String(s.into())) // No match, return original string
+        if p_str.is_empty() { // Edge case: what to do if pattern is empty? JS replaces at start and between every char.
+                            // Rust's replace treats empty pattern differently.
+                            // For now, let's say if pattern is empty, return original string (or define specific behavior).
+                            // Let's try to mimic Rust's `replacen("", ..., 1)` which is a no-op if s is not empty.
+                            // If p_str is empty, many `replace` functions have unique behavior, often inserting at start.
+                            // Simplest: if pattern is empty, no replacement.
+                            return Ok(Value::String(s.into()));
+        }
+
+        // Escape the pattern string to treat it as a literal in regex
+        let escaped_pattern = regex::escape(&p_str);
+        match regex::Regex::new(&escaped_pattern) {
+            Ok(re) => {
+                let result = re.replacen(&s, 1, repl_text.as_str()).to_string();
+                Ok(Value::String(result.into()))
+            }
+            Err(_) => {
+                // This should ideally not happen if regex::escape is correct
+                // and p_str was a valid string.
+                // But as a fallback if escape itself leads to an issue for some reason.
+                bail!("Failed to create regex from escaped literal pattern for StringReplace")
+            }
+        }
     }
 });
 
