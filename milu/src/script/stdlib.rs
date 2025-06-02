@@ -321,14 +321,20 @@ impl Evaluatable for ScopeBinding {
         // Made async
         // If self.value.type_of becomes async, this will need .await
         // For now, assuming self.value.type_of is still effectively sync or blocks if it calls async code
-        let strong_ctx = self.ctx.upgrade().ok_or_else(|| err_msg("Scope context lost for type_of"))?;
+        let strong_ctx = self
+            .ctx
+            .upgrade()
+            .ok_or_else(|| err_msg("Scope context lost for type_of"))?;
         self.value.type_of(strong_ctx).await
     }
 
     async fn value_of(&self, _calling_ctx: ScriptContextRef) -> Result<Value, Error> {
         // A ScopeBinding always evaluates its stored value within its captured context.
         // The calling_ctx is not used here because the value's resolution is fixed at definition.
-        let strong_ctx = self.ctx.upgrade().ok_or_else(|| err_msg("Scope context lost for value_of"))?;
+        let strong_ctx = self
+            .ctx
+            .upgrade()
+            .ok_or_else(|| err_msg("Scope context lost for value_of"))?;
         self.value.real_value_of(strong_ctx).await
     }
 }
@@ -873,8 +879,18 @@ mod tests {
         [1234.into(), 45.into()],
         ((1234u64 >> 45) as i64).into()
     );
-    op_error_test!(shru_negative_shift, ShiftRightUnsigned, [10.into(), (-1).into()], "Shift amount for ShiftRightUnsigned must be between 0 and 63");
-    op_error_test!(shru_large_shift, ShiftRightUnsigned, [10.into(), 64.into()], "Shift amount for ShiftRightUnsigned must be between 0 and 63");
+    op_error_test!(
+        shru_negative_shift,
+        ShiftRightUnsigned,
+        [10.into(), (-1).into()],
+        "Shift amount for ShiftRightUnsigned must be between 0 and 63"
+    );
+    op_error_test!(
+        shru_large_shift,
+        ShiftRightUnsigned,
+        [10.into(), 64.into()],
+        "Shift amount for ShiftRightUnsigned must be between 0 and 63"
+    );
 
     macro_rules! bool_op_test {
         ($name:ident, $fn:ident, $op:tt) => {
@@ -899,12 +915,42 @@ mod tests {
     cmp_op_test!(equal,Equal,==);
     cmp_op_test!(not_equal,NotEqual,!=);
 
-    op_error_test!(greater_int_string, Greater, [1.into(), "hello".into()], "Comparison not implemented for these types");
-    op_error_test!(greater_string_int, Greater, ["hello".into(), 1.into()], "Comparison not implemented for these types");
-    op_error_test!(greater_bool_int, Greater, [true.into(), 1.into()], "Comparison not implemented for these types");
-    op_error_test!(lesser_int_string, Lesser, [1.into(), "hello".into()], "Comparison not implemented for these types");
-    op_error_test!(goe_int_string, GreaterOrEqual, [1.into(), "hello".into()], "Comparison not implemented for these types");
-    op_error_test!(loe_int_string, LesserOrEqual, [1.into(), "hello".into()], "Comparison not implemented for these types");
+    op_error_test!(
+        greater_int_string,
+        Greater,
+        [1.into(), "hello".into()],
+        "Comparison not implemented for these types"
+    );
+    op_error_test!(
+        greater_string_int,
+        Greater,
+        ["hello".into(), 1.into()],
+        "Comparison not implemented for these types"
+    );
+    op_error_test!(
+        greater_bool_int,
+        Greater,
+        [true.into(), 1.into()],
+        "Comparison not implemented for these types"
+    );
+    op_error_test!(
+        lesser_int_string,
+        Lesser,
+        [1.into(), "hello".into()],
+        "Comparison not implemented for these types"
+    );
+    op_error_test!(
+        goe_int_string,
+        GreaterOrEqual,
+        [1.into(), "hello".into()],
+        "Comparison not implemented for these types"
+    );
+    op_error_test!(
+        loe_int_string,
+        LesserOrEqual,
+        [1.into(), "hello".into()],
+        "Comparison not implemented for these types"
+    );
 
     op_test!(like, Like, ["abc".into(), "a".into()], true.into());
     op_test!(not_like, NotLike, ["abc".into(), "a".into()], false.into());
@@ -1123,277 +1169,1074 @@ mod tests {
     // --- Array Function Tests ---
 
     // Map Tests
-    op_test!(map_empty_array, Map, [Value::Array(Arc::new(vec![])), TestHelperAddOne::stub().into()], Value::Array(Arc::new(vec![])));
-    op_test!(map_integers_add_one, Map,
-        [Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into()])), TestHelperAddOne::stub().into()],
+    op_test!(
+        map_empty_array,
+        Map,
+        [
+            Value::Array(Arc::new(vec![])),
+            TestHelperAddOne::stub().into()
+        ],
+        Value::Array(Arc::new(vec![]))
+    );
+    op_test!(
+        map_integers_add_one,
+        Map,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into()])),
+            TestHelperAddOne::stub().into()
+        ],
         Value::Array(Arc::new(vec![2.into(), 3.into(), 4.into()]))
     );
-    op_test!(map_integers_to_string, Map,
-        [Value::Array(Arc::new(vec![1.into(), 2.into()])), TestHelperToString::stub().into()],
-        Value::Array(Arc::new(vec![Value::String("1".into()), Value::String("2".into())]))
+    op_test!(
+        map_integers_to_string,
+        Map,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into()])),
+            TestHelperToString::stub().into()
+        ],
+        Value::Array(Arc::new(vec![
+            Value::String("1".into()),
+            Value::String("2".into())
+        ]))
     );
 
     // Reduce Tests
-    op_test!(reduce_empty_array, Reduce,
-        [Value::Array(Arc::new(vec![])), Value::Integer(10), TestHelperSum::stub().into()],
+    op_test!(
+        reduce_empty_array,
+        Reduce,
+        [
+            Value::Array(Arc::new(vec![])),
+            Value::Integer(10),
+            TestHelperSum::stub().into()
+        ],
         Value::Integer(10)
     );
-    op_test!(reduce_integers_sum, Reduce,
-        [Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into()])), Value::Integer(0), TestHelperSum::stub().into()],
+    op_test!(
+        reduce_integers_sum,
+        Reduce,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into()])),
+            Value::Integer(0),
+            TestHelperSum::stub().into()
+        ],
         Value::Integer(6)
     );
-    op_test!(reduce_integers_sum_with_initial, Reduce,
-        [Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into()])), Value::Integer(10), TestHelperSum::stub().into()],
+    op_test!(
+        reduce_integers_sum_with_initial,
+        Reduce,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into()])),
+            Value::Integer(10),
+            TestHelperSum::stub().into()
+        ],
         Value::Integer(16)
     );
 
     // Filter Tests
-    op_test!(filter_empty_array, Filter,
-        [Value::Array(Arc::new(vec![])), TestHelperIsEven::stub().into()],
+    op_test!(
+        filter_empty_array,
+        Filter,
+        [
+            Value::Array(Arc::new(vec![])),
+            TestHelperIsEven::stub().into()
+        ],
         Value::Array(Arc::new(vec![]))
     );
-    op_test!(filter_integers_is_even, Filter,
-        [Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into(), 4.into(), 5.into()])), TestHelperIsEven::stub().into()],
+    op_test!(
+        filter_integers_is_even,
+        Filter,
+        [
+            Value::Array(Arc::new(vec![
+                1.into(),
+                2.into(),
+                3.into(),
+                4.into(),
+                5.into()
+            ])),
+            TestHelperIsEven::stub().into()
+        ],
         Value::Array(Arc::new(vec![2.into(), 4.into()]))
     );
     // Define TestHelperTrue and TestHelperFalse using function! macro for consistency
     function!(TestHelperTrue(_val: Any) => Boolean, { Ok(Value::Boolean(true)) });
     function!(TestHelperFalse(_val: Any) => Boolean, { Ok(Value::Boolean(false)) });
 
-    op_test!(filter_integers_keep_all, Filter,
-        [Value::Array(Arc::new(vec![1.into(), 2.into()])), TestHelperTrue::stub().into()],
+    op_test!(
+        filter_integers_keep_all,
+        Filter,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into()])),
+            TestHelperTrue::stub().into()
+        ],
         Value::Array(Arc::new(vec![1.into(), 2.into()]))
     );
-    op_test!(filter_integers_remove_all, Filter,
-        [Value::Array(Arc::new(vec![1.into(), 2.into()])), TestHelperFalse::stub().into()],
+    op_test!(
+        filter_integers_remove_all,
+        Filter,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into()])),
+            TestHelperFalse::stub().into()
+        ],
         Value::Array(Arc::new(vec![]))
     );
 
     // Find Tests
-    op_test!(find_empty_array, Find,
-        [Value::Array(Arc::new(vec![])), TestHelperIsEven::stub().into()],
+    op_test!(
+        find_empty_array,
+        Find,
+        [
+            Value::Array(Arc::new(vec![])),
+            TestHelperIsEven::stub().into()
+        ],
         false.into() // Updated: expect Value::Boolean(false)
     );
-    op_test!(find_integer_is_even_found, Find,
-        [Value::Array(Arc::new(vec![1.into(), 3.into(), 4.into(), 6.into()])), TestHelperIsEven::stub().into()],
+    op_test!(
+        find_integer_is_even_found,
+        Find,
+        [
+            Value::Array(Arc::new(vec![1.into(), 3.into(), 4.into(), 6.into()])),
+            TestHelperIsEven::stub().into()
+        ],
         4.into() // Should return the first even number found
     );
-    op_test!(find_integer_is_even_not_found, Find,
-        [Value::Array(Arc::new(vec![1.into(), 3.into(), 5.into()])), TestHelperIsEven::stub().into()],
+    op_test!(
+        find_integer_is_even_not_found,
+        Find,
+        [
+            Value::Array(Arc::new(vec![1.into(), 3.into(), 5.into()])),
+            TestHelperIsEven::stub().into()
+        ],
         false.into() // Updated: expect Value::Boolean(false)
     );
 
     // FindIndex Tests
-    op_test!(find_index_empty_array, FindIndex,
-        [Value::Array(Arc::new(vec![])), TestHelperIsEven::stub().into()],
+    op_test!(
+        find_index_empty_array,
+        FindIndex,
+        [
+            Value::Array(Arc::new(vec![])),
+            TestHelperIsEven::stub().into()
+        ],
         Value::Integer(-1)
     );
-    op_test!(find_index_integer_is_even_found, FindIndex,
-        [Value::Array(Arc::new(vec![1.into(), 3.into(), 4.into(), 6.into()])), TestHelperIsEven::stub().into()],
+    op_test!(
+        find_index_integer_is_even_found,
+        FindIndex,
+        [
+            Value::Array(Arc::new(vec![1.into(), 3.into(), 4.into(), 6.into()])),
+            TestHelperIsEven::stub().into()
+        ],
         Value::Integer(2) // Index of '4'
     );
-    op_test!(find_index_integer_is_even_not_found, FindIndex,
-        [Value::Array(Arc::new(vec![1.into(), 3.into(), 5.into()])), TestHelperIsEven::stub().into()],
+    op_test!(
+        find_index_integer_is_even_not_found,
+        FindIndex,
+        [
+            Value::Array(Arc::new(vec![1.into(), 3.into(), 5.into()])),
+            TestHelperIsEven::stub().into()
+        ],
         Value::Integer(-1)
     );
 
     // ForEach Tests
-    op_test!(for_each_empty_array, ForEach,
-        [Value::Array(Arc::new(vec![])), TestHelperAddOne::stub().into()],
+    op_test!(
+        for_each_empty_array,
+        ForEach,
+        [
+            Value::Array(Arc::new(vec![])),
+            TestHelperAddOne::stub().into()
+        ],
         true.into() // Updated: ForEach returns true
     );
-    op_test!(for_each_integers, ForEach,
-        [Value::Array(Arc::new(vec![1.into(), 2.into()])), TestHelperAddOne::stub().into()],
+    op_test!(
+        for_each_integers,
+        ForEach,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into()])),
+            TestHelperAddOne::stub().into()
+        ],
         true.into() // Updated: Callback is executed, ForEach returns true
     );
 
     // IndexOf Tests
-    op_test!(index_of_empty_array, IndexOf, [Value::Array(Arc::new(vec![])), 1.into(), 0.into()], Value::Integer(-1));
-    op_test!(index_of_found, IndexOf, [Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])), 20.into(), 0.into()], Value::Integer(1));
-    op_test!(index_of_not_found, IndexOf, [Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])), 40.into(), 0.into()], Value::Integer(-1));
-    op_test!(index_of_from_index_positive_found, IndexOf, [Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into(), 20.into()])), 20.into(), 2.into()], Value::Integer(3));
-    op_test!(index_of_from_index_positive_not_found, IndexOf, [Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])), 20.into(), 2.into()], Value::Integer(-1));
-    op_test!(index_of_from_index_negative_found, IndexOf, [Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])), 10.into(), (-3).into()], Value::Integer(0)); // -3 from end is index 0
-    op_test!(index_of_from_index_negative_found_mid, IndexOf, [Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into(), 40.into()])), 30.into(), (-2).into()], Value::Integer(2)); // -2 from end is index 2
-    op_test!(index_of_from_index_out_of_bounds_positive, IndexOf, [Value::Array(Arc::new(vec![10.into(), 20.into()])), 10.into(), 5.into()], Value::Integer(-1));
-    op_test!(index_of_from_index_out_of_bounds_negative, IndexOf, [Value::Array(Arc::new(vec![10.into(), 20.into()])), 10.into(), (-5).into()], Value::Integer(0)); // -5 from end is effectively 0
+    op_test!(
+        index_of_empty_array,
+        IndexOf,
+        [Value::Array(Arc::new(vec![])), 1.into(), 0.into()],
+        Value::Integer(-1)
+    );
+    op_test!(
+        index_of_found,
+        IndexOf,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])),
+            20.into(),
+            0.into()
+        ],
+        Value::Integer(1)
+    );
+    op_test!(
+        index_of_not_found,
+        IndexOf,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])),
+            40.into(),
+            0.into()
+        ],
+        Value::Integer(-1)
+    );
+    op_test!(
+        index_of_from_index_positive_found,
+        IndexOf,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into(), 20.into()])),
+            20.into(),
+            2.into()
+        ],
+        Value::Integer(3)
+    );
+    op_test!(
+        index_of_from_index_positive_not_found,
+        IndexOf,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])),
+            20.into(),
+            2.into()
+        ],
+        Value::Integer(-1)
+    );
+    op_test!(
+        index_of_from_index_negative_found,
+        IndexOf,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])),
+            10.into(),
+            (-3).into()
+        ],
+        Value::Integer(0)
+    ); // -3 from end is index 0
+    op_test!(
+        index_of_from_index_negative_found_mid,
+        IndexOf,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into(), 40.into()])),
+            30.into(),
+            (-2).into()
+        ],
+        Value::Integer(2)
+    ); // -2 from end is index 2
+    op_test!(
+        index_of_from_index_out_of_bounds_positive,
+        IndexOf,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into()])),
+            10.into(),
+            5.into()
+        ],
+        Value::Integer(-1)
+    );
+    op_test!(
+        index_of_from_index_out_of_bounds_negative,
+        IndexOf,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into()])),
+            10.into(),
+            (-5).into()
+        ],
+        Value::Integer(0)
+    ); // -5 from end is effectively 0
 
     // Includes Tests
-    op_test!(includes_empty_array, Includes, [Value::Array(Arc::new(vec![])), 1.into(), 0.into()], Value::Boolean(false));
-    op_test!(includes_found, Includes, [Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])), 20.into(), 0.into()], Value::Boolean(true));
-    op_test!(includes_not_found, Includes, [Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])), 40.into(), 0.into()], Value::Boolean(false));
-    op_test!(includes_from_index_positive_found, Includes, [Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into(), 20.into()])), 20.into(), 2.into()], Value::Boolean(true));
-    op_test!(includes_from_index_positive_not_found, Includes, [Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])), 20.into(), 2.into()], Value::Boolean(false));
-    op_test!(includes_from_index_negative_found, Includes, [Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])), 10.into(), (-3).into()], Value::Boolean(true));
-    op_test!(includes_from_index_out_of_bounds_positive, Includes, [Value::Array(Arc::new(vec![10.into(), 20.into()])), 10.into(), 5.into()], Value::Boolean(false));
-    op_test!(includes_from_index_out_of_bounds_negative, Includes, [Value::Array(Arc::new(vec![10.into(), 20.into()])), 10.into(), (-5).into()], Value::Boolean(true)); // -5 from end is effectively 0
+    op_test!(
+        includes_empty_array,
+        Includes,
+        [Value::Array(Arc::new(vec![])), 1.into(), 0.into()],
+        Value::Boolean(false)
+    );
+    op_test!(
+        includes_found,
+        Includes,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])),
+            20.into(),
+            0.into()
+        ],
+        Value::Boolean(true)
+    );
+    op_test!(
+        includes_not_found,
+        Includes,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])),
+            40.into(),
+            0.into()
+        ],
+        Value::Boolean(false)
+    );
+    op_test!(
+        includes_from_index_positive_found,
+        Includes,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into(), 20.into()])),
+            20.into(),
+            2.into()
+        ],
+        Value::Boolean(true)
+    );
+    op_test!(
+        includes_from_index_positive_not_found,
+        Includes,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])),
+            20.into(),
+            2.into()
+        ],
+        Value::Boolean(false)
+    );
+    op_test!(
+        includes_from_index_negative_found,
+        Includes,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into(), 30.into()])),
+            10.into(),
+            (-3).into()
+        ],
+        Value::Boolean(true)
+    );
+    op_test!(
+        includes_from_index_out_of_bounds_positive,
+        Includes,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into()])),
+            10.into(),
+            5.into()
+        ],
+        Value::Boolean(false)
+    );
+    op_test!(
+        includes_from_index_out_of_bounds_negative,
+        Includes,
+        [
+            Value::Array(Arc::new(vec![10.into(), 20.into()])),
+            10.into(),
+            (-5).into()
+        ],
+        Value::Boolean(true)
+    ); // -5 from end is effectively 0
 
     // Join Tests
-    op_test!(join_empty_array, Join, [Value::Array(Arc::new(vec![])), ",".into()], Value::String("".into()));
-    op_test!(join_single_element, Join, [Value::Array(Arc::new(vec!["a".into()])), ",".into()], Value::String("a".into()));
-    op_test!(join_multiple_elements, Join, [Value::Array(Arc::new(vec!["a".into(), "b".into(), "c".into()])), ",".into()], Value::String("a,b,c".into()));
-    op_test!(join_with_empty_separator, Join, [Value::Array(Arc::new(vec!["a".into(), "b".into(), "c".into()])), "".into()], Value::String("abc".into()));
-    op_test!(join_with_null_like_elements, Join, // Assuming Value::Null.to_string() is empty string as per Join impl.
-        [Value::Array(Arc::new(vec!["a".into(), Value::Null, "c".into()])), ",".into()], Value::String("a,null,c".into())
+    op_test!(
+        join_empty_array,
+        Join,
+        [Value::Array(Arc::new(vec![])), ",".into()],
+        Value::String("".into())
     );
-    op_test!(join_with_non_string_elements, Join, // Uses .to_string() for elements
-        [Value::Array(Arc::new(vec![1.into(), true.into(), "c".into()])), "-".into()], Value::String("1-true-c".into())
+    op_test!(
+        join_single_element,
+        Join,
+        [Value::Array(Arc::new(vec!["a".into()])), ",".into()],
+        Value::String("a".into())
     );
-
+    op_test!(
+        join_multiple_elements,
+        Join,
+        [
+            Value::Array(Arc::new(vec!["a".into(), "b".into(), "c".into()])),
+            ",".into()
+        ],
+        Value::String("a,b,c".into())
+    );
+    op_test!(
+        join_with_empty_separator,
+        Join,
+        [
+            Value::Array(Arc::new(vec!["a".into(), "b".into(), "c".into()])),
+            "".into()
+        ],
+        Value::String("abc".into())
+    );
     // Slice Tests
-    op_test!(slice_empty_array, Slice, [Value::Array(Arc::new(vec![])), 0.into(), 0.into()], Value::Array(Arc::new(vec![])));
-    op_test!(slice_basic, Slice, [Value::Array(Arc::new(vec![1.into(),2.into(),3.into(),4.into()])), 1.into(), 3.into()], Value::Array(Arc::new(vec![2.into(),3.into()])));
-    op_test!(slice_to_end, Slice, [Value::Array(Arc::new(vec![1.into(),2.into(),3.into(),4.into()])), 2.into(), 4.into()], Value::Array(Arc::new(vec![3.into(),4.into()])));
-    op_test!(slice_from_beginning, Slice, [Value::Array(Arc::new(vec![1.into(),2.into(),3.into(),4.into()])), 0.into(), 2.into()], Value::Array(Arc::new(vec![1.into(),2.into()])));
-    op_test!(slice_negative_begin, Slice, [Value::Array(Arc::new(vec![1.into(),2.into(),3.into(),4.into()])), (-2).into(), 4.into()], Value::Array(Arc::new(vec![3.into(),4.into()])));
-    op_test!(slice_negative_end, Slice, [Value::Array(Arc::new(vec![1.into(),2.into(),3.into(),4.into()])), 1.into(), (-1).into()], Value::Array(Arc::new(vec![2.into(),3.into()])));
-    op_test!(slice_negative_begin_and_end, Slice, [Value::Array(Arc::new(vec![1.into(),2.into(),3.into(),4.into()])), (-3).into(), (-1).into()], Value::Array(Arc::new(vec![2.into(),3.into()])));
-    op_test!(slice_begin_out_of_bounds_positive, Slice, [Value::Array(Arc::new(vec![1.into(),2.into()])), 5.into(), 6.into()], Value::Array(Arc::new(vec![])));
-    op_test!(slice_end_out_of_bounds_positive, Slice, [Value::Array(Arc::new(vec![1.into(),2.into()])), 0.into(), 5.into()], Value::Array(Arc::new(vec![1.into(),2.into()])));
-    op_test!(slice_begin_greater_than_end, Slice, [Value::Array(Arc::new(vec![1.into(),2.into()])), 1.into(), 0.into()], Value::Array(Arc::new(vec![])));
-    op_test!(slice_full_array_clone, Slice, [Value::Array(Arc::new(vec![1.into(),2.into()])), 0.into(), 2.into()], Value::Array(Arc::new(vec![1.into(),2.into()])));
-    op_test!(slice_begin_equals_end, Slice, [Value::Array(Arc::new(vec![1.into(),2.into(),3.into()])), 1.into(), 1.into()], Value::Array(Arc::new(vec![])));
+    op_test!(
+        slice_empty_array,
+        Slice,
+        [Value::Array(Arc::new(vec![])), 0.into(), 0.into()],
+        Value::Array(Arc::new(vec![]))
+    );
+    op_test!(
+        slice_basic,
+        Slice,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into(), 4.into()])),
+            1.into(),
+            3.into()
+        ],
+        Value::Array(Arc::new(vec![2.into(), 3.into()]))
+    );
+    op_test!(
+        slice_to_end,
+        Slice,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into(), 4.into()])),
+            2.into(),
+            4.into()
+        ],
+        Value::Array(Arc::new(vec![3.into(), 4.into()]))
+    );
+    op_test!(
+        slice_from_beginning,
+        Slice,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into(), 4.into()])),
+            0.into(),
+            2.into()
+        ],
+        Value::Array(Arc::new(vec![1.into(), 2.into()]))
+    );
+    op_test!(
+        slice_negative_begin,
+        Slice,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into(), 4.into()])),
+            (-2).into(),
+            4.into()
+        ],
+        Value::Array(Arc::new(vec![3.into(), 4.into()]))
+    );
+    op_test!(
+        slice_negative_end,
+        Slice,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into(), 4.into()])),
+            1.into(),
+            (-1).into()
+        ],
+        Value::Array(Arc::new(vec![2.into(), 3.into()]))
+    );
+    op_test!(
+        slice_negative_begin_and_end,
+        Slice,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into(), 4.into()])),
+            (-3).into(),
+            (-1).into()
+        ],
+        Value::Array(Arc::new(vec![2.into(), 3.into()]))
+    );
+    op_test!(
+        slice_begin_out_of_bounds_positive,
+        Slice,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into()])),
+            5.into(),
+            6.into()
+        ],
+        Value::Array(Arc::new(vec![]))
+    );
+    op_test!(
+        slice_end_out_of_bounds_positive,
+        Slice,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into()])),
+            0.into(),
+            5.into()
+        ],
+        Value::Array(Arc::new(vec![1.into(), 2.into()]))
+    );
+    op_test!(
+        slice_begin_greater_than_end,
+        Slice,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into()])),
+            1.into(),
+            0.into()
+        ],
+        Value::Array(Arc::new(vec![]))
+    );
+    op_test!(
+        slice_full_array_clone,
+        Slice,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into()])),
+            0.into(),
+            2.into()
+        ],
+        Value::Array(Arc::new(vec![1.into(), 2.into()]))
+    );
+    op_test!(
+        slice_begin_equals_end,
+        Slice,
+        [
+            Value::Array(Arc::new(vec![1.into(), 2.into(), 3.into()])),
+            1.into(),
+            1.into()
+        ],
+        Value::Array(Arc::new(vec![]))
+    );
 
     // --- String Function Tests ---
 
     // StringCharAt and StringCharCodeAt
-    op_test!(string_char_at_basic, StringCharAt, ["hello".into(), 1.into()], "e".into());
-    op_test!(string_char_at_start, StringCharAt, ["hello".into(), 0.into()], "h".into());
-    op_test!(string_char_at_end, StringCharAt, ["hello".into(), 4.into()], "o".into());
-    op_test!(string_char_at_out_of_bounds_positive, StringCharAt, ["hello".into(), 10.into()], "".into());
+    op_test!(
+        string_char_at_basic,
+        StringCharAt,
+        ["hello".into(), 1.into()],
+        "e".into()
+    );
+    op_test!(
+        string_char_at_start,
+        StringCharAt,
+        ["hello".into(), 0.into()],
+        "h".into()
+    );
+    op_test!(
+        string_char_at_end,
+        StringCharAt,
+        ["hello".into(), 4.into()],
+        "o".into()
+    );
+    op_test!(
+        string_char_at_out_of_bounds_positive,
+        StringCharAt,
+        ["hello".into(), 10.into()],
+        "".into()
+    );
     // StringCharAt negative index is an error, not an op_test for specific value. Add op_error_test later.
 
-    op_test!(string_char_code_at_basic, StringCharCodeAt, ["hello".into(), 1.into()], ('e' as i64).into());
-    op_test!(string_char_code_at_start, StringCharCodeAt, ["hello".into(), 0.into()], ('h' as i64).into());
-    op_test!(string_char_code_at_out_of_bounds_positive, StringCharCodeAt, ["hello".into(), 10.into()], Value::Integer(-1)); // Updated
+    op_test!(
+        string_char_code_at_basic,
+        StringCharCodeAt,
+        ["hello".into(), 1.into()],
+        ('e' as i64).into()
+    );
+    op_test!(
+        string_char_code_at_start,
+        StringCharCodeAt,
+        ["hello".into(), 0.into()],
+        ('h' as i64).into()
+    );
+    op_test!(
+        string_char_code_at_out_of_bounds_positive,
+        StringCharCodeAt,
+        ["hello".into(), 10.into()],
+        Value::Integer(-1)
+    ); // Updated
 
     // StringEndsWith, StringIncludes, StringStartsWith
-    op_test!(string_ends_with_true, StringEndsWith, ["hello".into(), "lo".into(), 5.into()], true.into());
-    op_test!(string_ends_with_false, StringEndsWith, ["hello".into(), "lo".into(), 4.into()], false.into()); // "hell" does not end with "lo"
-    op_test!(string_ends_with_length_param, StringEndsWith, ["hello".into(), "o".into(), 4.into()], false.into()); // "hell" does not end with "o"
-    op_test!(string_ends_with_full_match_with_len, StringEndsWith, ["hello".into(), "hell".into(), 4.into()], true.into());
-    op_test!(string_ends_with_empty_search, StringEndsWith, ["hello".into(), "".into(), 5.into()], true.into());
+    op_test!(
+        string_ends_with_true,
+        StringEndsWith,
+        ["hello".into(), "lo".into(), 5.into()],
+        true.into()
+    );
+    op_test!(
+        string_ends_with_false,
+        StringEndsWith,
+        ["hello".into(), "lo".into(), 4.into()],
+        false.into()
+    ); // "hell" does not end with "lo"
+    op_test!(
+        string_ends_with_length_param,
+        StringEndsWith,
+        ["hello".into(), "o".into(), 4.into()],
+        false.into()
+    ); // "hell" does not end with "o"
+    op_test!(
+        string_ends_with_full_match_with_len,
+        StringEndsWith,
+        ["hello".into(), "hell".into(), 4.into()],
+        true.into()
+    );
+    op_test!(
+        string_ends_with_empty_search,
+        StringEndsWith,
+        ["hello".into(), "".into(), 5.into()],
+        true.into()
+    );
 
-    op_test!(string_includes_true, StringIncludes, ["hello world".into(), "world".into(), 0.into()], true.into());
-    op_test!(string_includes_false, StringIncludes, ["hello world".into(), "worldz".into(), 0.into()], false.into());
-    op_test!(string_includes_position_true, StringIncludes, ["hello world".into(), "world".into(), 5.into()], true.into());
-    op_test!(string_includes_position_false, StringIncludes, ["hello world".into(), "hello".into(), 5.into()], false.into());
+    op_test!(
+        string_includes_true,
+        StringIncludes,
+        ["hello world".into(), "world".into(), 0.into()],
+        true.into()
+    );
+    op_test!(
+        string_includes_false,
+        StringIncludes,
+        ["hello world".into(), "worldz".into(), 0.into()],
+        false.into()
+    );
+    op_test!(
+        string_includes_position_true,
+        StringIncludes,
+        ["hello world".into(), "world".into(), 5.into()],
+        true.into()
+    );
+    op_test!(
+        string_includes_position_false,
+        StringIncludes,
+        ["hello world".into(), "hello".into(), 5.into()],
+        false.into()
+    );
 
-    op_test!(string_starts_with_true, StringStartsWith, ["hello".into(), "he".into(), 0.into()], true.into());
-    op_test!(string_starts_with_false, StringStartsWith, ["hello".into(), "hi".into(), 0.into()], false.into());
-    op_test!(string_starts_with_position_true, StringStartsWith, ["hello".into(), "ll".into(), 2.into()], true.into());
-    op_test!(string_starts_with_position_false, StringStartsWith, ["hello".into(), "he".into(), 2.into()], false.into());
-    op_test!(string_starts_with_empty_search, StringStartsWith, ["hello".into(), "".into(), 0.into()], true.into());
+    op_test!(
+        string_starts_with_true,
+        StringStartsWith,
+        ["hello".into(), "he".into(), 0.into()],
+        true.into()
+    );
+    op_test!(
+        string_starts_with_false,
+        StringStartsWith,
+        ["hello".into(), "hi".into(), 0.into()],
+        false.into()
+    );
+    op_test!(
+        string_starts_with_position_true,
+        StringStartsWith,
+        ["hello".into(), "ll".into(), 2.into()],
+        true.into()
+    );
+    op_test!(
+        string_starts_with_position_false,
+        StringStartsWith,
+        ["hello".into(), "he".into(), 2.into()],
+        false.into()
+    );
+    op_test!(
+        string_starts_with_empty_search,
+        StringStartsWith,
+        ["hello".into(), "".into(), 0.into()],
+        true.into()
+    );
 
     // StringIndexOf
-    op_test!(string_index_of_found, StringIndexOf, ["hello".into(), "ll".into(), 0.into()], 2.into());
-    op_test!(string_index_of_not_found, StringIndexOf, ["hello".into(), "x".into(), 0.into()], (-1).into());
-    op_test!(string_index_of_from_index_found, StringIndexOf, ["hello hello".into(), "h".into(), 1.into()], 6.into());
-    op_test!(string_index_of_empty_search, StringIndexOf, ["hello".into(), "".into(), 0.into()], 0.into());
-    op_test!(string_index_of_empty_search_at_len, StringIndexOf, ["hello".into(), "".into(), 5.into()], 5.into());
+    op_test!(
+        string_index_of_found,
+        StringIndexOf,
+        ["hello".into(), "ll".into(), 0.into()],
+        2.into()
+    );
+    op_test!(
+        string_index_of_not_found,
+        StringIndexOf,
+        ["hello".into(), "x".into(), 0.into()],
+        (-1).into()
+    );
+    op_test!(
+        string_index_of_from_index_found,
+        StringIndexOf,
+        ["hello hello".into(), "h".into(), 1.into()],
+        6.into()
+    );
+    op_test!(
+        string_index_of_empty_search,
+        StringIndexOf,
+        ["hello".into(), "".into(), 0.into()],
+        0.into()
+    );
+    op_test!(
+        string_index_of_empty_search_at_len,
+        StringIndexOf,
+        ["hello".into(), "".into(), 5.into()],
+        5.into()
+    );
 
     // StringMatch
-    op_test!(string_match_found, StringMatch, ["hello".into(), "l+".into()], Value::Array(Arc::new(vec!["ll".into()])));
-    op_test!(string_match_not_found, StringMatch, ["hello".into(), "x+".into()], Value::Array(Arc::new(vec![]))); // Updated
-    // Test with optional group not matching - e.g. "(\w+)( \d+)?" for "hello"
-    // captures.iter() would give Some("hello"), None for the optional group.
-    // The StringMatch function now puts Value::String("".into()) for None capture.
-    op_test!(string_match_optional_group_not_matched, StringMatch,
+    op_test!(
+        string_match_found,
+        StringMatch,
+        ["hello".into(), "l+".into()],
+        Value::Array(Arc::new(vec!["ll".into()]))
+    );
+    op_test!(
+        string_match_not_found,
+        StringMatch,
+        ["hello".into(), "x+".into()],
+        Value::Array(Arc::new(vec![]))
+    ); // Updated
+       // Test with optional group not matching - e.g. "(\w+)( \d+)?" for "hello"
+       // captures.iter() would give Some("hello"), None for the optional group.
+       // The StringMatch function now puts Value::String("".into()) for None capture.
+    op_test!(
+        string_match_optional_group_not_matched,
+        StringMatch,
         ["hello".into(), "(\\w+)( \\d+)?".into()],
         Value::Array(Arc::new(vec!["hello".into(), "hello".into(), "".into()])) // Updated: optional group is ""
     );
-    op_test!(string_match_with_groups, StringMatch, ["hello 123".into(), "(\\w+) (\\d+)".into()], Value::Array(Arc::new(vec!["hello 123".into(), "hello".into(), "123".into()])));
-
+    op_test!(
+        string_match_with_groups,
+        StringMatch,
+        ["hello 123".into(), "(\\w+) (\\d+)".into()],
+        Value::Array(Arc::new(vec![
+            "hello 123".into(),
+            "hello".into(),
+            "123".into()
+        ]))
+    );
 
     // StringReplace and StringReplaceRegex
-    op_test!(string_replace_literal, StringReplace, ["hello world".into(), "world".into(), "Rust".into()], "hello Rust".into());
-    op_test!(string_replace_literal_no_match, StringReplace, ["hello".into(), "x".into(), "y".into()], "hello".into());
-    op_test!(string_replace_unicode_pattern, StringReplace, ["😊😊".into(), "😊".into(), "X".into()], "X😊".into());
-    op_test!(string_replace_unicode_pattern_no_match, StringReplace, ["ab".into(), "😊".into(), "X".into()], "ab".into());
-    op_test!(string_replace_unicode_text, StringReplace, ["hello😊world".into(), "😊".into(), "X".into()], "helloXworld".into());
-    op_test!(string_replace_empty_pattern, StringReplace, ["abc".into(), "".into(), "X".into()], "abc".into()); // Based on proposed fix for empty pattern
-    op_test!(string_replace_regex_first, StringReplaceRegex, ["abab".into(), "b".into(), "c".into()], "acac".into()); // Should be "acab" if only first, "acac" if all. Current is all.
-    op_test!(string_replace_regex_all, StringReplaceRegex, ["abab".into(), "b".into(), "c".into()], "acac".into());
-    op_test!(string_replace_regex_groups_not_supported_yet, StringReplaceRegex, ["hello 123".into(), "(\\w+) (\\d+)".into(), "$2 $1".into()], "$2 $1".into()); // Placeholder, current impl is literal replacement
+    op_test!(
+        string_replace_literal,
+        StringReplace,
+        ["hello world".into(), "world".into(), "Rust".into()],
+        "hello Rust".into()
+    );
+    op_test!(
+        string_replace_literal_no_match,
+        StringReplace,
+        ["hello".into(), "x".into(), "y".into()],
+        "hello".into()
+    );
+    op_test!(
+        string_replace_unicode_pattern,
+        StringReplace,
+        ["😊😊".into(), "😊".into(), "X".into()],
+        "X😊".into()
+    );
+    op_test!(
+        string_replace_unicode_pattern_no_match,
+        StringReplace,
+        ["ab".into(), "😊".into(), "X".into()],
+        "ab".into()
+    );
+    op_test!(
+        string_replace_unicode_text,
+        StringReplace,
+        ["hello😊world".into(), "😊".into(), "X".into()],
+        "helloXworld".into()
+    );
+    op_test!(
+        string_replace_empty_pattern,
+        StringReplace,
+        ["abc".into(), "".into(), "X".into()],
+        "abc".into()
+    ); // Based on proposed fix for empty pattern
+    op_test!(
+        string_replace_regex_first,
+        StringReplaceRegex,
+        ["abab".into(), "b".into(), "c".into()],
+        "acac".into()
+    ); // Should be "acab" if only first, "acac" if all. Current is all.
+    op_test!(
+        string_replace_regex_all,
+        StringReplaceRegex,
+        ["abab".into(), "b".into(), "c".into()],
+        "acac".into()
+    );
+    op_test!(
+        string_replace_regex_groups_not_supported_yet,
+        StringReplaceRegex,
+        ["hello 123".into(), "(\\w+) (\\d+)".into(), "$2 $1".into()],
+        "$2 $1".into()
+    ); // Placeholder, current impl is literal replacement
 
     // StringSlice
-    op_test!(string_slice_basic, StringSlice, ["hello".into(), 1.into(), 4.into()], "ell".into());
-    op_test!(string_slice_negative_begin, StringSlice, ["hello".into(), (-3).into(), 4.into()], "ll".into());
-    op_test!(string_slice_negative_end, StringSlice, ["hello".into(), 1.into(), (-1).into()], "ell".into());
-    op_test!(string_slice_begin_greater_than_end, StringSlice, ["hello".into(), 3.into(), 1.into()], "".into());
-    op_test!(string_slice_full, StringSlice, ["hello".into(), 0.into(), 5.into()], "hello".into());
+    op_test!(
+        string_slice_basic,
+        StringSlice,
+        ["hello".into(), 1.into(), 4.into()],
+        "ell".into()
+    );
+    op_test!(
+        string_slice_negative_begin,
+        StringSlice,
+        ["hello".into(), (-3).into(), 4.into()],
+        "ll".into()
+    );
+    op_test!(
+        string_slice_negative_end,
+        StringSlice,
+        ["hello".into(), 1.into(), (-1).into()],
+        "ell".into()
+    );
+    op_test!(
+        string_slice_begin_greater_than_end,
+        StringSlice,
+        ["hello".into(), 3.into(), 1.into()],
+        "".into()
+    );
+    op_test!(
+        string_slice_full,
+        StringSlice,
+        ["hello".into(), 0.into(), 5.into()],
+        "hello".into()
+    );
 
     // StringSubstring
-    op_test!(string_substring_basic, StringSubstring, ["hello".into(), 1.into(), 4.into()], "ell".into());
-    op_test!(string_substring_start_greater_than_end, StringSubstring, ["hello".into(), 4.into(), 1.into()], "ell".into()); // Swaps
-    op_test!(string_substring_negative_treated_as_zero, StringSubstring, ["hello".into(), (-2).into(), 3.into()], "hel".into());
-    op_test!(string_substring_index_out_of_bounds, StringSubstring, ["hello".into(), 0.into(), 10.into()], "hello".into());
+    op_test!(
+        string_substring_basic,
+        StringSubstring,
+        ["hello".into(), 1.into(), 4.into()],
+        "ell".into()
+    );
+    op_test!(
+        string_substring_start_greater_than_end,
+        StringSubstring,
+        ["hello".into(), 4.into(), 1.into()],
+        "ell".into()
+    ); // Swaps
+    op_test!(
+        string_substring_negative_treated_as_zero,
+        StringSubstring,
+        ["hello".into(), (-2).into(), 3.into()],
+        "hel".into()
+    );
+    op_test!(
+        string_substring_index_out_of_bounds,
+        StringSubstring,
+        ["hello".into(), 0.into(), 10.into()],
+        "hello".into()
+    );
 
     // StringLowerCase, StringUpperCase, StringTrim
-    op_test!(string_lower_case, StringLowerCase, ["HeLlO".into()], "hello".into());
-    op_test!(string_upper_case, StringUpperCase, ["HeLlO".into()], "HELLO".into());
-    op_test!(string_trim_basic, StringTrim, ["  hello  ".into()], "hello".into());
-    op_test!(string_trim_no_whitespace, StringTrim, ["hello".into()], "hello".into());
-    op_test!(string_trim_only_whitespace, StringTrim, ["   ".into()], "".into());
+    op_test!(
+        string_lower_case,
+        StringLowerCase,
+        ["HeLlO".into()],
+        "hello".into()
+    );
+    op_test!(
+        string_upper_case,
+        StringUpperCase,
+        ["HeLlO".into()],
+        "HELLO".into()
+    );
+    op_test!(
+        string_trim_basic,
+        StringTrim,
+        ["  hello  ".into()],
+        "hello".into()
+    );
+    op_test!(
+        string_trim_no_whitespace,
+        StringTrim,
+        ["hello".into()],
+        "hello".into()
+    );
+    op_test!(
+        string_trim_only_whitespace,
+        StringTrim,
+        ["   ".into()],
+        "".into()
+    );
 
     // --- Error Tests ---
 
     // Array function error tests
-    op_error_test!(map_non_array_arg, Map, [1.into(), TestHelperAddOne::stub().into()], "argument array type mismatch");
-    op_error_test!(map_non_function_callback, Map, [Value::Array(Arc::new(vec![])), 1.into()], "Second argument to map must be a function");
+    op_error_test!(
+        map_non_array_arg,
+        Map,
+        [1.into(), TestHelperAddOne::stub().into()],
+        "argument array type mismatch"
+    );
+    op_error_test!(
+        map_non_function_callback,
+        Map,
+        [Value::Array(Arc::new(vec![])), 1.into()],
+        "Second argument to map must be a function"
+    );
 
-    op_error_test!(reduce_non_array_arg, Reduce, [1.into(), 0.into(), TestHelperSum::stub().into()], "argument array type mismatch");
-    op_error_test!(reduce_non_function_callback, Reduce, [Value::Array(Arc::new(vec![])), 0.into(), 1.into()], "Third argument to reduce must be a function");
+    op_error_test!(
+        reduce_non_array_arg,
+        Reduce,
+        [1.into(), 0.into(), TestHelperSum::stub().into()],
+        "argument array type mismatch"
+    );
+    op_error_test!(
+        reduce_non_function_callback,
+        Reduce,
+        [Value::Array(Arc::new(vec![])), 0.into(), 1.into()],
+        "Third argument to reduce must be a function"
+    );
 
-    op_error_test!(filter_non_array_arg, Filter, [1.into(), TestHelperIsEven::stub().into()], "argument array type mismatch");
-    op_error_test!(filter_non_function_callback, Filter, [Value::Array(Arc::new(vec![])), 1.into()], "Second argument to filter must be a function");
-    op_error_test!(filter_callback_returns_non_boolean, Filter,
-        [Value::Array(Arc::new(vec![1.into()])), TestHelperAddOne::stub().into()], // AddOne returns Integer
+    op_error_test!(
+        filter_non_array_arg,
+        Filter,
+        [1.into(), TestHelperIsEven::stub().into()],
+        "argument array type mismatch"
+    );
+    op_error_test!(
+        filter_non_function_callback,
+        Filter,
+        [Value::Array(Arc::new(vec![])), 1.into()],
+        "Second argument to filter must be a function"
+    );
+    op_error_test!(
+        filter_callback_returns_non_boolean,
+        Filter,
+        [
+            Value::Array(Arc::new(vec![1.into()])),
+            TestHelperAddOne::stub().into()
+        ], // AddOne returns Integer
         "Filter function must return a Boolean"
     );
 
-    op_error_test!(find_non_array_arg, Find, [1.into(), TestHelperIsEven::stub().into()], "argument array type mismatch");
-    op_error_test!(find_non_function_callback, Find, [Value::Array(Arc::new(vec![])), 1.into()], "Second argument to find must be a function");
-    op_error_test!(find_callback_returns_non_boolean, Find,
-        [Value::Array(Arc::new(vec![1.into()])), TestHelperAddOne::stub().into()],
+    op_error_test!(
+        find_non_array_arg,
+        Find,
+        [1.into(), TestHelperIsEven::stub().into()],
+        "argument array type mismatch"
+    );
+    op_error_test!(
+        find_non_function_callback,
+        Find,
+        [Value::Array(Arc::new(vec![])), 1.into()],
+        "Second argument to find must be a function"
+    );
+    op_error_test!(
+        find_callback_returns_non_boolean,
+        Find,
+        [
+            Value::Array(Arc::new(vec![1.into()])),
+            TestHelperAddOne::stub().into()
+        ],
         "Find function must return a Boolean"
     );
 
-    op_error_test!(find_index_non_array_arg, FindIndex, [1.into(), TestHelperIsEven::stub().into()], "argument array type mismatch");
-    op_error_test!(find_index_non_function_callback, FindIndex, [Value::Array(Arc::new(vec![])), 1.into()], "Second argument to findIndex must be a function");
-    op_error_test!(find_index_callback_returns_non_boolean, FindIndex,
-        [Value::Array(Arc::new(vec![1.into()])), TestHelperAddOne::stub().into()],
+    op_error_test!(
+        find_index_non_array_arg,
+        FindIndex,
+        [1.into(), TestHelperIsEven::stub().into()],
+        "argument array type mismatch"
+    );
+    op_error_test!(
+        find_index_non_function_callback,
+        FindIndex,
+        [Value::Array(Arc::new(vec![])), 1.into()],
+        "Second argument to findIndex must be a function"
+    );
+    op_error_test!(
+        find_index_callback_returns_non_boolean,
+        FindIndex,
+        [
+            Value::Array(Arc::new(vec![1.into()])),
+            TestHelperAddOne::stub().into()
+        ],
         "FindIndex function must return a Boolean"
     );
 
-    op_error_test!(for_each_non_array_arg, ForEach, [1.into(), TestHelperAddOne::stub().into()], "argument array type mismatch");
-    op_error_test!(for_each_non_function_callback, ForEach, [Value::Array(Arc::new(vec![])), 1.into()], "Second argument to forEach must be a function");
+    op_error_test!(
+        for_each_non_array_arg,
+        ForEach,
+        [1.into(), TestHelperAddOne::stub().into()],
+        "argument array type mismatch"
+    );
+    op_error_test!(
+        for_each_non_function_callback,
+        ForEach,
+        [Value::Array(Arc::new(vec![])), 1.into()],
+        "Second argument to forEach must be a function"
+    );
 
-    op_error_test!(index_of_non_array_arg, IndexOf, [1.into(), 1.into(), 0.into()], "argument array type mismatch");
-    op_error_test!(index_of_non_integer_from_index, IndexOf, [Value::Array(Arc::new(vec![])), 1.into(), "a".into()], "argument from_index type mismatch");
+    op_error_test!(
+        index_of_non_array_arg,
+        IndexOf,
+        [1.into(), 1.into(), 0.into()],
+        "argument array type mismatch"
+    );
+    op_error_test!(
+        index_of_non_integer_from_index,
+        IndexOf,
+        [Value::Array(Arc::new(vec![])), 1.into(), "a".into()],
+        "argument from_index type mismatch"
+    );
 
-    op_error_test!(includes_non_array_arg, Includes, [1.into(), 1.into(), 0.into()], "argument array type mismatch");
-    op_error_test!(includes_non_integer_from_index, Includes, [Value::Array(Arc::new(vec![])), 1.into(), "a".into()], "argument from_index type mismatch");
+    op_error_test!(
+        includes_non_array_arg,
+        Includes,
+        [1.into(), 1.into(), 0.into()],
+        "argument array type mismatch"
+    );
+    op_error_test!(
+        includes_non_integer_from_index,
+        Includes,
+        [Value::Array(Arc::new(vec![])), 1.into(), "a".into()],
+        "argument from_index type mismatch"
+    );
 
-    op_error_test!(join_non_array_arg, Join, [1.into(), ",".into()], "argument array type mismatch");
-    op_error_test!(join_non_string_separator, Join, [Value::Array(Arc::new(vec![])), 1.into()], "argument separator type mismatch");
+    op_error_test!(
+        join_non_array_arg,
+        Join,
+        [1.into(), ",".into()],
+        "argument array type mismatch"
+    );
+    op_error_test!(
+        join_non_string_separator,
+        Join,
+        [Value::Array(Arc::new(vec![])), 1.into()],
+        "argument separator type mismatch"
+    );
 
-    op_error_test!(slice_non_array_arg, Slice, [1.into(), 0.into(), 1.into()], "argument array type mismatch");
-    op_error_test!(slice_non_integer_begin, Slice, [Value::Array(Arc::new(vec![])), "a".into(), 1.into()], "argument begin_index type mismatch");
-    op_error_test!(slice_non_integer_end, Slice, [Value::Array(Arc::new(vec![])), 0.into(), "a".into()], "argument end_index type mismatch");
+    op_error_test!(
+        slice_non_array_arg,
+        Slice,
+        [1.into(), 0.into(), 1.into()],
+        "argument array type mismatch"
+    );
+    op_error_test!(
+        slice_non_integer_begin,
+        Slice,
+        [Value::Array(Arc::new(vec![])), "a".into(), 1.into()],
+        "argument begin_index type mismatch"
+    );
+    op_error_test!(
+        slice_non_integer_end,
+        Slice,
+        [Value::Array(Arc::new(vec![])), 0.into(), "a".into()],
+        "argument end_index type mismatch"
+    );
 
     // String function error tests
-    op_error_test!(string_char_at_non_string, StringCharAt, [1.into(), 0.into()], "argument text type mismatch");
-    op_error_test!(string_char_at_non_integer_index, StringCharAt, ["hi".into(), "a".into()], "argument index type mismatch");
-    op_error_test!(string_char_at_negative_index, StringCharAt, ["hello".into(), (-1).into()], "Index out of bounds: index cannot be negative");
+    op_error_test!(
+        string_char_at_non_string,
+        StringCharAt,
+        [1.into(), 0.into()],
+        "argument text type mismatch"
+    );
+    op_error_test!(
+        string_char_at_non_integer_index,
+        StringCharAt,
+        ["hi".into(), "a".into()],
+        "argument index type mismatch"
+    );
+    op_error_test!(
+        string_char_at_negative_index,
+        StringCharAt,
+        ["hello".into(), (-1).into()],
+        "Index out of bounds: index cannot be negative"
+    );
 
-    op_error_test!(string_char_code_at_non_string, StringCharCodeAt, [1.into(), 0.into()], "argument text type mismatch");
-    op_error_test!(string_char_code_at_non_integer_index, StringCharCodeAt, ["hi".into(), "a".into()], "argument index type mismatch");
-    op_error_test!(string_char_code_at_negative_index, StringCharCodeAt, ["hello".into(), (-1).into()], "Index out of bounds: index cannot be negative");
+    op_error_test!(
+        string_char_code_at_non_string,
+        StringCharCodeAt,
+        [1.into(), 0.into()],
+        "argument text type mismatch"
+    );
+    op_error_test!(
+        string_char_code_at_non_integer_index,
+        StringCharCodeAt,
+        ["hi".into(), "a".into()],
+        "argument index type mismatch"
+    );
+    op_error_test!(
+        string_char_code_at_negative_index,
+        StringCharCodeAt,
+        ["hello".into(), (-1).into()],
+        "Index out of bounds: index cannot be negative"
+    );
 
-    op_error_test!(string_match_invalid_regex, StringMatch, ["hello".into(), "[".into()], "Invalid regex pattern");
-    op_error_test!(string_replace_regex_invalid_regex, StringReplaceRegex, ["h".into(), "[".into(), "a".into()], "Invalid regex pattern");
-
+    op_error_test!(
+        string_match_invalid_regex,
+        StringMatch,
+        ["hello".into(), "[".into()],
+        "Invalid regex pattern"
+    );
+    op_error_test!(
+        string_replace_regex_invalid_regex,
+        StringReplaceRegex,
+        ["h".into(), "[".into(), "a".into()],
+        "Invalid regex pattern"
+    );
 }
 
 // Array operations
@@ -1874,7 +2717,6 @@ function!(StringTrim(text: String) => String, ctx=ctx, {
     Ok(Value::String(s.trim().into()))
 });
 
-
 // match(string, regexp_str) -> Array of strings
 function!(StringMatch(text: String, regexp_str: String) => Type::array_of(String), ctx=ctx, {
     // Returns Array(String)
@@ -1947,7 +2789,7 @@ function!(StringEndsWith(text: String, search_string: String, length: Integer) =
                    // MDN: "If length is provided, it is used as the length of str. Defaults to str.length."
                    // "If length is greater than str.length, it will be treated as str.length."
                    // "If length is less than 0, it will be treated as 0."
-        0
+
     } else {
         (len_val as usize).min(s_char_len)
     };
@@ -2042,7 +2884,6 @@ function!(StringIndexOf(text: String, search_value: String, from_index: Integer)
         Ok(Value::Integer(-1))
     }
 });
-
 
 // reduce(array, initial_value, function)
 function!(Reduce(array: Type::array_of(Type::Any), initial_value: Any, func: Any) => Any, ctx=ctx, {
