@@ -2899,7 +2899,7 @@ function!(Filter(array: Type::array_of(Type::Any), func: Any) => Type::array_of(
         Value::NativeObject(no) if no.as_callable().is_some() => func_val.clone(),
         _ => bail!("Second argument to filter must be a function, got {:?}", func_val),
     };
- 
+
     for item in arr_val.iter() {
         // Important: The item itself should be passed to the filter function, not its evaluated value,
         // if the function expects to operate on references or if the item is a complex structure
