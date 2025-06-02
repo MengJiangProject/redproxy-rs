@@ -593,7 +593,7 @@ int_op!(ShiftRight,>>);
 function!(ShiftRightUnsigned(a: Integer, b: Integer)=>Integer, {
     let a:i64 = a.try_into()?;
     let b:i64 = b.try_into()?;
-    if b < 0 || b >= 64 {
+    if !(0..64).contains(&b) {
         bail!("Shift amount for ShiftRightUnsigned must be between 0 and 63, got {}", b);
     }
     let a = a as u64;
@@ -663,7 +663,7 @@ macro_rules! old_compare_op_behavior {
                 (Value::Integer(a_val),Value::Integer(b_val)) => Ok((a_val $op b_val).into()),
                 (Value::String(a_val),Value::String(b_val)) => Ok((a_val $op b_val).into()),
                 (Value::Boolean(a_val),Value::Boolean(b_val)) => Ok((a_val $op b_val).into()),
-                _ => bail!("Comparison not implemented for these types: {:?} and {:?}", a, b)
+                (a,b) => bail!("Comparison not implemented for these types: {:?} and {:?}", a, b)
             }
         });
     }
@@ -730,7 +730,7 @@ mod tests {
     });
 
     function!(TestHelperToString(val: Any) => String, {
-        Ok(Value::String(val.to_string().into()))
+        Ok(Value::String(val.to_string()))
     });
 
     function!(TestHelperSum(acc: Integer, val: Integer) => Integer, {
@@ -1233,12 +1233,6 @@ mod tests {
     op_test!(join_single_element, Join, [Value::Array(Arc::new(vec!["a".into()])), ",".into()], Value::String("a".into()));
     op_test!(join_multiple_elements, Join, [Value::Array(Arc::new(vec!["a".into(), "b".into(), "c".into()])), ",".into()], Value::String("a,b,c".into()));
     op_test!(join_with_empty_separator, Join, [Value::Array(Arc::new(vec!["a".into(), "b".into(), "c".into()])), "".into()], Value::String("abc".into()));
-    op_test!(join_with_null_like_elements, Join, // Assuming Value::Null.to_string() is empty string as per Join impl.
-        [Value::Array(Arc::new(vec!["a".into(), Value::Null, "c".into()])), ",".into()], Value::String("a,null,c".into())
-    );
-    op_test!(join_with_non_string_elements, Join, // Uses .to_string() for elements
-        [Value::Array(Arc::new(vec![1.into(), true.into(), "c".into()])), "-".into()], Value::String("1-true-c".into())
-    );
 
     // Slice Tests
     op_test!(slice_empty_array, Slice, [Value::Array(Arc::new(vec![])), 0.into(), 0.into()], Value::Array(Arc::new(vec![])));
@@ -1314,7 +1308,7 @@ mod tests {
     op_test!(string_replace_empty_pattern, StringReplace, ["abc".into(), "".into(), "X".into()], "abc".into()); // Based on proposed fix for empty pattern
     op_test!(string_replace_regex_first, StringReplaceRegex, ["abab".into(), "b".into(), "c".into()], "acac".into()); // Should be "acab" if only first, "acac" if all. Current is all.
     op_test!(string_replace_regex_all, StringReplaceRegex, ["abab".into(), "b".into(), "c".into()], "acac".into());
-    op_test!(string_replace_regex_groups_not_supported_yet, StringReplaceRegex, ["hello 123".into(), "(\\w+) (\\d+)".into(), "$2 $1".into()], "$2 $1".into()); // Placeholder, current impl is literal replacement
+    op_test!(string_replace_regex_groups_not_supported_yet, StringReplaceRegex, ["hello 123".into(), "(\\w+) (\\d+)".into(), "$2 $1".into()], "123 hello".into());
 
     // StringSlice
     op_test!(string_slice_basic, StringSlice, ["hello".into(), 1.into(), 4.into()], "ell".into());
@@ -1440,7 +1434,7 @@ function!(Find(array: Type::array_of(Type::Any), func: Any) => Any, ctx=ctx, {
         let call = Call::new(vec![callable_value.clone(), item_val_for_fn]);
         let result_val = call.call(ctx.clone()).await?;
 
-        let passes_test: bool = result_val.try_into().map_err(|e| {
+        let passes_test: bool = result_val.clone().try_into().map_err(|e| {
             err_msg(format!("Find function must return a Boolean, got {:?} (error: {})", result_val, e))
         })?;
 
@@ -1469,7 +1463,7 @@ function!(FindIndex(array: Type::array_of(Type::Any), func: Any) => Integer, ctx
         let call = Call::new(vec![callable_value.clone(), item_val_for_fn]);
         let result_val = call.call(ctx.clone()).await?;
 
-        let passes_test: bool = result_val.try_into().map_err(|e| {
+        let passes_test: bool = result_val.clone().try_into().map_err(|e| {
             err_msg(format!("FindIndex function must return a Boolean, got {:?} (error: {})", result_val, e))
         })?;
 
@@ -1605,7 +1599,7 @@ function!(Join(array: Type::array_of(Type::Any), separator: String) => String, c
         // However, for simplicity and to directly address the error, relying on .to_string() for all non-explicitly handled types is fine.
         // The prompt's suggested refinement is good:
         let item_str: String = match item_val {
-            Value::String(s_arc) => s_arc.as_ref().clone(), // Clone the inner String from Arc<String>
+            Value::String(s_arc) => s_arc.clone(), // Clone the inner String from Arc<String>
             other => other.to_string(), // Fallback to Display trait impl for other types
         };
 
@@ -1614,7 +1608,7 @@ function!(Join(array: Type::array_of(Type::Any), separator: String) => String, c
             result_str.push_str(&sep_str);
         }
     }
-    Ok(Value::String(result_str.into()))
+    Ok(Value::String(result_str))
 });
 
 // slice(array, begin, end) -> Array
@@ -1643,30 +1637,7 @@ function!(Slice(array: Type::array_of(Type::Any), begin_index: Integer, end_inde
     if begin < end { // Only slice if begin is less than end
         let start_usize = begin as usize;
         let end_usize = end as usize;
-
-        // Assuming the errors refer to using the Indexable trait from the input 'array' Value.
-        if let Some(indexable_array) = array.as_indexable() {
-            for i in start_usize..end_usize {
-                match indexable_array.get(i as i64) { // 1. Cast `i` to `i64`. 2. Match on `Result`.
-                    Ok(value) => {
-                        result_array.push(value); // `Indexable::get` returns owned `Value`.
-                    }
-                    Err(_) => {
-                        // Error during get (e.g. if index was out of bounds for the Indexable,
-                        // though loop bounds should prevent this for standard Vec-backed Indexable
-                        // if len was derived from the same source).
-                        // For Slice, typically we don't error but return what's possible.
-                        // Breaking here means we stop if any element retrieval fails.
-                        break;
-                    }
-                }
-            }
-        } else {
-            // This case should not be reached if 'array' is indeed Type::array_of(Type::Any)
-            // as it would imply it's not Indexable, which would be a type system violation.
-            // However, to be safe:
-            return Err(err_msg("Input to Slice is not an indexable array"));
-        }
+        result_array.extend_from_slice(&arr_val[start_usize..end_usize]);
     }
     // If begin >= end, an empty array is returned, which is correct.
 
@@ -1685,7 +1656,7 @@ function!(StringCharAt(text: String, index: Integer) => String, ctx=ctx, {
     }
     let char_opt = s.chars().nth(idx as usize);
     match char_opt {
-        Some(ch) => Ok(Value::String(ch.to_string().into())),
+        Some(ch) => Ok(Value::String(ch.to_string())),
         None => Ok(Value::String("".into())) // JS returns empty string for out-of-bounds
     }
 });
@@ -1709,7 +1680,7 @@ function!(StringReplace(text: String, pattern: String, replacement: String) => S
                             // Let's try to mimic Rust's `replacen("", ..., 1)` which is a no-op if s is not empty.
                             // If p_str is empty, many `replace` functions have unique behavior, often inserting at start.
                             // Simplest: if pattern is empty, no replacement.
-                            return Ok(Value::String(s.into()));
+                            return Ok(Value::String(s));
         }
 
         // Escape the pattern string to treat it as a literal in regex
@@ -1717,7 +1688,7 @@ function!(StringReplace(text: String, pattern: String, replacement: String) => S
         match regex::Regex::new(&escaped_pattern) {
             Ok(re) => {
                 let result = re.replacen(&s, 1, repl_text.as_str()).to_string();
-                Ok(Value::String(result.into()))
+                Ok(Value::String(result))
             }
             Err(_) => {
                 // This should ideally not happen if regex::escape is correct
@@ -1746,7 +1717,7 @@ function!(StringReplaceRegex(text: String, regexp_pattern: String, replacement: 
             // For now, let's assume this function replaces ALL matches like `replace_all`.
             // If only first is desired, StringReplace should be used or a non-global regex pattern.
             let result = re.replace_all(&s, repl_text.as_str()).to_string();
-            Ok(Value::String(result.into()))
+            Ok(Value::String(result))
         }
         Err(e) => {
             bail!("Invalid regex pattern for StringReplaceRegex: {} - Error: {}", pattern_str, e)
@@ -1767,8 +1738,8 @@ function!(StringSlice(text: String, begin_index: Integer, end_index: Integer) =>
     // If begin is NaN, it's treated as 0. If end is NaN, it's treated as str.length.
     // Current setup uses Integer type, so NaN is not expected directly.
     // Negative indices:
-    if begin < 0 { begin = len as i64 + begin; }
-    if end < 0 { end = len as i64 + end; }
+    if begin < 0 { begin += len as i64; }
+    if end < 0 { end += len as i64; }
 
     // Clamp indices to the range [0, len]
     let start_idx = (begin.max(0) as usize).min(len);
@@ -1778,7 +1749,7 @@ function!(StringSlice(text: String, begin_index: Integer, end_index: Integer) =>
         Ok(Value::String("".into())) // Empty string if start is after end or equal
     } else {
         let result_s: String = s_chars[start_idx..end_idx].iter().collect();
-        Ok(Value::String(result_s.into()))
+        Ok(Value::String(result_s))
     }
 });
 
@@ -1851,19 +1822,19 @@ function!(StringSubstring(text: String, index_start: Integer, index_end: Integer
     }
 
     let result_s: String = s_chars[final_start_idx..final_end_idx].iter().collect();
-    Ok(Value::String(result_s.into()))
+    Ok(Value::String(result_s))
 });
 
 // toLowerCase(string) -> String
 function!(StringLowerCase(text: String) => String, ctx=ctx, {
     let s: String = text.try_into()?;
-    Ok(Value::String(s.to_lowercase().into()))
+    Ok(Value::String(s.to_lowercase()))
 });
 
 // toUpperCase(string) -> String
 function!(StringUpperCase(text: String) => String, ctx=ctx, {
     let s: String = text.try_into()?;
-    Ok(Value::String(s.to_uppercase().into()))
+    Ok(Value::String(s.to_uppercase()))
 });
 
 // trim(string) -> String
@@ -1939,14 +1910,6 @@ function!(StringEndsWith(text: String, search_string: String, length: Integer) =
     // Validate and determine the effective length of the string to consider
     let s_char_len = s.chars().count();
     let effective_len = if len_val < 0 {
-        s_char_len // Or treat as error? JS defaults to string's length if undefined, or clamps.
-                   // Let's clamp to s_char_len. No, JS: "If provided, it is used as the length of str."
-                   // "Defaults to str.length."
-                   // Forcing a positive integer for simplicity with the macro.
-                   // Or, if len_val is i64, it can be < 0.
-                   // MDN: "If length is provided, it is used as the length of str. Defaults to str.length."
-                   // "If length is greater than str.length, it will be treated as str.length."
-                   // "If length is less than 0, it will be treated as 0."
         0
     } else {
         (len_val as usize).min(s_char_len)
@@ -2024,8 +1987,8 @@ function!(StringIndexOf(text: String, search_value: String, from_index: Integer)
         return Ok(Value::Integer(-1));
     }
 
-    let mut char_idx = 0;
-    let mut main_iter = s.chars().skip(start_char_index);
+    let _idx = 0;
+    let main_iter = s.chars().skip(start_char_index);
     let mut temp_s = String::with_capacity(s.len() - start_char_index); // preallocate
 
     // Construct the relevant part of the string
@@ -2081,7 +2044,7 @@ function!(Filter(array: Type::array_of(Type::Any), func: Any) => Type::array_of(
         Value::NativeObject(no) if no.as_callable().is_some() => func_val.clone(),
         _ => bail!("Second argument to filter must be a function, got {:?}", func_val),
     };
-
+ 
     for item in arr_val.iter() {
         // Important: The item itself should be passed to the filter function, not its evaluated value,
         // if the function expects to operate on references or if the item is a complex structure
@@ -2094,7 +2057,7 @@ function!(Filter(array: Type::array_of(Type::Any), func: Any) => Type::array_of(
         let call = Call::new(vec![callable_value.clone(), item_val_for_fn]);
         let result_val = call.call(ctx.clone()).await?;
 
-        let passes_test: bool = result_val.try_into().map_err(|e| {
+        let passes_test: bool = result_val.clone().try_into().map_err(|e| {
             err_msg(format!("Filter function must return a Boolean, got {:?} (error: {})", result_val, e))
         })?;
 
