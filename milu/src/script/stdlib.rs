@@ -1146,7 +1146,7 @@ mod tests {
     // Find Tests
     op_test!(find_empty_array, Find,
         [Value::Array(Arc::new(vec![])), TestHelperIsEven::stub().into()],
-        Value::Null
+        false.into() // Updated: expect Value::Boolean(false)
     );
     op_test!(find_integer_is_even_found, Find,
         [Value::Array(Arc::new(vec![1.into(), 3.into(), 4.into(), 6.into()])), TestHelperIsEven::stub().into()],
@@ -1154,7 +1154,7 @@ mod tests {
     );
     op_test!(find_integer_is_even_not_found, Find,
         [Value::Array(Arc::new(vec![1.into(), 3.into(), 5.into()])), TestHelperIsEven::stub().into()],
-        Value::Null
+        false.into() // Updated: expect Value::Boolean(false)
     );
 
     // FindIndex Tests
@@ -1174,11 +1174,11 @@ mod tests {
     // ForEach Tests
     op_test!(for_each_empty_array, ForEach,
         [Value::Array(Arc::new(vec![])), TestHelperAddOne::stub().into()],
-        Value::Null // ForEach returns Null
+        true.into() // Updated: ForEach returns true
     );
     op_test!(for_each_integers, ForEach,
         [Value::Array(Arc::new(vec![1.into(), 2.into()])), TestHelperAddOne::stub().into()],
-        Value::Null // Callback is executed, ForEach returns Null
+        true.into() // Updated: Callback is executed, ForEach returns true
     );
 
     // IndexOf Tests
@@ -1239,7 +1239,7 @@ mod tests {
 
     op_test!(string_char_code_at_basic, StringCharCodeAt, ["hello".into(), 1.into()], ('e' as i64).into());
     op_test!(string_char_code_at_start, StringCharCodeAt, ["hello".into(), 0.into()], ('h' as i64).into());
-    op_test!(string_char_code_at_out_of_bounds_positive, StringCharCodeAt, ["hello".into(), 10.into()], Value::Null);
+    op_test!(string_char_code_at_out_of_bounds_positive, StringCharCodeAt, ["hello".into(), 10.into()], Value::Integer(-1)); // Updated
 
     // StringEndsWith, StringIncludes, StringStartsWith
     op_test!(string_ends_with_true, StringEndsWith, ["hello".into(), "lo".into(), 5.into()], true.into());
@@ -1268,8 +1268,16 @@ mod tests {
 
     // StringMatch
     op_test!(string_match_found, StringMatch, ["hello".into(), "l+".into()], Value::Array(Arc::new(vec!["ll".into()])));
-    op_test!(string_match_not_found, StringMatch, ["hello".into(), "x+".into()], Value::Null);
+    op_test!(string_match_not_found, StringMatch, ["hello".into(), "x+".into()], Value::Array(Arc::new(vec![]))); // Updated
+    // Test with optional group not matching - e.g. "(\w+)( \d+)?" for "hello"
+    // captures.iter() would give Some("hello"), None for the optional group.
+    // The StringMatch function now puts Value::String("".into()) for None capture.
+    op_test!(string_match_optional_group_not_matched, StringMatch,
+        ["hello".into(), "(\\w+)( \\d+)?".into()],
+        Value::Array(Arc::new(vec!["hello".into(), "hello".into(), "".into()])) // Updated: optional group is ""
+    );
     op_test!(string_match_with_groups, StringMatch, ["hello 123".into(), "(\\w+) (\\d+)".into()], Value::Array(Arc::new(vec!["hello 123".into(), "hello".into(), "123".into()])));
+
 
     // StringReplace and StringReplaceRegex
     op_test!(string_replace_literal, StringReplace, ["hello world".into(), "world".into(), "Rust".into()], "hello Rust".into());
@@ -1410,7 +1418,7 @@ function!(Find(array: Array, func: Any) => Any, ctx=ctx, {
             return Ok(item_clone); // Return the original item
         }
     }
-    Ok(Value::Null) // Return Null if not found
+    Ok(Value::Boolean(false)) // Return false if not found
 });
 
 // findIndex(array, function) -> Integer
@@ -1443,9 +1451,8 @@ function!(FindIndex(array: Array, func: Any) => Integer, ctx=ctx, {
 });
 
 // forEach(array, function) -> Null (or some void equivalent)
-// The return type of forEach is typically undefined/void.
-// Using Type::Any for now, and returning Value::Null.
-function!(ForEach(array: Array, func: Any) => Any, ctx=ctx, {
+// The return type of forEach is now Boolean.
+function!(ForEach(array: Array, func: Any) => Boolean, ctx=ctx, {
     let arr_val: Arc<Vec<Value>> = array.try_into()?;
 
     let func_val = func.value_of(ctx.clone()).await?;
@@ -1462,7 +1469,7 @@ function!(ForEach(array: Array, func: Any) => Any, ctx=ctx, {
         // Execute the call, but ignore its result for forEach
         call.value_of(ctx.clone()).await?;
     }
-    Ok(Value::Null) // forEach typically returns undefined/void.
+    Ok(Value::Boolean(true)) // forEach now returns true.
 });
 
 // indexOf(array, searchElement, fromIndex) -> Integer
@@ -1818,11 +1825,11 @@ function!(StringTrim(text: String) => String, ctx=ctx, {
 });
 
 
-// match(string, regexp_str) -> Array of strings or Null
-function!(StringMatch(text: String, regexp_str: String) => Any, ctx=ctx, {
-    // Returns Array(String) or Null
+// match(string, regexp_str) -> Array of strings
+function!(StringMatch(text: String, regexp_str: String) => Type::array_of(String), ctx=ctx, {
+    // Returns Array(String)
     // Note: JS String.prototype.match returns an array with additional properties (index, input, groups)
-    // This simplified version will return an array of matched strings or Value::Null.
+    // This simplified version will return an array of matched strings.
     // If regexp has /g flag, all matches are returned. Otherwise, only the first match.
     // The current regex crate doesn't directly expose flag parsing from a string like "/pattern/g".
     // We assume the regexp_str is just the pattern itself. For global match, user might call repeatedly or use a different function.
@@ -1843,12 +1850,12 @@ function!(StringMatch(text: String, regexp_str: String) => Any, ctx=ctx, {
                 for cap in captures.iter() {
                     match cap {
                         Some(m) => result_array.push(Value::String(m.as_str().into())),
-                        None => result_array.push(Value::Null), // For optional capture groups not matched
+                        None => result_array.push(Value::String("".into())), // Represent non-matched optional group as empty string
                     }
                 }
                 Ok(Value::Array(Arc::new(result_array)))
             } else {
-                Ok(Value::Null) // No match
+                Ok(Value::Array(Arc::new(vec![]))) // No match, return empty array
             }
         }
         Err(e) => {
@@ -1868,9 +1875,7 @@ function!(StringCharCodeAt(text: String, index: Integer) => Integer, ctx=ctx, {
     let char_opt = s.chars().nth(idx as usize);
     match char_opt {
         Some(ch) => Ok(Value::Integer(ch as i64)), // Cast char to i64 for Unicode value
-        None => Ok(Value::Null) // JS returns NaN for out-of-bounds, Null seems a reasonable alternative here
-                                // Or perhaps an error, but following JS's non-erroring for charAt.
-                                // Revisit if NaN or error is more appropriate. For now, Null.
+        None => Ok(Value::Integer(-1)) // Return -1 for out-of-bounds
     }
 });
 
