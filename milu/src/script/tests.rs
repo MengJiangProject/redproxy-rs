@@ -1,5 +1,4 @@
-#[cfg(test)]
-mod tests {
+
     // Adjust use statements to new module structure
     // super::super::parser::parse will be crate::parser::parse
     // super::* will try to import from crate::script::* (due to re-exports in script/mod.rs)
@@ -551,4 +550,3 @@ ${to_string(1+2)}` "#,
             Value::String("\"hello\"".to_string())
         );
     }
-}
