@@ -17,6 +17,9 @@ mod quic;
 #[cfg(any(target_os = "android", target_os = "linux"))]
 mod tproxy;
 
+#[cfg(test)]
+pub mod mocks;
+
 #[async_trait]
 pub trait Listener: Send + Sync {
     async fn init(&mut self) -> Result<(), Error> {

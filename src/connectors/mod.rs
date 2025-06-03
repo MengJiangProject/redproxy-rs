@@ -14,6 +14,9 @@ mod loadbalance;
 mod quic;
 mod socks;
 
+#[cfg(test)]
+pub mod mocks;
+
 #[async_trait]
 pub trait Connector: Send + Sync {
     async fn init(&mut self) -> Result<(), Error> {

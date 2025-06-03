@@ -19,6 +19,11 @@ pub mod windows;
 #[cfg(target_os = "linux")]
 pub mod splice;
 
+pub mod dialers;
+
+#[cfg(test)]
+pub mod mocks;
+
 // map v6 socket addr into v4 if possible
 pub fn try_map_v4_addr(addr: SocketAddr) -> SocketAddr {
     if let SocketAddr::V6(v6) = addr {
