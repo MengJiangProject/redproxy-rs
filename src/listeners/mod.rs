@@ -32,6 +32,7 @@ pub trait Listener: Send + Sync {
         queue: Sender<ContextRef>,
     ) -> Result<(), Error>;
     fn name(&self) -> &str;
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 pub fn from_config(cfg: &[Value]) -> Result<HashMap<String, Arc<dyn Listener>>, Error> {

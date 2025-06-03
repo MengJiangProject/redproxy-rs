@@ -377,18 +377,31 @@ The `http` connector forwards traffic to an upstream HTTP or HTTPS proxy.
         -   `key` (string): Path to the client private key file.
     -   `disableEarlyData` (boolean, optional): Disables 0-RTT data in TLS 1.3 for connections to the upstream proxy.
         -   *Default value*: `false`.
+    -   `always_use_connect` (boolean, optional):
+        -   *Default value*: `false`.
+        -   *Behavior*:
+            -   If `true`, and the incoming request to the proxy is a standard HTTP request (e.g., GET, POST), this connector will first establish an HTTP CONNECT tunnel to the configured proxy server (`server:port`). After the tunnel is established, the original HTTP request (e.g., GET /path) is sent through this tunnel to the target server.
+            -   If `false` (or omitted), the connector behaves as standard: for HTTPS traffic to a target, it uses CONNECT. For HTTP traffic to a target, it typically forwards the HTTP request directly to the proxy (which then forwards it to the target).
+            -   This option is useful when you want all traffic, including plain HTTP, to be tunneled through a CONNECT request to the upstream proxy, which can be required by some proxy server configurations or for specific routing policies.
 
 Examples:
 
 ```yaml
 connectors:
   # HTTP Connector
-  - name: http
+  - name: http-standard
     server: 192.168.100.1
     port: 7081
 
+  # HTTP Connector that always uses CONNECT
+  - name: http-always-connect
+    type: http
+    server: proxy.example.com
+    port: 8080
+    always_use_connect: true # New option
+
   # HTTPS Connector
-  - name: https # 'type: http' is inferred
+  - name: https-standard # 'type: http' is inferred
     type: http # Can be explicitly set
     server: 192.168.100.1
     port: 3333

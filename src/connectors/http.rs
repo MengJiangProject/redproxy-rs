@@ -22,6 +22,7 @@ pub struct HttpConnector {
     server: String,
     port: u16,
     tls: Option<TlsClientConfig>,
+    always_use_connect: Option<bool>,
 }
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef, Error> {
@@ -66,7 +67,7 @@ impl super::Connector for HttpConnector {
         let remote = server.peer_addr().context("peer_addr")?;
         set_keepalive(&server)?;
 
-        let server = if let Some(connector) = tls_connector {
+        let server_connection = if let Some(connector) = tls_connector {
             let server_name = self.server.clone();
             let domain = ServerName::try_from(server_name)
                 .or_else(|e| {
@@ -87,7 +88,16 @@ impl super::Connector for HttpConnector {
             make_buffered_stream(server)
         };
 
-        http_proxy_connect(server, ctx, local, remote, "inline", |_| async {
+        let always_connect_enabled = self.always_use_connect.unwrap_or(false);
+        let is_incoming_http_request = ctx.read().await.http_request().is_some();
+
+        if always_connect_enabled && is_incoming_http_request {
+            ctx.write()
+                .await
+                .set_extra("h_conn_force_connect_then_send", "true");
+        }
+
+        http_proxy_connect(server_connection, ctx, local, remote, "inline", |_| async {
             panic!("not supported")
         })
         .await?;

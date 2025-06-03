@@ -31,21 +31,56 @@ where
     tracing::trace!("http_proxy_connect: channel={}", frame_channel);
     let target = ctx.read().await.target();
     let feature = ctx.read().await.feature();
+    let force_connect_then_send = ctx
+        .read()
+        .await
+        .extra("h_conn_force_connect_then_send")
+        .map_or(false, |v| v == "true");
+
     match feature {
         Feature::TcpForward => {
-            HttpRequest::new("CONNECT", &target)
-                .with_header("Host", &target)
-                .write_to(&mut server)
-                .await?;
-            let resp = HttpResponse::read_from(&mut server).await?;
-            if resp.code != 200 {
-                bail!("upstream server failure: {:?}", resp);
+            let maybe_original_request_arc = ctx.read().await.http_request();
+
+            if force_connect_then_send && maybe_original_request_arc.is_some() {
+                HttpRequest::new("CONNECT", &target)
+                    .with_header("Host", &target)
+                    .write_to(&mut server)
+                    .await
+                    .context("Failed to send CONNECT request")?;
+                let resp = HttpResponse::read_from(&mut server)
+                    .await
+                    .context("Failed to read response to CONNECT")?;
+                if resp.code != 200 {
+                    bail!("upstream proxy CONNECT failed: {:?}", resp);
+                }
+
+                let original_request_to_send = maybe_original_request_arc.unwrap();
+                original_request_to_send
+                    .write_to(&mut server)
+                    .await
+                    .context("Failed to write original request to proxy tunnel")?;
+
+                ctx.write()
+                    .await
+                    .set_server_stream(server)
+                    .set_local_addr(local)
+                    .set_server_addr(remote);
+            } else {
+                // Original TcpForward Logic
+                HttpRequest::new("CONNECT", &target)
+                    .with_header("Host", &target)
+                    .write_to(&mut server)
+                    .await?;
+                let resp = HttpResponse::read_from(&mut server).await?;
+                if resp.code != 200 {
+                    bail!("upstream server failure: {:?}", resp);
+                }
+                ctx.write()
+                    .await
+                    .set_server_stream(server)
+                    .set_local_addr(local)
+                    .set_server_addr(remote);
             }
-            ctx.write()
-                .await
-                .set_server_stream(server)
-                .set_local_addr(local)
-                .set_server_addr(remote);
         }
         Feature::HttpForward => {
             // For HttpForward, the 'server' stream is already connected to the target origin server.

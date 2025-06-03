@@ -40,8 +40,9 @@ pub type ConnectorRef = Box<dyn Connector>;
 pub fn from_config(cfg: &[Value]) -> Result<HashMap<String, Arc<dyn Connector>>, Error> {
     let mut ret: HashMap<String, Arc<dyn Connector>> = Default::default();
     for val in cfg {
-        let r = from_value(val)?;
-        let old = ret.insert(r.name().to_owned(), r.into());
+        let mut r_box = from_value(val)?; // r_box is Box<dyn Connector>
+        r_box.init().await.context("failed to init connector")?;
+        let old = ret.insert(r_box.name().to_owned(), Arc::from(r_box));
         if let Some(old) = old {
             bail!("duplicate connector name: {}", old.name());
         }

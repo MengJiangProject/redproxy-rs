@@ -99,9 +99,14 @@ connectors:
       servers: system
       # servers: 192.168.100.1:5353,1.1.1.1,8.8.8.8:53
       family: V4Only # one of V4Only, V6Only, V4First, V6First(default)
-  - name: http
+  - name: http # Standard HTTP connector
     server: 192.168.100.1
     port: 7081
+  - name: http-force-connect # HTTP connector that always uses CONNECT
+    type: http # type can often be inferred if name is 'http' or 'https'
+    server: 192.168.100.1 # Replace with a suitable example server
+    port: 7081           # Replace with a suitable example port
+    always_use_connect: true # Default is false. If true, sends CONNECT for all HTTP requests.
   - name: https
     type: http
     server: 192.168.100.1
