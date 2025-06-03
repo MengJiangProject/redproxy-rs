@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use tracing::trace;
 
 use crate::{
-    common::{h11c::h11c_connect, set_keepalive, tls::TlsClientConfig},
+    common::{http_proxy::http_proxy_connect, set_keepalive, tls::TlsClientConfig},
     context::{make_buffered_stream, ContextRef, Feature},
     GlobalState,
 };
@@ -87,7 +87,7 @@ impl super::Connector for HttpConnector {
             make_buffered_stream(server)
         };
 
-        h11c_connect(server, ctx, local, remote, "inline", |_| async {
+        http_proxy_connect(server, ctx, local, remote, "inline", |_| async {
             panic!("not supported")
         })
         .await?;

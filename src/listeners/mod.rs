@@ -8,8 +8,9 @@ use tokio::sync::mpsc::Sender;
 use crate::{context::ContextRef, GlobalState};
 
 mod http;
+pub mod http_forward_tests;
 mod reverse;
-mod socks;
+mod socks; // Added new test module
 
 #[cfg(feature = "quic")]
 mod quic;

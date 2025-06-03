@@ -7,7 +7,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Sender;
 use tracing::{error, info, warn};
 
-use crate::common::h11c::h11c_handshake;
+use crate::common::http_proxy::http_proxy_handshake;
 use crate::common::set_keepalive;
 use crate::common::tls::TlsServerConfig;
 use crate::context::{make_buffered_stream, ContextRef};
@@ -68,8 +68,17 @@ impl HttpListener {
                     tokio::spawn(async move {
                         let res = match this.create_context(state, source, socket).await {
                             Ok(ctx) => {
-                                h11c_handshake(ctx, queue, |_, _| async { bail!("not supported") })
-                                    .await
+                                http_proxy_handshake(ctx, queue, |channel: &str, session_id: u32| {
+                                    let channel_owned = channel.to_string();
+                                    async move {
+                                        bail!(
+                                            "Frame channel creation (channel: {}, session: {}) is not supported by this HttpListener",
+                                            channel_owned,
+                                            session_id
+                                        )
+                                    }
+                                })
+                                .await
                             }
                             Err(e) => Err(e),
                         };

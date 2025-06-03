@@ -468,6 +468,7 @@ impl GlobalState {
             server_frames: None,
             callback: None,
             state: self.clone(),
+            http_request: None, // Initialize the new field
         }));
         self.alive.lock().await.insert(id, Arc::downgrade(&ret));
         ret
@@ -516,6 +517,7 @@ pub struct Context {
     server_frames: Option<FrameIO>,
     callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
     state: Arc<GlobalState>,
+    http_request: Option<Arc<crate::common::http::HttpRequest>>,
 }
 
 pub type ContextRef = Arc<RwLock<Context>>;
@@ -561,8 +563,12 @@ impl Context {
         self.client_stream.as_mut()
     }
 
-    pub fn take_client_stream(&mut self) -> IOBufStream {
-        self.client_stream.take().unwrap()
+    pub fn take_client_stream(&mut self) -> Option<IOBufStream> {
+        self.client_stream.take()
+    }
+
+    pub fn take_server_stream(&mut self) -> Option<IOBufStream> {
+        self.server_stream.take()
     }
 
     pub fn take_streams(&mut self) -> Option<(IOBufStream, IOBufStream)> {
@@ -689,6 +695,15 @@ impl Context {
         Arc::make_mut(&mut self.props).idle_timeout = timeout;
         self
     }
+
+    pub fn set_http_request(&mut self, request: crate::common::http::HttpRequest) -> &mut Self {
+        self.http_request = Some(Arc::new(request));
+        self
+    }
+
+    pub fn http_request(&self) -> Option<Arc<crate::common::http::HttpRequest>> {
+        self.http_request.clone()
+    }
 }
 
 // a set of opreations that aquires write lock
@@ -774,6 +789,8 @@ pub enum Feature {
     UdpForward,
     // 1-to-many listening
     UdpBind,
+    // HTTP forwarding
+    HttpForward,
     // maybe we should add tap/tun support in the future
 }
 
