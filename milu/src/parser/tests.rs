@@ -4,34 +4,6 @@ use crate::script::{ParsedFunction, Value};
 use std::sync::Arc;
 
 // Import ALL necessary macros from crate root (exported from test_utils)
-use crate::{
-    access,
-    and,
-    array,
-    band,
-    bit_not,
-    bool,
-    bor,
-    branch,
-    bxor,
-    call,
-    div,
-    equal, // Unary & Binary op macros
-    id,
-    index,
-    int,
-    member_of,
-    minus,
-    mul,
-    neg,
-    not,
-    or,
-    plus,
-    scope,
-    str,
-    strcat, // Other specific operation macros
-    tuple,  // Basic value macros
-};
 
 #[inline]
 fn assert_ast(input: &str, value: Value) {

@@ -8,7 +8,8 @@ use std::fmt;
 mod rules;
 mod string; // string and template are used by rules, so they should be sibling modules or public from rules
 mod template;
-pub mod test_utils; // Made public, no longer cfg(test)
+#[macro_use]
+mod test_utils; // Made public, no longer cfg(test)
 #[cfg(test)]
 mod tests; // Keep tests module declaration
 
