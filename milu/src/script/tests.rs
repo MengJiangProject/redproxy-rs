@@ -3,145 +3,13 @@
 // super::* will try to import from crate::script::* (due to re-exports in script/mod.rs)
 use crate::parser::parse;
 use crate::script::*; // This should bring in Value, Type, ScriptContext, etc.
-use easy_error::{bail, Error};
+use easy_error::{bail, Error}; // Error is used by the NativeObject impls in test_utils
+use super::test_utils::*; // Import the NativeObject impls
 
 use std::collections::HashSet; // Keep for unresovled_ids test
-use std::sync::Arc; // Keep for Arc usage in tests // For TestNativeSimple in native_objects test // Added bail and Error for the fixes
+use std::sync::Arc; // Keep for Arc usage in tests
 
-// The (String,u32) NativeObject impl needs to be defined here or imported if it's specific to tests
-// For now, let's redefine it here if it's only for testing purposes.
-// If it's a general utility, it should be in a shared (non-test) module.
-// Assuming it's test-specific for now.
-
-// Copied NativeObject impl for (String, u32) from original script.rs tests
-impl NativeObject for (String, u32) {
-    fn as_accessible(&self) -> Option<&dyn Accessible> {
-        Some(self)
-    }
-    fn as_evaluatable(&self) -> Option<&dyn Evaluatable> {
-        Some(self)
-    }
-    fn as_indexable(&self) -> Option<&dyn Indexable> {
-        Some(self)
-    }
-    // No as_callable
-}
-
-#[async_trait::async_trait]
-impl Accessible for (String, u32) {
-    fn names(&self) -> Vec<&str> {
-        vec!["length", "x"]
-    }
-    async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
-        match name {
-            "length" | "x" => Ok(Type::Integer),
-            _ => bail!("no such property"),
-        }
-    }
-    fn get(&self, name: &str) -> Result<Value, Error> {
-        match name {
-            "length" => Ok((self.0.len() as i64).into()),
-            "x" => Ok(self.1.into()),
-            _ => bail!("no such property"),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl Indexable for (String, u32) {
-    fn length(&self) -> usize {
-        self.0.len()
-    }
-    async fn type_of_member(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
-        Ok(Type::Integer)
-    }
-    fn get(&self, index: i64) -> Result<Value, Error> {
-        let n_char_val = self
-                .0
-                .chars()
-                .nth(index as usize)
-                .ok_or_else(|| err_msg("index out of range"))? // Changed to err_msg
-                as i64;
-        Ok(n_char_val.into())
-    }
-}
-
-#[async_trait::async_trait]
-impl Evaluatable for (String, u32) {
-    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
-        Ok(Type::String)
-    }
-    async fn value_of(&self, _ctx: ScriptContextRef) -> Result<Value, Error> {
-        Ok(self.0.to_owned().into())
-    }
-}
-
-// TestNativeSimple, TestNativeFailingAccess, TestNativeFailingCall structs and their impls
-// also need to be defined here or imported if they are test-specific.
-#[derive(Debug, Hash, Eq, PartialEq)]
-struct TestNativeSimple;
-impl NativeObject for TestNativeSimple {
-    fn as_accessible(&self) -> Option<&dyn Accessible> {
-        Some(self)
-    }
-}
-#[async_trait::async_trait]
-impl Accessible for TestNativeSimple {
-    fn names(&self) -> Vec<&str> {
-        vec!["valid_prop"]
-    }
-    async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
-        if name == "valid_prop" {
-            Ok(Type::Integer)
-        } else {
-            bail!("no such property")
-        }
-    }
-    fn get(&self, name: &str) -> Result<Value, Error> {
-        if name == "valid_prop" {
-            Ok(Value::Integer(123))
-        } else {
-            bail!("no such property: {}", name)
-        }
-    }
-}
-
-#[derive(Debug, Hash, Eq, PartialEq)]
-struct TestNativeFailingAccess;
-impl NativeObject for TestNativeFailingAccess {
-    fn as_accessible(&self) -> Option<&dyn Accessible> {
-        Some(self)
-    }
-}
-#[async_trait::async_trait]
-impl Accessible for TestNativeFailingAccess {
-    fn names(&self) -> Vec<&str> {
-        vec!["prop_that_fails"]
-    }
-    async fn type_of(&self, _name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
-        Ok(Type::Integer)
-    }
-    fn get(&self, name: &str) -> Result<Value, Error> {
-        bail!("native error on get for {}", name)
-    }
-}
-
-#[derive(Debug, Hash, Eq, PartialEq)]
-struct TestNativeFailingCall;
-impl NativeObject for TestNativeFailingCall {
-    fn as_callable(&self) -> Option<&dyn Callable> {
-        Some(self)
-    }
-}
-#[async_trait::async_trait]
-impl Callable for TestNativeFailingCall {
-    async fn signature(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Type, Error> {
-        Ok(Type::Integer)
-    }
-    async fn call(&self, _ctx: ScriptContextRef, _args: &[Value]) -> Result<Value, Error> {
-        bail!("native error on call")
-    }
-}
+// NativeObject impls and related structs have been moved to test_utils.rs
 
 macro_rules! eval_test {
     ($input: expr, $output: expr) => {{
@@ -179,6 +47,32 @@ macro_rules! eval_error_test {
     }};
 }
 
+macro_rules! assert_eval_and_type {
+    ($input:expr, $expected_value:expr, $expected_type:expr) => {
+        {
+            async {
+                let ctx = ScriptContext::default_ref();
+                let parsed_script = match parse($input) {
+                    Ok(script) => script,
+                    Err(e) => panic!("Parse error for '{}': {:?}", $input, e),
+                };
+
+                // Check value
+                match parsed_script.value_of(ctx.clone()).await {
+                    Ok(value) => assert_eq!(value, $expected_value, "Evaluation failed for '{}'", $input),
+                    Err(e) => panic!("Eval error for '{}': {:?}", $input, e),
+                };
+
+                // Check type
+                match parsed_script.type_of(ctx).await {
+                    Ok(value_type) => assert_eq!(value_type, $expected_type, "Type check failed for '{}'", $input),
+                    Err(e) => panic!("Type check error for '{}': {:?}", $input, e),
+                };
+            }
+        }
+    };
+}
+
 async fn type_test(input: &str, output: Type) {
     let ctx = ScriptContext::default_ref(); // Use helper for ScriptContextRef
     let parsed_value =
@@ -196,16 +90,31 @@ impl ScriptContext {
     }
 }
 
+// Helper function to create a script context and register a native object.
+fn create_context_with_native_object<T: NativeObject + 'static>(
+    name: &str,
+    object: T,
+) -> ScriptContextRef {
+    let mut ctx_instance = ScriptContext::new(Some(ScriptContext::default_ref()));
+    ctx_instance.set(name.into(), object.into());
+    Arc::new(ctx_instance)
+}
+
+// Helper function to create a script context and register a variable.
+fn create_context_with_variable(name: &str, value: Value) -> ScriptContextRef {
+    let mut ctx_instance = ScriptContext::new(Some(ScriptContext::default_ref()));
+    ctx_instance.set(name.into(), value);
+    Arc::new(ctx_instance)
+}
+
 #[tokio::test]
 async fn one_plus_one() {
-    type_test("1+1", Type::Integer).await;
-    eval_test!("1+1", Value::Integer(2));
+    assert_eval_and_type!("1+1", Value::Integer(2), Type::Integer).await;
 }
 
 #[tokio::test]
 async fn to_string() {
-    type_test("to_string(100*2)", Type::String).await;
-    eval_test!("to_string(100*2)", Value::String("200".to_string()));
+    assert_eval_and_type!("to_string(100*2)", Value::String("200".to_string()), Type::String).await;
 }
 
 #[test]
@@ -259,50 +168,45 @@ async fn array_type() {
 
 #[tokio::test]
 async fn ctx_chain() {
-    let ctx: ScriptContextRef = ScriptContext::default_ref();
-    let mut ctx2_instance = ScriptContext::new(Some(ctx));
-    ctx2_instance.set("a".into(), 1.into());
-    let ctx2_arc = Arc::new(ctx2_instance);
-    let value = parse("a+1").unwrap().value_of(ctx2_arc).await.unwrap();
+    let ctx_arc = create_context_with_variable("a", 1.into());
+    let value = parse("a+1").unwrap().value_of(ctx_arc).await.unwrap();
     assert_eq!(value, 2.into());
 }
 
 #[tokio::test]
 async fn scope() {
-    type_test("let a=1;b=2 in a+b", Type::Integer).await;
-    eval_test!("let a=1;b=2 in a+b", Value::Integer(3));
+    assert_eval_and_type!("let a=1;b=2 in a+b", Value::Integer(3), Type::Integer).await;
 }
 
 #[tokio::test]
 async fn access_tuple() {
-    type_test("(1,\"2\",false).1", Type::String).await;
-    eval_test!("(1,\"2\",false).1", Value::String("2".to_string()));
+    assert_eval_and_type!("(1,\"2\",false).1", Value::String("2".to_string()), Type::String).await;
 }
 
 #[tokio::test]
 async fn strcat() {
-    type_test(r#" strcat(["1","2",to_string(3)]) "#, Type::String).await;
-    eval_test!(
+    assert_eval_and_type!(
         r#" strcat(["1","2",to_string(3)]) "#,
-        Value::String("123".to_string())
-    );
+        Value::String("123".to_string()),
+        Type::String
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn template() {
-    type_test(r#" `x=${to_string(1+2)}` "#, Type::String).await;
-    eval_test!(
+    assert_eval_and_type!(
         r#" `x=
 ${to_string(1+2)}` "#,
-        Value::String("x=\n3".to_string())
-    );
+        Value::String("x=\n3".to_string()),
+        Type::String
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn native_objects() {
-    let mut ctx_instance = ScriptContext::new(Some(ScriptContext::default_ref()));
-    ctx_instance.set("a".into(), ("xx".to_owned(), 1).into());
-    let ctx_arc: ScriptContextRef = Arc::new(ctx_instance);
+    let ctx_arc = create_context_with_native_object("a", ("xx".to_owned(), 1));
     let value = parse("a.length+1+a.x")
         .unwrap()
         .value_of(ctx_arc.clone())
@@ -319,95 +223,78 @@ async fn native_objects() {
 
 #[tokio::test]
 async fn eval_simple_function_call() {
-    eval_test!("let f(a) = a + 1 in f(5)", Value::Integer(6));
-    type_test("let f(a) = a + 1 in f(5)", Type::Integer).await;
+    assert_eval_and_type!("let f(a) = a + 1 in f(5)", Value::Integer(6), Type::Integer).await;
 }
 
 #[tokio::test]
 async fn eval_function_multiple_args() {
-    eval_test!("let add(x, y) = x + y in add(3, 4)", Value::Integer(7));
-    type_test("let add(x, y) = x + y in add(3, 4)", Type::Integer).await;
+    assert_eval_and_type!("let add(x, y) = x + y in add(3, 4)", Value::Integer(7), Type::Integer).await;
 }
 
 #[tokio::test]
 async fn eval_function_no_args() {
-    eval_test!("let get_num() = 42 in get_num()", Value::Integer(42));
-    type_test("let get_num() = 42 in get_num()", Type::Integer).await;
+    assert_eval_and_type!("let get_num() = 42 in get_num()", Value::Integer(42), Type::Integer).await;
 }
 
 #[tokio::test]
 async fn eval_closure_lexical_scoping() {
-    eval_test!("let x = 10; f(a) = a + x in f(5)", Value::Integer(15));
-    type_test("let x = 10; f(a) = a + x in f(5)", Type::Integer).await;
-    eval_test!("let x = 10; f() = x * 2 in f()", Value::Integer(20));
-    type_test("let x = 10; f() = x * 2 in f()", Type::Integer).await;
+    assert_eval_and_type!("let x = 10; f(a) = a + x in f(5)", Value::Integer(15), Type::Integer).await;
+    assert_eval_and_type!("let x = 10; f() = x * 2 in f()", Value::Integer(20), Type::Integer).await;
 }
 
 #[tokio::test]
 async fn eval_closure_arg_shadows_outer_scope() {
-    eval_test!("let x = 10; f(x) = x + 1 in f(5)", Value::Integer(6));
-    type_test("let x = 10; f(x) = x + 1 in f(5)", Type::Integer).await;
+    assert_eval_and_type!("let x = 10; f(x) = x + 1 in f(5)", Value::Integer(6), Type::Integer).await;
 }
 
 #[tokio::test]
 async fn eval_closure_inner_let_shadows_outer_scope() {
-    eval_test!(
+    assert_eval_and_type!(
         "let x = 10; f() = (let x = 5 in x + 1) in f()",
-        Value::Integer(6)
-    );
-    type_test(
-        "let x = 10; f() = (let x = 5 in x + 1) in f()",
-        Type::Integer,
+        Value::Integer(6),
+        Type::Integer
     )
     .await;
-    eval_test!(
+    assert_eval_and_type!(
         "let x = 10; f() = (let y = 5 in x + y) in f()",
-        Value::Integer(15)
-    );
-    type_test(
-        "let x = 10; f() = (let y = 5 in x + y) in f()",
-        Type::Integer,
+        Value::Integer(15),
+        Type::Integer
     )
     .await;
 }
 
 #[tokio::test]
 async fn eval_recursive_function_factorial() {
-    eval_test!(
+    assert_eval_and_type!(
         "let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)",
-        Value::Integer(6)
-    );
-    type_test(
-        "let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(3)",
-        Type::Integer,
+        Value::Integer(6),
+        Type::Integer
     )
     .await;
-    eval_test!(
+    assert_eval_and_type!(
         "let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)",
-        Value::Integer(1)
-    );
-    type_test(
-        "let fac(n) = if n == 0 then 1 else n * fac(n - 1) in fac(0)",
-        Type::Integer,
+        Value::Integer(1),
+        Type::Integer
     )
     .await;
 }
 
 #[tokio::test]
 async fn eval_mutually_recursive_functions() {
+    // Type of the `in` expression for `is_even(4)` is Boolean.
+    // The type_test was Type::Integer, which seems incorrect for the expression result.
+    // Assuming Type::Boolean is the correct expected type for the `in` expression's result.
     let script_even = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_even(4)";
-    eval_test!(script_even, Value::Boolean(true));
-    type_test(script_even, Type::Integer).await; // Type of expression is Any due to recursion, then final result is Boolean. Test setup might need refinement for recursive type inference. For now, checking final output type of an example call.
-                                                 // Let's assume the type refers to the result of the `in` expression.
+    assert_eval_and_type!(script_even, Value::Boolean(true), Type::Boolean).await;
+
+    // Similarly for `is_odd(3)`
     let script_odd = "let is_even(n) = if n == 0 then true else is_odd(n - 1); is_odd(n) = if n == 0 then false else is_even(n - 1) in is_odd(3)";
-    eval_test!(script_odd, Value::Boolean(true));
-    type_test(script_odd, Type::Integer).await; // Same as above.
+    assert_eval_and_type!(script_odd, Value::Boolean(true), Type::Boolean).await;
 }
 
 #[tokio::test]
 async fn eval_function_uses_another_in_same_block() {
-    eval_test!("let g() = 10; f(a) = a + g() in f(5)", Value::Integer(15));
-    type_test("let g() = 10; f(a) = a + g() in f(5)", Type::Integer).await;
+    assert_eval_and_type!("let g() = 10; f(a) = a + g() in f(5)", Value::Integer(15), Type::Integer).await;
 }
 
 #[tokio::test]
@@ -444,9 +331,7 @@ async fn test_index_out_of_bounds_tuple() {
 
 #[tokio::test]
 async fn test_access_non_existent_property_native() {
-    let mut ctx_instance = ScriptContext::new(Some(ScriptContext::default_ref()));
-    ctx_instance.set("no_simple".to_string(), TestNativeSimple.into());
-    let ctx_arc = Arc::new(ctx_instance);
+    let ctx_arc = create_context_with_native_object("no_simple", TestNativeSimple);
     let parsed = parse("no_simple.invalid_prop").unwrap();
     let res = parsed.value_of(ctx_arc).await;
     assert!(res.is_err());
@@ -483,12 +368,7 @@ async fn test_variable_redefinition_in_let_block() {
 
 #[tokio::test]
 async fn test_native_object_failing_get() {
-    let mut ctx_instance = ScriptContext::new(Some(ScriptContext::default_ref()));
-    ctx_instance.set(
-        "native_fail_get".to_string(),
-        TestNativeFailingAccess.into(),
-    );
-    let ctx_arc = Arc::new(ctx_instance);
+    let ctx_arc = create_context_with_native_object("native_fail_get", TestNativeFailingAccess);
     let parsed = parse("native_fail_get.prop_that_fails").unwrap();
     let res = parsed.value_of(ctx_arc).await;
     assert!(res.is_err());
@@ -501,9 +381,7 @@ async fn test_native_object_failing_get() {
 
 #[tokio::test]
 async fn test_native_object_failing_call() {
-    let mut ctx_instance = ScriptContext::new(Some(ScriptContext::default_ref()));
-    ctx_instance.set("native_fail_call".to_string(), TestNativeFailingCall.into());
-    let ctx_arc = Arc::new(ctx_instance);
+    let ctx_arc = create_context_with_native_object("native_fail_call", TestNativeFailingCall);
     let parsed = parse("native_fail_call()").unwrap();
     let res = parsed.value_of(ctx_arc).await;
     assert!(res.is_err());
