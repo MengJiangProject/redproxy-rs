@@ -3,7 +3,6 @@
 use crate::script::{
     Accessible, Callable, Evaluatable, Indexable, NativeObject, ScriptContextRef, Type, Value,
 };
-use async_trait::async_trait;
 use easy_error::{bail, err_msg, Error};
 // Arc is not directly used in the moved code blocks but might be relevant for how these objects are used elsewhere.
 // For now, let's only include what's directly necessary for these implementations. ScriptContextRef handles Arc internally.
@@ -55,8 +54,7 @@ impl Indexable for (String, u32) {
             .0
             .chars()
             .nth(index as usize)
-            .ok_or_else(|| err_msg("index out of range"))?
-            as i64;
+            .ok_or_else(|| err_msg("index out of range"))? as i64;
         Ok(n_char_val.into())
     }
 }

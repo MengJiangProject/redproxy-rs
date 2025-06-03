@@ -192,7 +192,7 @@ fn parse_function_definition_no_args() {
         arg_idents: vec![],
         body: int!(42),
     })));
-    let expected_expr_in_scope = call!(id!("get_num"));
+    let expected_expr_in_scope = call!(vec![id!("get_num")]);
     let expected_value = scope!(expected_vars, expected_expr_in_scope);
     assert_ast(input, expected_value);
 }

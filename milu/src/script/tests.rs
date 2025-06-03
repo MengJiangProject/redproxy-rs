@@ -1,10 +1,9 @@
 // Adjust use statements to new module structure
 // super::super::parser::parse will be crate::parser::parse
 // super::* will try to import from crate::script::* (due to re-exports in script/mod.rs)
+use super::test_utils::*;
 use crate::parser::parse;
 use crate::script::*; // This should bring in Value, Type, ScriptContext, etc.
-use easy_error::{bail, Error}; // Error is used by the NativeObject impls in test_utils
-use super::test_utils::*; // Import the NativeObject impls
 
 use std::collections::HashSet; // Keep for unresovled_ids test
 use std::sync::Arc; // Keep for Arc usage in tests
@@ -48,29 +47,33 @@ macro_rules! eval_error_test {
 }
 
 macro_rules! assert_eval_and_type {
-    ($input:expr, $expected_value:expr, $expected_type:expr) => {
-        {
-            async {
-                let ctx = ScriptContext::default_ref();
-                let parsed_script = match parse($input) {
-                    Ok(script) => script,
-                    Err(e) => panic!("Parse error for '{}': {:?}", $input, e),
-                };
+    ($input:expr, $expected_value:expr, $expected_type:expr) => {{
+        async {
+            let ctx = ScriptContext::default_ref();
+            let parsed_script = match parse($input) {
+                Ok(script) => script,
+                Err(e) => panic!("Parse error for '{}': {:?}", $input, e),
+            };
 
-                // Check value
-                match parsed_script.value_of(ctx.clone()).await {
-                    Ok(value) => assert_eq!(value, $expected_value, "Evaluation failed for '{}'", $input),
-                    Err(e) => panic!("Eval error for '{}': {:?}", $input, e),
-                };
+            // Check value
+            match parsed_script.value_of(ctx.clone()).await {
+                Ok(value) => {
+                    assert_eq!(value, $expected_value, "Evaluation failed for '{}'", $input)
+                }
+                Err(e) => panic!("Eval error for '{}': {:?}", $input, e),
+            };
 
-                // Check type
-                match parsed_script.type_of(ctx).await {
-                    Ok(value_type) => assert_eq!(value_type, $expected_type, "Type check failed for '{}'", $input),
-                    Err(e) => panic!("Type check error for '{}': {:?}", $input, e),
-                };
-            }
+            // Check type
+            match parsed_script.type_of(ctx).await {
+                Ok(value_type) => assert_eq!(
+                    value_type, $expected_type,
+                    "Type check failed for '{}'",
+                    $input
+                ),
+                Err(e) => panic!("Type check error for '{}': {:?}", $input, e),
+            };
         }
-    };
+    }};
 }
 
 async fn type_test(input: &str, output: Type) {
@@ -114,7 +117,12 @@ async fn one_plus_one() {
 
 #[tokio::test]
 async fn to_string() {
-    assert_eval_and_type!("to_string(100*2)", Value::String("200".to_string()), Type::String).await;
+    assert_eval_and_type!(
+        "to_string(100*2)",
+        Value::String("200".to_string()),
+        Type::String
+    )
+    .await;
 }
 
 #[test]
@@ -180,7 +188,12 @@ async fn scope() {
 
 #[tokio::test]
 async fn access_tuple() {
-    assert_eval_and_type!("(1,\"2\",false).1", Value::String("2".to_string()), Type::String).await;
+    assert_eval_and_type!(
+        "(1,\"2\",false).1",
+        Value::String("2".to_string()),
+        Type::String
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -228,23 +241,48 @@ async fn eval_simple_function_call() {
 
 #[tokio::test]
 async fn eval_function_multiple_args() {
-    assert_eval_and_type!("let add(x, y) = x + y in add(3, 4)", Value::Integer(7), Type::Integer).await;
+    assert_eval_and_type!(
+        "let add(x, y) = x + y in add(3, 4)",
+        Value::Integer(7),
+        Type::Integer
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn eval_function_no_args() {
-    assert_eval_and_type!("let get_num() = 42 in get_num()", Value::Integer(42), Type::Integer).await;
+    assert_eval_and_type!(
+        "let get_num() = 42 in get_num()",
+        Value::Integer(42),
+        Type::Integer
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn eval_closure_lexical_scoping() {
-    assert_eval_and_type!("let x = 10; f(a) = a + x in f(5)", Value::Integer(15), Type::Integer).await;
-    assert_eval_and_type!("let x = 10; f() = x * 2 in f()", Value::Integer(20), Type::Integer).await;
+    assert_eval_and_type!(
+        "let x = 10; f(a) = a + x in f(5)",
+        Value::Integer(15),
+        Type::Integer
+    )
+    .await;
+    assert_eval_and_type!(
+        "let x = 10; f() = x * 2 in f()",
+        Value::Integer(20),
+        Type::Integer
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn eval_closure_arg_shadows_outer_scope() {
-    assert_eval_and_type!("let x = 10; f(x) = x + 1 in f(5)", Value::Integer(6), Type::Integer).await;
+    assert_eval_and_type!(
+        "let x = 10; f(x) = x + 1 in f(5)",
+        Value::Integer(6),
+        Type::Integer
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -294,7 +332,12 @@ async fn eval_mutually_recursive_functions() {
 
 #[tokio::test]
 async fn eval_function_uses_another_in_same_block() {
-    assert_eval_and_type!("let g() = 10; f(a) = a + g() in f(5)", Value::Integer(15), Type::Integer).await;
+    assert_eval_and_type!(
+        "let g() = 10; f(a) = a + g() in f(5)",
+        Value::Integer(15),
+        Type::Integer
+    )
+    .await;
 }
 
 #[tokio::test]
