@@ -7,6 +7,8 @@ pub mod types;
 pub mod value;
 
 #[cfg(test)]
+pub mod test_utils;
+#[cfg(test)]
 mod tests; // tests.rs is now a sibling module
 
 // Re-export key items to be available under `crate::script::*`
