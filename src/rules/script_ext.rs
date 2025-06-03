@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use cidr::AnyIpCidr;
 use easy_error::{bail, Error};
-use milu::script::{Call, ScriptContext};
+use milu::script::ScriptContext;
 use milu::{
     function,
-    script::{Accessible, Callable, Evaluatable, NativeObject, ScriptContextRef, Type, Value},
+    script::{Accessible, Evaluatable, NativeObject, ScriptContextRef, Type, Value},
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
