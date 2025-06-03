@@ -2,7 +2,7 @@ use crate::function; // Added macro imports
 use easy_error::{bail, err_msg};
 use std::convert::TryInto;
 use std::sync::Arc; // ResultExt can be removed if not used
-                    // Keep if any functions use it, remove otherwise
+// Keep if any functions use it, remove otherwise
 
 // Adjust crate::script::* to specific imports if that's cleaner
 use crate::script::{Call, Evaluatable, Type, Value};

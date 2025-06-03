@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{bail, Error};
+use easy_error::{Error, bail};
 use std::{collections::HashSet, convert::TryFrom, fmt::Display, sync::Arc}; // Removed err_msg as it might not be used directly here after refactor
 
 // Assuming other modules are correctly set up in `super` or `crate::script`
@@ -149,7 +149,12 @@ impl Evaluatable for Value {
                     for x_val in a.iter().skip(1) {
                         let xt = x_val.real_type_of(ctx.clone()).await?;
                         if xt != t {
-                            bail!("array member must have same type: required type={:?}, mismatch type={} item={:?}", t, xt, x_val)
+                            bail!(
+                                "array member must have same type: required type={:?}, mismatch type={} item={:?}",
+                                t,
+                                xt,
+                                x_val
+                            )
                         }
                     }
                     Ok(Type::Array(Box::new(t)))

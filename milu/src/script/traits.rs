@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{bail, err_msg, Error};
+use easy_error::{Error, bail, err_msg};
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom; // For Indexable<Vec<Value>>
 

@@ -378,11 +378,12 @@ async fn test_access_non_existent_property_native() {
     let parsed = parse("no_simple.invalid_prop").unwrap();
     let res = parsed.value_of(ctx_arc).await;
     assert!(res.is_err());
-    assert!(res
-        .err()
-        .unwrap()
-        .to_string()
-        .contains("no such property: invalid_prop"));
+    assert!(
+        res.err()
+            .unwrap()
+            .to_string()
+            .contains("no such property: invalid_prop")
+    );
 }
 
 #[tokio::test]
@@ -415,11 +416,12 @@ async fn test_native_object_failing_get() {
     let parsed = parse("native_fail_get.prop_that_fails").unwrap();
     let res = parsed.value_of(ctx_arc).await;
     assert!(res.is_err());
-    assert!(res
-        .err()
-        .unwrap()
-        .to_string()
-        .contains("native error on get for prop_that_fails"));
+    assert!(
+        res.err()
+            .unwrap()
+            .to_string()
+            .contains("native error on get for prop_that_fails")
+    );
 }
 
 #[tokio::test]
@@ -428,11 +430,12 @@ async fn test_native_object_failing_call() {
     let parsed = parse("native_fail_call()").unwrap();
     let res = parsed.value_of(ctx_arc).await;
     assert!(res.is_err());
-    assert!(res
-        .err()
-        .unwrap()
-        .to_string()
-        .contains("native error on call"));
+    assert!(
+        res.err()
+            .unwrap()
+            .to_string()
+            .contains("native error on call")
+    );
 }
 
 #[tokio::test]

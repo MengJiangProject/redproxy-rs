@@ -1,6 +1,6 @@
 use crate::{args, function_head}; // Added macro imports
 use async_trait::async_trait;
-use easy_error::{bail, err_msg, Error}; // ResultExt can be removed
+use easy_error::{Error, bail, err_msg}; // ResultExt can be removed
 use std::collections::HashSet; // For unresovled_ids in Access and Scope
 use std::convert::TryInto;
 use std::sync::Arc; // Added Weak for ScriptContextWeakRef
@@ -328,7 +328,10 @@ impl Scope {
                         new_ctx.varibles.insert(id, scope_bound_value.into());
                     }
                     _ => {
-                        error = Some(err_msg(format!("Invalid item in let binding list: {:?}. Expected Tuple or ParsedFunction.", v_or_pf)));
+                        error = Some(err_msg(format!(
+                            "Invalid item in let binding list: {:?}. Expected Tuple or ParsedFunction.",
+                            v_or_pf
+                        )));
                         break;
                     }
                 }

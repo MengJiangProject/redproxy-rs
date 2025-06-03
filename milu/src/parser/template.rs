@@ -1,4 +1,6 @@
 use nom::{
+    IResult,
+    Parser,
     branch::alt,
     bytes::streaming::{is_not, tag}, // Added tag for parse_template_element
     character::streaming::char,
@@ -6,14 +8,12 @@ use nom::{
     error::{ContextError, FromExternalError, ParseError},
     multi::fold_many0,
     sequence::{delimited, preceded, terminated}, // Added terminated
-    IResult,
-    Parser,
 };
 
+use super::Span; // Corrected path
 use super::rules::op_0; // Corrected path
 use super::string::parse_escaped_whitespace;
 use super::string::parse_unicode; // Corrected path
-use super::Span; // Corrected path
 use crate::script::Value; // Corrected path
 
 // This was likely defined in string.rs or a shared place. For now, defining it here.
@@ -124,12 +124,12 @@ mod tests {
     use std::sync::Arc;
 
     use super::*; // For parse_template itself and Span from current module (template.rs)
-    use crate::parser::parse; // For assert_parse_template_error helper
     use crate::parser::Span as ParserSpan; // Keep Span alias if needed, or use crate::parser::Span directly
-    use crate::script::stdlib::{Greater, If}; // For complex expression test
+    use crate::parser::parse; // For assert_parse_template_error helper
     use crate::script::Value; // For complex expression test
+    use crate::script::stdlib::{Greater, If}; // For complex expression test
     use crate::{array, id, int, plus, str, strcat}; // Changed to crate:: for macros
-                                                    // For creating Spans in tests if needed, or use ParserSpan
+    // For creating Spans in tests if needed, or use ParserSpan
 
     // Helper for asserting successful template parsing
     fn assert_template_ast(input: &str, expected_vec: Vec<Value>) {

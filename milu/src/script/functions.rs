@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{bail, err_msg, Error};
+use easy_error::{Error, bail, err_msg};
 use std::{collections::HashSet, fmt::Display, sync::Arc}; // Added err_msg back as it's used
 
 use super::context::{ScriptContext, ScriptContextRef, ScriptContextWeakRef}; // For UDF context

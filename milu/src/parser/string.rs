@@ -181,7 +181,9 @@ mod tests {
         let result = parse_string::<()>(data).unwrap().1;
         assert_eq!(result, String::from("abc"));
         println!("Result: {}\n\n", result);
-        let data = Span::new("\"tab:\\tafter tab, newline:\\nnew line, quote: \\\", emoji: \\u{1F602}, newline:\\nescaped whitespace: \\    abc\"");
+        let data = Span::new(
+            "\"tab:\\tafter tab, newline:\\nnew line, quote: \\\", emoji: \\u{1F602}, newline:\\nescaped whitespace: \\    abc\"",
+        );
         println!(
             "EXAMPLE 2:\nParsing a string with escape sequences, newline literal, and escaped whitespace:\n\n{}\n",
             data
@@ -189,7 +191,9 @@ mod tests {
         let result = parse_string::<()>(data).unwrap().1;
         assert_eq!(
             result,
-            String::from("tab:\tafter tab, newline:\nnew line, quote: \", emoji: 😂, newline:\nescaped whitespace: abc")
+            String::from(
+                "tab:\tafter tab, newline:\nnew line, quote: \", emoji: 😂, newline:\nescaped whitespace: abc"
+            )
         );
         println!("Result:\n\n{}", result);
     }
@@ -223,8 +227,8 @@ mod tests {
     #[test]
     fn test_invalid_escape_sequence() {
         assert_parse_string_error("\"\\x\""); // \x is not a valid escape in this parser
-                                              // The following case is handled by parse_escaped_whitespace, so it's not an error.
-                                              // assert_parse_string_error("\"\\ \"");
+        // The following case is handled by parse_escaped_whitespace, so it's not an error.
+        // assert_parse_string_error("\"\\ \"");
         assert_parse_string_error("\"\\"); // Dangling backslash
     }
 

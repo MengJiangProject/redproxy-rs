@@ -3,7 +3,7 @@
 use crate::script::{
     Accessible, Callable, Evaluatable, Indexable, NativeObject, ScriptContextRef, Type, Value,
 };
-use easy_error::{bail, err_msg, Error};
+use easy_error::{Error, bail, err_msg};
 // Arc is not directly used in the moved code blocks but might be relevant for how these objects are used elsewhere.
 // For now, let's only include what's directly necessary for these implementations. ScriptContextRef handles Arc internally.
 

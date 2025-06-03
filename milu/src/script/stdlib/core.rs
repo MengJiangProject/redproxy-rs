@@ -1,9 +1,9 @@
 use crate::{args, function, function_head}; // Added macro imports
 use async_trait::async_trait;
-use easy_error::{bail, err_msg, Error, ResultExt};
+use easy_error::{Error, ResultExt, bail, err_msg};
 use std::convert::TryInto;
 use std::sync::Arc; // For IsMemberOf if it takes Arc<Vec<Value>> // Added ResultExt
-                    // Keep if any functions use it
+// Keep if any functions use it
 
 use crate::script::{Callable, Evaluatable, ScriptContextRef, Type, Value}; // Added Evaluatable
 

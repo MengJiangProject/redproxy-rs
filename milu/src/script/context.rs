@@ -1,4 +1,4 @@
-use easy_error::{bail, Error};
+use easy_error::{Error, bail};
 use std::{
     collections::HashMap,
     sync::{Arc, Weak},
