@@ -2,7 +2,7 @@
 name = "redproxy-rs"
 version = "0.9.1"
 authors = ["Bearice Ren <bearice@icybear.net>"]
-edition = "2021"
+edition = "2024"
 default-run = "redproxy-rs"
 
 [[bin]]
