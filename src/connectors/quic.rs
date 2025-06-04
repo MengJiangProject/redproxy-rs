@@ -13,7 +13,7 @@ use tracing::debug;
 use super::ConnectorRef;
 use crate::{
     common::{
-        h11c::h11c_connect,
+        http_proxy::http_proxy_connect,
         quic::{
             create_quic_client, create_quic_frames, quic_frames_thread, QuicFrameSessions,
             QuicStream,
@@ -133,7 +133,7 @@ impl QuicConnector {
             "quic-datagrams"
         };
         let frames = |id| create_quic_frames(conn, id, sessions);
-        h11c_connect(server, ctx, local, remote, channel, frames).await?;
+        http_proxy_connect(server, ctx, local, remote, channel, frames).await?;
         Ok(())
     }
 

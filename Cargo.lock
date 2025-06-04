@@ -1741,6 +1741,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "webpki-roots",
  "winapi",
  "yaml-rust",
