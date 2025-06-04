@@ -2,32 +2,32 @@ use async_trait::async_trait;
 use std::io::Result as IoResult;
 use std::net::{IpAddr, SocketAddr};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpSocket, TcpStream};
+use tokio::net::{TcpSocket, TcpStream, UdpSocket};
 use easy_error::{Error, ResultExt};
 
-use crate::common::{make_buffered_stream, set_keepalive, IoStream};
+use crate::context::{make_buffered_stream, IOStream, IOBufStream};
+use crate::common::set_keepalive;
 #[cfg(target_os = "linux")]
-use crate::common::fwmark_direct_socket; // Assuming this is the new name from direct.rs
+use crate::common::network_utils::fwmark_direct_socket;
 #[cfg(not(target_os = "linux"))]
-use crate::common::fwmark_direct_socket_stub as fwmark_direct_socket; // Need a stub for non-Linux
+use crate::common::network_utils::fwmark_direct_socket_stub as fwmark_direct_socket;
+
+use crate::common::dns::DnsConfig;
+use crate::common::udp::udp_socket;
+
 
 // --- TCP Connection Info ---
-// (This struct was part of direct.rs, moving it here)
 pub struct TcpConnectionInfo {
-    pub stream: Box<dyn IoStream>,
+    pub stream: IOBufStream,
     pub local_addr: SocketAddr,
     pub remote_addr: SocketAddr,
 }
 
-// --- Testability Trait for TCP Connection ---
-// (This trait was part of direct.rs, moving it here)
 #[async_trait]
 pub trait TcpDialer: Send + Sync + 'static {
     async fn connect(&self, remote: SocketAddr, local_bind: Option<IpAddr>, keepalive: bool, fwmark: Option<u32>) -> Result<TcpConnectionInfo, Error>;
 }
 
-// --- Wrapper for real TCP dialing ---
-// (This struct was part of direct.rs, moving it here)
 pub struct TokioTcpDialer;
 
 #[async_trait]
@@ -51,8 +51,6 @@ impl TcpDialer for TokioTcpDialer {
             set_keepalive(&stream)?;
         }
 
-        // Use the potentially renamed fwmark_direct_socket or a common fwmark utility
-        // Assuming fwmark_direct_socket is the correct function to use now.
         fwmark_direct_socket(&stream, fwmark)?;
 
         Ok(TcpConnectionInfo {
@@ -63,28 +61,16 @@ impl TcpDialer for TokioTcpDialer {
     }
 }
 
-// Stub for fwmark_direct_socket on non-Linux platforms
-#[cfg(not(target_os = "linux"))]
-pub fn fwmark_direct_socket_stub<T>(_sk: &T, _mark: Option<u32>) -> Result<(), Error> {
-    tracing::warn!("fwmark not supported on this platform, using stub");
-    Ok(())
-}
-
-// TODO: Consider adding UdpSocketFactory and RawUdpSocketLike here if they are common enough.
-// TODO: Consider adding SimpleDnsResolver and ArcDnsConfigResolver here.
-
+// --- TLS Stream Connector ---
 use crate::common::tls::TlsClientConfig;
-use rustls::pki_types::ServerName<'static>;
+use rustls::pki_types::ServerName; // Corrected
 use std::sync::Arc;
 
-
-// --- Testability Trait for TLS Connection (after TCP is established) ---
 #[async_trait]
 pub trait TlsStreamConnector: Send + Sync + 'static {
-    async fn connect_tls(&self, domain: ServerName<'static>, stream: Box<dyn IoStream>) -> Result<Box<dyn IoStream>, Error>;
+    async fn connect_tls(&self, domain: ServerName<'static>, stream: IOBufStream) -> Result<IOBufStream, Error>;
 }
 
-// --- Wrapper for real tokio_rustls::TlsConnector ---
 pub struct TokioTlsConnectorWrapper {
     tls_config: Arc<TlsClientConfig>,
 }
@@ -97,10 +83,79 @@ impl TokioTlsConnectorWrapper {
 
 #[async_trait]
 impl TlsStreamConnector for TokioTlsConnectorWrapper {
-    async fn connect_tls(&self, domain: ServerName<'static>, stream: Box<dyn IoStream>) -> Result<Box<dyn IoStream>, Error> {
+    async fn connect_tls(&self, domain: ServerName<'static>, stream: IOBufStream) -> Result<IOBufStream, Error> {
         let tls_connector = self.tls_config.connector();
-        let rustls_stream = tls_connector.connect(domain, stream).await
+        let unbuffered_inner_stream = stream.into_inner().into_inner();
+
+        let rustls_stream = tls_connector.connect(domain, unbuffered_inner_stream).await
             .context("TokioTlsConnectorWrapper: TLS connect error")?;
         Ok(make_buffered_stream(rustls_stream))
+    }
+}
+
+// --- DNS Resolver ---
+use crate::common::dns::AddressFamily;
+
+#[async_trait]
+pub trait SimpleDnsResolver: Send + Sync + 'static {
+    async fn lookup_host(&self, domain: &str, port: u16) -> Result<SocketAddr, Error>;
+}
+
+#[derive(Clone)]
+pub struct ArcDnsConfigResolver(pub Arc<DnsConfig>);
+
+#[async_trait]
+impl SimpleDnsResolver for ArcDnsConfigResolver {
+    async fn lookup_host(&self, domain: &str, port: u16) -> Result<SocketAddr, Error> {
+        self.0.lookup_host(domain, port).await
+    }
+}
+
+// --- UDP Socket Abstractions ---
+#[async_trait]
+pub trait RawUdpSocketLike: Send + Sync + 'static {
+    async fn recv_from_raw(&self, buf: &mut [u8]) -> IoResult<(usize, SocketAddr)>;
+    async fn send_to_raw(&self, buf: &[u8], target: SocketAddr) -> IoResult<usize>;
+    fn local_addr_raw(&self) -> IoResult<SocketAddr>;
+}
+
+#[async_trait]
+impl RawUdpSocketLike for UdpSocket {
+    async fn recv_from_raw(&self, buf: &mut [u8]) -> IoResult<(usize, SocketAddr)> {
+        self.recv_from(buf).await
+    }
+    async fn send_to_raw(&self, buf: &[u8], target: SocketAddr) -> IoResult<usize> {
+        self.send_to(buf, target).await
+    }
+    fn local_addr_raw(&self) -> IoResult<SocketAddr> {
+        self.local_addr()
+    }
+}
+
+#[async_trait]
+pub trait UdpSocketFactory: Send + Sync + 'static {
+    async fn create_raw_udp_socket(
+        &self,
+        local_bind_addr: SocketAddr,
+        connect_to_remote: Option<SocketAddr>,
+        fwmark: Option<u32>,
+    ) -> Result<Arc<dyn RawUdpSocketLike>, Error>;
+}
+
+pub struct TokioUdpSocketFactory;
+
+#[async_trait]
+impl UdpSocketFactory for TokioUdpSocketFactory {
+    async fn create_raw_udp_socket(
+        &self,
+        local_bind_addr: SocketAddr,
+        connect_to_remote: Option<SocketAddr>,
+        fwmark: Option<u32>,
+    ) -> Result<Arc<dyn RawUdpSocketLike>, Error> {
+        let real_udp_socket = udp_socket(local_bind_addr, connect_to_remote, false)
+            .context("TokioUdpSocketFactory: failed to create udp_socket")?;
+        fwmark_direct_socket(&real_udp_socket, fwmark)
+             .context("TokioUdpSocketFactory: failed to set fwmark")?;
+        Ok(Arc::new(real_udp_socket))
     }
 }

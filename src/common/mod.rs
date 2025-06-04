@@ -20,6 +20,7 @@ pub mod windows;
 pub mod splice;
 
 pub mod dialers;
+pub mod network_utils; // Added network_utils module
 
 #[cfg(test)]
 pub mod mocks;

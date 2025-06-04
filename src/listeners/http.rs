@@ -12,25 +12,23 @@ use tracing::{error, info, warn};
 use crate::common::h11c::h11c_handshake;
 use crate::common::set_keepalive;
 use crate::common::tls::TlsServerConfig;
-use crate::context::{make_buffered_stream, ContextRef, IoStream};
+use crate::context::{make_buffered_stream, ContextRef, IOStream, IOBufStream};
 use crate::listeners::Listener;
 use crate::GlobalState;
 
-// --- Testability Trait for TcpListener ---
 #[async_trait]
 pub trait TcpListenerLike: Send + Sync + 'static {
-    type Stream: AsyncRead + AsyncWrite + Send + Unpin + 'static; // Simplified: IoStream might be better if it needs to be Box<dyn IoStream>
+    type Stream: AsyncRead + AsyncWrite + Send + Unpin + Sync + 'static;
 
     async fn accept(&self) -> IoResult<(Self::Stream, SocketAddr)>;
     fn local_addr(&self) -> IoResult<SocketAddr>;
 }
 
-// --- Wrapper for real TcpListener ---
 pub struct TokioTcpListener(TcpListener);
 
 #[async_trait]
 impl TcpListenerLike for TokioTcpListener {
-    type Stream = TcpStream; // Real TcpStream
+    type Stream = TcpStream;
 
     async fn accept(&self) -> IoResult<(Self::Stream, SocketAddr)> {
         self.0.accept().await
@@ -49,7 +47,10 @@ pub struct HttpListener {
 }
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>, Error> {
-    let ret: HttpListener = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+    let mut ret: HttpListener = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+    if let Some(tls_cfg) = ret.tls.as_mut(){
+        tls_cfg.init().context("Failed to initialize TlsServerConfig for HttpListener")?;
+    }
     Ok(Box::new(ret))
 }
 
@@ -59,9 +60,6 @@ impl Listener for HttpListener {
         &self.name
     }
     async fn init(&mut self) -> Result<(), Error> {
-        if let Some(Err(e)) = self.tls.as_mut().map(TlsServerConfig::init) {
-            return Err(e);
-        }
         Ok(())
     }
     async fn listen(
@@ -70,9 +68,6 @@ impl Listener for HttpListener {
         queue: Sender<ContextRef>,
     ) -> Result<(), Error> {
         info!("{} listening on {}", self.name, self.bind);
-        // The concrete listener is bound here. For full testability of `listen` itself,
-        // this binding part would also need abstraction (e.g., a listener factory).
-        // For now, we focus on making the `accept` loop testable.
         let listener = TokioTcpListener(TcpListener::bind(&self.bind).await.context("bind")?);
         let this = self.clone();
         tokio::spawn(this.accept_loop(listener, state, queue));
@@ -80,26 +75,24 @@ impl Listener for HttpListener {
     }
 }
 impl HttpListener {
-    // Renamed from accept to accept_loop to avoid conflict with TcpListenerLike::accept
     async fn accept_loop<L: TcpListenerLike>(
         self: Arc<Self>,
         listener: L,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) {
+    ) where <L as TcpListenerLike>::Stream : Sync
+    {
         loop {
-            // Use the listener passed in, which can be a mock.
             match listener.accept().await.context("accept") {
                 Ok((socket, source)) => {
                     let this = self.clone();
-                    let queue = queue.clone();
-                    let state = state.clone();
+                    let queue_clone = queue.clone();
+                    let state_clone = state.clone();
                     let source = crate::common::try_map_v4_addr(source);
                     tokio::spawn(async move {
-                        // Pass the accepted socket (which is L::Stream) to create_context
-                        let res = match this.create_context(state, source, socket).await {
+                        let res = match this.create_context(state_clone, source, socket).await {
                             Ok(ctx) => {
-                                h11c_handshake(ctx, queue, |_, _| async { bail!("not supported") })
+                                h11c_handshake(ctx, queue_clone, |_, _| async { bail!("h11c frame_io_factory not supported in HttpListener") })
                                     .await
                             }
                             Err(e) => Err(e),
@@ -114,50 +107,31 @@ impl HttpListener {
                 }
                 Err(e) => {
                     error!("{} accept error: {} \ncause: {:?}", self.name, e, e.cause);
-                    // Decide if the loop should break or continue on specific errors
-                    // For now, it returns, ending the accept loop for this listener.
                     return;
                 }
             }
         }
     }
 
-    // Now takes S: AsyncRead + AsyncWrite + Send + Unpin + 'static
-    async fn create_context<S: AsyncRead + AsyncWrite + Send + Unpin + 'static>(
+    async fn create_context<S: AsyncRead + AsyncWrite + Send + Unpin + Sync + 'static>(
         &self,
         state: Arc<GlobalState>,
         source: SocketAddr,
-        socket: S, // Generic stream
+        socket: S,
     ) -> Result<ContextRef, Error> {
-        // set_keepalive might be an issue if S is not TcpStream.
-        // This suggests that TcpListenerLike::Stream might need to be bound by a custom trait
-        // if operations specific to TcpStream (like set_keepalive) are essential.
-        // For now, let's assume set_keepalive is optional or handled differently for mocks.
-        // Or, we attempt it via a downcast or a new trait method on Self::Stream.
-        // if let Ok(tcp_stream_ref) = (&socket as &dyn std::any::Any).downcast_ref::<TcpStream>() {
-        //     set_keepalive(tcp_stream_ref)?;
-        // }
-        // For simplicity in this refactoring step, we'll acknowledge this might need refinement.
-        // If `socket` is directly a `TcpStream` (as it is for `TokioTcpListener`), `set_keepalive` is fine.
-        // If it's a mock, `set_keepalive` would likely be a no-op or part of the mock's API.
-        // One option is to make `set_keepalive` take `&impl MaybeTcpStream` or similar.
-        // For now, we'll leave it and it will only work if S is effectively a TcpStream.
 
-        let client_stream: Box<dyn IoStream> = if let Some(acceptor) = self.tls.as_ref().map(|options| options.acceptor()) {
-            // Acceptor needs a stream that is AsyncRead + AsyncWrite. S fits this.
-            acceptor
-                .accept(socket)
-                .await
-                .context("tls accept error")
-                .map(make_buffered_stream)? // make_buffered_stream returns Box<dyn IoStream>
+        let client_io_stream: IOBufStream = if let Some(tls_options) = &self.tls {
+            let acceptor = tls_options.acceptor();
+            let tls_stream = acceptor.accept(socket).await.context("tls accept error")?;
+            make_buffered_stream(tls_stream)
         } else {
-            make_buffered_stream(socket) // make_buffered_stream also returns Box<dyn IoStream>
+            make_buffered_stream(socket)
         };
         let ctx = state
             .contexts
             .create_context(self.name.to_owned(), source)
             .await;
-        ctx.write().await.set_client_stream(client_stream);
+        ctx.write().await.set_client_stream(client_io_stream);
         Ok(ctx)
     }
 }
@@ -166,32 +140,33 @@ impl HttpListener {
 mod tests {
     use super::*;
     use crate::listeners::mocks::{MockTcpListener, MockTcpStream};
-    use crate::config::Contexts; // Assuming Contexts is part of config
-    use std::net::{IpAddr, Ipv4Addr};
+    use crate::config::context::Contexts as AppContexts;
     use std::sync::atomic::AtomicU32;
+    use bytes::Bytes;
+    use crate::common::tls::TlsServerConfigExt; // For generate_self_signed
 
-
-    // Helper to create a basic GlobalState for tests
-    // This might need to be more sophisticated depending on what HttpListener::create_context uses.
     fn create_mock_global_state() -> Arc<GlobalState> {
         Arc::new(GlobalState {
-            contexts: Arc::new(Contexts::new(1024, Arc::new(AtomicU32::new(0)))), // Max contexts, session_id_counter
+            contexts: Arc::new(AppContexts::new(1024, Arc::new(AtomicU32::new(0)))),
             rules: Default::default(),
-            dns_resolver: Arc::new(crate::dns::create_resolver(None, false).unwrap()),
-            geoip_db: Default::default(),
-            transports: Default::default(),
-            listeners: Default::default(),
-            udp_capacity: 0, // Not relevant for this test
-            timeouts: Default::default(), // Not relevant
-            hostname: "test_host".to_string(),
-            #[cfg(feature = "dashboard")]
-            web_ui_port: None,
-            #[cfg(feature = "dashboard")]
-            web_ui_path: None,
-            #[cfg(feature = "api")]
-            api_port: None,
-            #[cfg(feature = "api")]
-            external_controller: None,
+            connectors: Default::default(),
+            metrics: Default::default(),
+            io_params: Default::default(),
+            // dns_resolver, geoip_db, transports, listeners, udp_capacity, timeouts, hostname
+            // are not strictly needed for these specific listener context creation tests if not used by them.
+            // For a more complete mock GlobalState, they would be initialized appropriately.
+            // The GlobalState struct definition has changed. The following are not direct fields anymore.
+            // dns_resolver: Arc::new(crate::common::dns::create_resolver(None, false).unwrap()),
+            // geoip_db: Default::default(),
+            // transports: Default::default(),
+            listeners: Default::default(), // This is still a field
+            // udp_capacity: 0,
+            // timeouts: Default::default(),
+            // hostname: "test_host".to_string(),
+            #[cfg(feature = "dashboard")] web_ui_port: None,
+            #[cfg(feature = "dashboard")] web_ui_path: None,
+            #[cfg(feature = "api")] api_port: None,
+            #[cfg(feature = "api")] external_controller: None,
         })
     }
 
@@ -199,7 +174,7 @@ mod tests {
     async fn test_http_create_context_no_tls() {
         let listener_config = HttpListener {
             name: "test_http_listener".to_string(),
-            bind: "0.0.0.0:0".parse().unwrap(), // Bind address not directly used by create_context
+            bind: "0.0.0.0:0".parse().unwrap(),
             tls: None,
         };
 
@@ -212,22 +187,16 @@ mod tests {
         let ctx_ref = result.unwrap();
 
         let ctx_read = ctx_ref.read().await;
-        assert_eq!(ctx_read.source(), source_addr, "Source address mismatch");
-        assert_eq!(ctx_read.listener_name(), "test_http_listener", "Listener name mismatch");
-        // We can't directly compare the streams as one is Box<dyn IoStream> and other is MockTcpStream.
-        // But we can check if client_stream is Some.
-        assert!(ctx_read.client_stream().is_some(), "Client stream was not set");
-
-        // Further check: if the MockTcpStream was indeed used.
-        // If create_context writes something to the stream (it doesn't appear to), we could check mock_stream.get_written_data().
-        // If it reads, we could pre-fill read_buffer.
+        assert_eq!(ctx_read.props().source, source_addr, "Source address mismatch");
+        assert_eq!(ctx_read.props().listener, "test_http_listener", "Listener name mismatch");
+        assert!(ctx_read.client_stream_is_some(), "Client stream was not set");
     }
 
     #[tokio::test]
     async fn test_http_create_context_with_tls() {
         let mut tls_config = TlsServerConfig::generate_self_signed("test.com")
             .expect("Failed to generate self-signed cert for test");
-        tls_config.init().expect("Failed to init TlsServerConfig"); // Call init as it's normally done
+        tls_config.init().expect("Failed to init TlsServerConfig");
 
         let listener_config = HttpListener {
             name: "test_http_tls_listener".to_string(),
@@ -239,56 +208,27 @@ mod tests {
         let source_addr: SocketAddr = "1.2.3.5:12345".parse().unwrap();
         let mock_stream = MockTcpStream::new("test_tls_stream");
 
-        // Pre-fill mock stream with some data that looks like a ClientHello.
-        // This is a very basic, incomplete ClientHello. Actual handshake is complex.
-        // rustls acceptor might try to read this. If it's not enough, it might error.
-        // If it doesn't read immediately, this test might still pass if accept() can "succeed"
-        // by just wrapping the stream.
-        // A proper ClientHello is hundreds of bytes. Let's provide a minimal TLS record header
-        // and a tiny bit of handshake data.
-        // ContentType: Handshake (22)
-        // ProtocolVersion: TLS 1.2 (0x0303)
-        // Length: ... (e.g., 5 for a tiny fragment)
-        // Handshake Type: ClientHello (1)
-        // Length (handshake msg): ...
-        // Version (handshake): ...
-        // Random: ...
-        // SessionID length: ...
-        // CipherSuite length: ...
-        // ... etc.
-        // For this test, we'll see if an empty stream or minimal data allows `acceptor.accept()` to proceed
-        // without erroring out immediately. `tokio-rustls` might be lazy and not read until the
-        // resulting `TlsStream` is itself read from/written to.
-
-        // mock_stream.add_read_data(bytes::Bytes::from_static(&[
-        //     0x16, // ContentType: Handshake
-        //     0x03, 0x01, // ProtocolVersion: TLS 1.0 (for simplicity, though 1.2 is 0x0303)
-        //     0x00, 0x05, // Length of rest of record
-        //     0x01, // HandshakeType: ClientHello
-        //     0x00, 0x00, 0x01, // Length of handshake message
-        //     0x00, // Dummy content
-        // ]));
+        mock_stream.add_read_data(Bytes::from_static(&[
+             0x16, 0x03, 0x01, 0x00, 0x5f, 0x01, 0x00, 0x00, 0x5b,
+             0x03, 0x03,  0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+             0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+             0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+             0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+             0x00, 0x00, 0x02, 0xc0, 0x2b,  0x01, 0x00,  0x00, 0x2e,
+             0x00, 0x00, 0x00, 0x09, 0x00, 0x07, 0x00,  0x00, 0x04,
+             0x74, 0x65, 0x73, 0x74,
+        ]));
 
 
         let result = listener_config.create_context(mock_state.clone(), source_addr, mock_stream.clone()).await;
 
-        // `acceptor.accept(socket)` with `MockTcpStream` that has no data might error out
-        // if `tokio-rustls` tries to read the ClientHello immediately and finds EOF.
-        // If it passes, it means `tokio-rustls` likely just wrapped the stream and defers actual
-        // handshake I/O until the first read/write on the TlsStream.
         assert!(result.is_ok(), "create_context with TLS failed: {:?}", result.err());
         let ctx_ref = result.unwrap();
 
         let ctx_read = ctx_ref.read().await;
-        assert_eq!(ctx_read.source(), source_addr);
-        assert_eq!(ctx_read.listener_name(), "test_http_tls_listener");
-        assert!(ctx_read.client_stream().is_some(), "Client stream was not set with TLS");
-
-        // To further verify it's a TLS stream, one might try to write unencrypted data
-        // to the original mock_stream's write buffer (if TlsStream wrote ServerHello)
-        // or read from its read buffer (if TlsStream tried to read ClientHello).
-        // This depends on rustls's behavior with the mock.
-        // For now, success of create_context is the main check.
+        assert_eq!(ctx_read.props().source, source_addr);
+        assert_eq!(ctx_read.props().listener, "test_http_tls_listener");
+        assert!(ctx_read.client_stream_is_some(), "Client stream was not set with TLS");
     }
 
     #[tokio::test]
@@ -313,29 +253,16 @@ mod tests {
             listener_arc_clone.accept_loop(mock_tcp_listener, mock_state, queue_tx).await;
         });
 
-        // Wait for the accept_loop to finish (it will when MockTcpListener runs out of connections)
-        tokio::time::timeout(std::time::Duration::from_secs(1), accept_task)
-            .await
-            .expect("accept_loop task timed out")
-            .expect("accept_loop task panicked");
+        match tokio::time::timeout(std::time::Duration::from_secs(1), accept_task).await {
+            Ok(Ok(_)) => { /* Task completed successfully */ },
+            Ok(Err(e)) => panic!("accept_loop task resulted in an error: {:?}", e),
+            Err(_) => panic!("accept_loop task timed out"),
+        }
 
-        // For HttpListener, h11c_handshake's frame_io_factory closure returns an error.
-        // This means the handshake itself returns Err, and no ContextRef should be sent to the queue.
         match tokio::time::timeout(std::time::Duration::from_millis(50), queue_rx.recv()).await {
             Ok(Some(_ctx)) => panic!("Expected no context to be enqueued for basic HTTP listener due to h11c error"),
-            Ok(None) => { /* Channel closed, also means no item */ }
+            Ok(None) => { /* Channel closed, correct */ }
             Err(_) => { /* Timeout, correct, no item received */ }
         }
-        // We can also check that all connections from mock listener were consumed if the mock exposes such a count.
-        // This assertion requires `connections_left` on MockTcpListener.
-        // Assuming MockTcpListener was defined in mocks.rs as planned and has this method.
-        // If the mock_tcp_listener variable itself is consumed by accept_loop, then we'd need to check it before,
-        // or have accept_loop return it, or have MockTcpListener use an Arc for its internal queue count.
-        // Given the current structure where mock_tcp_listener is moved, this specific assertion here is hard
-        // unless MockTcpListener's state is sharable (e.g. Arc<Mutex<VecDeque>>) for connections_left.
-        // The current MockTcpListener in mocks.rs has Arc<Mutex<VecDeque>>, so connections_left() would work if called on the original instance.
-        // However, accept_loop takes ownership.
-        // For this test, knowing the loop finished implies all connections were processed or an error stopped it early.
-        // The mock returns an error when queue is empty, ensuring termination.
     }
 }

@@ -1,30 +1,27 @@
-// --- Mock Implementations for Connector Dependencies ---
-// These mocks are intended for use in testing individual connectors.
-
 use async_trait::async_trait;
-use easy_error::{Error, ResultExt, err_msg};
+use easy_error::{Error, err_msg}; // Removed ResultExt as it's not used
 use std::collections::VecDeque;
-use std::io::{Result as IoResult, ErrorKind};
+use std::io::{Result as IoResult, ErrorKind, Error as StdIoError}; // Added StdIoError for clarity
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf}; // For MockIoStream
-use bytes::Bytes; // For MockIoStream read buffer
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use bytes::Bytes;
 
 use crate::common::dialers::{
     TcpDialer, TcpConnectionInfo, TlsStreamConnector,
-    SimpleDnsResolver, RawUdpSocketLike, UdpSocketFactory // These are now in common::dialers
+    SimpleDnsResolver, RawUdpSocketLike, UdpSocketFactory
 };
-use crate::common::IoStream;
-use rustls::pki_types::ServerName<'static>;
+use crate::context::{IOStream, IOBufStream, make_buffered_stream}; // Corrected to IOStream from context, added IOBufStream, make_buffered_stream
+use rustls::pki_types::ServerName; // Corrected
 
 
 // --- Mock IoStream (basic version for testing dialers) ---
-#[derive(Debug, Clone)] // Added Clone
+#[derive(Debug, Clone)]
 pub struct MockIoStream {
     pub name: String,
-    read_buffer: Arc<Mutex<VecDeque<Bytes>>>, // Changed to Arc<Mutex<>>
-    write_buffer: Arc<Mutex<Vec<u8>>>,      // Changed to Arc<Mutex<>>
-    is_closed: Arc<Mutex<bool>>,            // Changed to Arc<Mutex<>>
+    read_buffer: Arc<Mutex<VecDeque<Bytes>>>,
+    write_buffer: Arc<Mutex<Vec<u8>>>,
+    is_closed: Arc<Mutex<bool>>,
 }
 
 impl MockIoStream {
@@ -42,7 +39,6 @@ impl MockIoStream {
     pub fn get_written_data(&self) -> Vec<u8> {
         self.write_buffer.lock().unwrap().clone()
     }
-    // Added to allow test to signal stream closure if needed, e.g. for read EOF
     #[allow(dead_code)]
     pub fn close_stream(&self) {
         *self.is_closed.lock().unwrap() = true;
@@ -56,7 +52,7 @@ impl AsyncRead for MockIoStream {
         buf: &mut ReadBuf<'_>,
     ) -> std::task::Poll<IoResult<()>> {
         if *self.is_closed.lock().unwrap() && self.read_buffer.lock().unwrap().is_empty() {
-            return std::task::Poll::Ready(Ok(())); // EOF
+            return std::task::Poll::Ready(Ok(()));
         }
         let mut buffer_guard = self.read_buffer.lock().unwrap();
         if let Some(front_bytes) = buffer_guard.front_mut() {
@@ -71,9 +67,9 @@ impl AsyncRead for MockIoStream {
             std::task::Poll::Ready(Ok(()))
         } else {
             if *self.is_closed.lock().unwrap() {
-                return std::task::Poll::Ready(Ok(())); // EOF if closed
+                return std::task::Poll::Ready(Ok(()));
             }
-            std::task::Poll::Pending // No data, not closed
+            std::task::Poll::Pending
         }
     }
 }
@@ -84,14 +80,14 @@ impl AsyncWrite for MockIoStream {
         buf: &[u8],
     ) -> std::task::Poll<IoResult<usize>> {
         if *self.is_closed.lock().unwrap() {
-            return std::task::Poll::Ready(Err(IoError::new(ErrorKind::BrokenPipe, "Stream is closed")));
+            return std::task::Poll::Ready(Err(StdIoError::new(ErrorKind::BrokenPipe, "Stream is closed")));
         }
         self.write_buffer.lock().unwrap().extend_from_slice(buf);
         std::task::Poll::Ready(Ok(buf.len()))
     }
     fn poll_flush(self: std::pin::Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> std::task::Poll<IoResult<()>> {
         if *self.is_closed.lock().unwrap() {
-             return std::task::Poll::Ready(Err(IoError::new(ErrorKind::BrokenPipe, "Stream is closed")));
+             return std::task::Poll::Ready(Err(StdIoError::new(ErrorKind::BrokenPipe, "Stream is closed")));
         }
         std::task::Poll::Ready(Ok(()))
     }
@@ -100,15 +96,13 @@ impl AsyncWrite for MockIoStream {
         std::task::Poll::Ready(Ok(()))
     }
 }
-impl IoStream for MockIoStream {}
+impl IOStream for MockIoStream {}
 
 
 // --- MockTcpDialer ---
 #[derive(Default)]
 pub struct MockTcpDialer {
-    // Function to call on connect, allows custom mock behavior per test
     connect_fn: Option<Box<dyn Fn(SocketAddr, Option<std::net::IpAddr>, bool, Option<u32>) -> Result<TcpConnectionInfo, Error> + Send + Sync>>,
-    // Or, a queue of responses
     responses: Mutex<VecDeque<Result<TcpConnectionInfo, Error>>>,
 }
 
@@ -120,6 +114,8 @@ impl MockTcpDialer {
     }
     #[allow(dead_code)]
     pub fn add_response(&self, response: Result<TcpConnectionInfo, Error>) {
+        // To match trait, TcpConnectionInfo.stream must be IOBufStream.
+        // This mock directly stores what it's given. The test setup must ensure it's correct.
         self.responses.lock().unwrap().push_back(response);
     }
 }
@@ -140,25 +136,25 @@ impl TcpDialer for MockTcpDialer {
 // --- MockTlsStreamConnector ---
 #[derive(Default)]
 pub struct MockTlsStreamConnector {
-    connect_tls_fn: Option<Box<dyn Fn(ServerName<'static>, Box<dyn IoStream>) -> Result<Box<dyn IoStream>, Error> + Send + Sync>>,
-    responses: Mutex<VecDeque<Result<Box<dyn IoStream>, Error>>>,
+    connect_tls_fn: Option<Box<dyn Fn(ServerName<'static>, IOBufStream) -> Result<IOBufStream, Error> + Send + Sync>>,
+    responses: Mutex<VecDeque<Result<IOBufStream, Error>>>,
 }
 
 impl MockTlsStreamConnector {
     pub fn new() -> Self { Self::default() }
     #[allow(dead_code)]
-    pub fn set_connect_tls_fn(&mut self, f: Box<dyn Fn(ServerName<'static>, Box<dyn IoStream>) -> Result<Box<dyn IoStream>, Error> + Send + Sync>) {
+    pub fn set_connect_tls_fn(&mut self, f: Box<dyn Fn(ServerName<'static>, IOBufStream) -> Result<IOBufStream, Error> + Send + Sync>) {
         self.connect_tls_fn = Some(f);
     }
      #[allow(dead_code)]
-    pub fn add_response(&self, response: Result<Box<dyn IoStream>, Error>) {
+    pub fn add_response(&self, response: Result<IOBufStream, Error>) {
         self.responses.lock().unwrap().push_back(response);
     }
 }
 
 #[async_trait]
 impl TlsStreamConnector for MockTlsStreamConnector {
-    async fn connect_tls(&self, domain: ServerName<'static>, stream: Box<dyn IoStream>) -> Result<Box<dyn IoStream>, Error> {
+    async fn connect_tls(&self, domain: ServerName<'static>, stream: IOBufStream) -> Result<IOBufStream, Error> {
         if let Some(f) = &self.connect_tls_fn {
             return f(domain, stream);
         }
@@ -202,11 +198,11 @@ impl SimpleDnsResolver for MockSimpleDnsResolver {
 }
 
 // --- MockRawUdpSocket (implements RawUdpSocketLike) ---
-#[derive(Clone, Debug)] // Clone needed if Arc<MockRawUdpSocket> is used and cloned.
+#[derive(Clone, Debug)]
 pub struct MockRawUdpSocket {
     local_addr_val: SocketAddr,
-    recv_buffer: Arc<Mutex<VecDeque<(Bytes, SocketAddr)>>>, // Data to be received, and from where
-    sent_data: Arc<Mutex<Vec<(Bytes, SocketAddr)>>>,     // Data sent, and to where
+    recv_buffer: Arc<Mutex<VecDeque<(Bytes, SocketAddr)>>>,
+    sent_data: Arc<Mutex<Vec<(Bytes, SocketAddr)>>>,
 }
 
 impl MockRawUdpSocket {
@@ -235,7 +231,7 @@ impl RawUdpSocketLike for MockRawUdpSocket {
             buf[..len].copy_from_slice(&data[..len]);
             Ok((len, from_addr))
         } else {
-            Err(IoError::new(ErrorKind::WouldBlock, "MockRawUdpSocket: No data in recv_buffer"))
+            Err(StdIoError::new(ErrorKind::WouldBlock, "MockRawUdpSocket: No data in recv_buffer"))
         }
     }
     async fn send_to_raw(&self, buf: &[u8], target: SocketAddr) -> IoResult<usize> {
