@@ -72,3 +72,97 @@ Milu is presented as an embedded, statically typed, pure functional, and lazy-ev
 **4. Conclusion**
 
 The Milu language, in its current state, provides a basic functional DSL. However, for more advanced use cases, data modeling, and robust error handling in line with modern functional programming practices, it exhibits significant gaps in the areas of user-defined types, generic functions, pattern matching, and monadic structures. Addressing these areas would considerably enhance the language's expressiveness, type safety, reusability, and robustness.
+
+---
+
+# Part 2: Proposed High-Level Syntax Design for Milu Evolution
+
+**Date:** 2023-10-27 (Placeholder Date)
+**Author:** Jules (AI Language Model)
+**Subject:** High-level syntax proposals for User-Defined Types, Generic Functions, Pattern Matching, and Monads, based on prior review and agreed design principles.
+
+**1. Design Principles (Recap)**
+
+*   Consistency with existing Milu syntax.
+*   Inspiration from Rust and ML-family languages (Haskell, OCaml).
+*   Clarity and Readability.
+*   Expressiveness and Power.
+*   Minimalism (where appropriate for an embedded DSL).
+*   Facilitate Static Typing.
+
+**2. User-Defined Types (Haskell/OCaml Inspired)**
+
+*   **General Keyword:** `type`
+*   **Enums (Sum Types):**
+    ```milu
+    type MyEnumName =
+        | VariantA                     // Simple variant
+        | VariantB(Type1, Type2)       // Variant with unnamed positional data
+        | VariantC { field1: Type1,    // Variant with named fields
+                     field2: Type2 }
+        ; // Optional semicolon
+    ```
+    *   Instantiation: `MyEnumName::VariantA`, `MyEnumName::VariantB(val1, val2)`, `MyEnumName::VariantC { field1: v1, field2: v2 }`.
+
+*   **Structs/Records (Product Types - as single-variant sum types):**
+    ```milu
+    type MyStructName = MyStructName {
+        fieldA: TypeA,
+        fieldB: TypeB,
+    }; // Optional semicolon
+    ```
+    *   Instantiation: `MyStructName { fieldA: valA, fieldB: valB }`.
+    *   Field Access: `instanceName.fieldA`.
+
+**3. Generic Functions**
+
+*   **Declaration:** Angle brackets `<...>` for type parameters after the function name.
+    ```milu
+    let functionName<T, U>(param1: T, param2: U) -> ReturnType<T> =
+        // ... function body ...
+        ; // Optional semicolon
+    ```
+*   Type parameters (`T`, `U`) can be used in argument types and return types.
+*   Type inference at call site is expected.
+
+**4. Pattern Matching**
+
+*   **`match` Expression:**
+    ```milu
+    match expression_to_match {
+        pattern1 => result_expression1,
+        pattern2 if guard_condition => result_expression2,
+        StructName { fieldA: bind_A, fieldB: _ } => result_expression3, // Destructuring struct
+        EnumName::VariantB(bind_val) => result_expression4,       // Destructuring enum
+        (x, y) => result_expression5,                             // Destructuring tuple
+        [first, ...rest] => result_expression6,                   // Destructuring array
+        literal_value => result_expression7,
+        variable_to_bind => result_expression8,
+        _ => default_result_expression,                           // Wildcard
+    }
+    ```
+*   Patterns include literals, variables, struct destructuring, enum variant destructuring, tuple destructuring, basic array destructuring (including rest), and `_` wildcard.
+*   `|` for alternative patterns within an arm (e.g., `patternA | patternB => ...`).
+*   Guards: `pattern if condition => ...`.
+*   Exhaustiveness checking is desirable.
+
+**5. Monads - `Option<T>` and `Result<T, E>`**
+
+*   **Definition:** Defined as standard library generic enums using the `type` syntax above.
+    ```milu
+    // Standard Library (conceptual)
+    type Option<T> = Some(T) | None;
+    type Result<T, E> = Ok(T) | Err(E);
+    ```
+*   **Construction:** Namespaced variant names.
+    *   `Option::Some(value)`, `Option::None`
+    *   `Result::Ok(value)`, `Result::Err(error_value)`
+*   **Consumption:** Primarily via `match` expressions.
+*   **Syntactic Sugar:** The `?` operator for error/None propagation.
+    ```milu
+    let value = some_function_returning_option_or_result()?;
+    ```
+
+**6. Conclusion of High-Level Design**
+
+This consolidated syntax design aims to significantly enhance Milu's capabilities in data modeling, code reuse, and robust programming. It provides a foundation for features common in modern, statically-typed functional languages, tailored to Milu's context. Further detailed specification will be required for each feature, considering edge cases, type system interactions, and implementation strategies.
