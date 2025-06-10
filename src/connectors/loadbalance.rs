@@ -1,13 +1,13 @@
 use std::{
     hash::Hash,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
 use async_trait::async_trait;
-use easy_error::{ensure, Error, ResultExt};
+use easy_error::{Error, ResultExt, ensure};
 use milu::{
     parser::parse,
     script::{ScriptContext, Type, Value},
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::{Connector, ConnectorRef};
-use crate::{context::ContextRef, rules::script_ext::create_context, GlobalState};
+use crate::{GlobalState, context::ContextRef, rules::script_ext::create_context};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]

@@ -2,7 +2,7 @@
 // But that crate can't have SPLICE_F_MOVE set. so I have to keep a local version.
 
 use nix::errno::Errno;
-use nix::fcntl::{splice, SpliceFFlags};
+use nix::fcntl::{SpliceFFlags, splice};
 use nix::unistd::pipe as c_pipe;
 use std::io::{self, Result as IoResult};
 use std::os::fd::AsFd;
@@ -64,7 +64,7 @@ pub async fn async_splice(
 }
 
 unsafe fn test_read_write_readiness(reader: RawFd, writer: RawFd) -> io::Result<(bool, bool)> {
-    use libc::{poll, pollfd, POLLERR, POLLHUP, POLLIN, POLLNVAL, POLLOUT};
+    use libc::{POLLERR, POLLHUP, POLLIN, POLLNVAL, POLLOUT, poll, pollfd};
 
     let mut fds = [
         pollfd {
@@ -91,7 +91,7 @@ unsafe fn test_read_write_readiness(reader: RawFd, writer: RawFd) -> io::Result<
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "fd of reader is invalid",
-            ))
+            ));
         }
         _ => false,
     };
@@ -102,7 +102,7 @@ unsafe fn test_read_write_readiness(reader: RawFd, writer: RawFd) -> io::Result<
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "fd of writer is invalid",
-            ))
+            ));
         }
         _ => false,
     };

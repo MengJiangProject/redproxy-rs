@@ -3,13 +3,13 @@ use std::{
     sync::Arc,
 };
 
-use easy_error::{err_msg, Error, ResultExt};
+use easy_error::{Error, ResultExt, err_msg};
 use hickory_resolver::{
+    Resolver,
     config::{NameServerConfig, ResolverConfig, ResolverOpts},
     name_server::TokioConnectionProvider,
     proto::xfer::Protocol,
     system_conf::read_system_conf,
-    Resolver,
 };
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};

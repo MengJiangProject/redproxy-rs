@@ -1,20 +1,20 @@
-use crate::{rules::Rule, GlobalState, VERSION};
+use crate::{GlobalState, VERSION, rules::Rule};
 use axum::{
+    Json, Router,
     body::Body,
     extract::Extension,
     http::{
-        header::{self, ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_TYPE},
         HeaderValue, Response, StatusCode,
+        header::{self, ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_TYPE},
     },
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
-use easy_error::{ensure, Error};
+use easy_error::{Error, ensure};
 use futures::StreamExt;
 use prometheus::{
-    register_histogram_vec, register_int_counter_vec, Encoder, HistogramVec, IntCounterVec,
-    TextEncoder,
+    Encoder, HistogramVec, IntCounterVec, TextEncoder, register_histogram_vec,
+    register_int_counter_vec,
 };
 use serde::{Deserialize, Serialize};
 use std::{

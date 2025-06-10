@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use cidr::AnyIpCidr;
-use easy_error::{bail, Error};
+use easy_error::{Error, bail};
 use milu::script::ScriptContext;
 use milu::{
     function,
@@ -138,11 +138,7 @@ impl SocketAddress {
         }
     }
     pub fn r#type(&self) -> &str {
-        if self.0.is_ipv4() {
-            "ipv4"
-        } else {
-            "ipv6"
-        }
+        if self.0.is_ipv4() { "ipv4" } else { "ipv6" }
     }
 }
 

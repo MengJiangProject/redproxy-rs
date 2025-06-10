@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{bail, Error, ResultExt};
+use easy_error::{Error, ResultExt, bail};
 use futures::Future;
 use std::{
     net::SocketAddr,
@@ -13,7 +13,7 @@ use crate::{
     context::{Context, ContextCallback, ContextRef, ContextRefOps, Feature, IOBufStream},
 };
 
-use super::frames::{frames_from_stream, FrameIO};
+use super::frames::{FrameIO, frames_from_stream};
 
 pub async fn h11c_connect<T1, T2>(
     mut server: IOBufStream,

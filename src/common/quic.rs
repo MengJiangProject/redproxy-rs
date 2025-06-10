@@ -2,9 +2,8 @@ use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use easy_error::{Error, ResultExt};
 use quinn::{
-    congestion,
+    ClientConfig, Connection, RecvStream, SendStream, ServerConfig, congestion,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
-    ClientConfig, Connection, RecvStream, SendStream, ServerConfig,
 };
 use std::{
     convert::TryInto,
@@ -15,7 +14,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::mpsc::{Receiver, Sender, channel},
 };
 use tokio_rustls::rustls;
 

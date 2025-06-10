@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{err_msg, Error, ResultExt};
+use easy_error::{Error, ResultExt, err_msg};
 use futures::TryFutureExt;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -13,19 +13,19 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    GlobalState,
     common::{
         auth::AuthData,
         into_unspecified, set_keepalive,
         socks::{
-            frames::setup_udp_session, PasswordAuth, SocksRequest, SocksResponse, SOCKS_CMD_BIND,
-            SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE, SOCKS_REPLY_GENERAL_FAILURE,
-            SOCKS_REPLY_OK,
+            PasswordAuth, SOCKS_CMD_BIND, SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE,
+            SOCKS_REPLY_GENERAL_FAILURE, SOCKS_REPLY_OK, SocksRequest, SocksResponse,
+            frames::setup_udp_session,
         },
         tls::TlsServerConfig,
     },
-    context::{make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps, Feature},
+    context::{Context, ContextCallback, ContextRef, ContextRefOps, Feature, make_buffered_stream},
     listeners::Listener,
-    GlobalState,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

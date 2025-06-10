@@ -1,23 +1,23 @@
 use std::{convert::TryFrom, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
-use easy_error::{bail, err_msg, Error, ResultExt};
+use easy_error::{Error, ResultExt, bail, err_msg};
 use rustls::pki_types::ServerName;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tracing::trace;
 
 use crate::{
+    GlobalState,
     common::{
         into_unspecified, set_keepalive,
         socks::{
-            frames::setup_udp_session, PasswordAuth, SocksRequest, SocksResponse,
-            SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE, SOCKS_REPLY_OK,
+            PasswordAuth, SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE, SOCKS_REPLY_OK, SocksRequest,
+            SocksResponse, frames::setup_udp_session,
         },
         tls::TlsClientConfig,
     },
-    context::{make_buffered_stream, ContextRef, Feature},
-    GlobalState,
+    context::{ContextRef, Feature, make_buffered_stream},
 };
 
 use super::ConnectorRef;
@@ -78,9 +78,7 @@ impl super::Connector for SocksConnector {
         let tls_connector = self.tls.as_ref().map(|options| options.connector());
         trace!(
             "{} connecting to server {}:{}",
-            self.name,
-            self.server,
-            self.port
+            self.name, self.server, self.port
         );
         let server = TcpStream::connect((self.server.as_str(), self.port))
             .await

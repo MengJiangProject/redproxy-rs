@@ -1,16 +1,16 @@
 // Code copied from mio internal api, those are not exposed but there is no point to include another library for this.
 use std::io::{Error as IoError, Result as IoResult};
 use std::net::SocketAddr;
-use winapi::shared::in6addr::{in6_addr_u, IN6_ADDR};
-use winapi::shared::inaddr::{in_addr_S_un, IN_ADDR};
+use winapi::shared::in6addr::{IN6_ADDR, in6_addr_u};
+use winapi::shared::inaddr::{IN_ADDR, in_addr_S_un};
 use winapi::shared::ws2def::{ADDRESS_FAMILY, AF_INET, AF_INET6, SOCKADDR, SOCKADDR_IN};
-use winapi::shared::ws2ipdef::{SOCKADDR_IN6_LH_u, SOCKADDR_IN6_LH};
+use winapi::shared::ws2ipdef::{SOCKADDR_IN6_LH, SOCKADDR_IN6_LH_u};
 use winapi::{
     ctypes::c_int,
     um::winsock2::{
-        bind as win_bind, closesocket, connect as win_connect, setsockopt, socket as win_socket,
-        INVALID_SOCKET, PF_INET, PF_INET6, SOCKET, SOCKET_ERROR, SOL_SOCKET, SO_KEEPALIVE,
-        SO_REUSEADDR,
+        INVALID_SOCKET, PF_INET, PF_INET6, SO_KEEPALIVE, SO_REUSEADDR, SOCKET, SOCKET_ERROR,
+        SOL_SOCKET, bind as win_bind, closesocket, connect as win_connect, setsockopt,
+        socket as win_socket,
     },
 };
 

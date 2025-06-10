@@ -1,12 +1,12 @@
 use clap::{builder::PossibleValuesParser, value_parser};
 use config::{IoParams, Timeouts};
 use context::{ContextRef, ContextState, GlobalState as ContextGlobalState};
-use easy_error::{err_msg, Error, Terminator};
+use easy_error::{Error, Terminator, err_msg};
 use rules::Rule;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc::channel, RwLock, RwLockReadGuard};
+use tokio::sync::{RwLock, RwLockReadGuard, mpsc::channel};
 use tracing::{info, warn};
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[cfg(feature = "metrics")]
 use metrics::MetricsServer;

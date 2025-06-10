@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{bail, Error, ResultExt};
+use easy_error::{Error, ResultExt, bail};
 use std::net::IpAddr;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tracing::trace;
@@ -227,11 +227,7 @@ pub struct NoAuth;
 #[async_trait]
 impl SocksAuthServer<()> for NoAuth {
     fn select_method(&self, method: &[u8]) -> Option<u8> {
-        if method.contains(&0) {
-            Some(0)
-        } else {
-            None
-        }
+        if method.contains(&0) { Some(0) } else { None }
     }
     async fn auth_v4(&self, _client_id: String) -> Result<(), Error> {
         Ok(())
@@ -628,7 +624,7 @@ pub mod frames {
                 return Err(IoError::new(
                     std::io::ErrorKind::InvalidData,
                     format!("not supported atype {}", atyp),
-                ))
+                ));
             }
         };
         frame.addr = Some(target);
@@ -669,7 +665,7 @@ pub mod frames {
                 return Err(IoError::new(
                     std::io::ErrorKind::InvalidData,
                     format!("not supported addr {:?}", frame.addr),
-                ))
+                ));
             }
         };
         body.extend(frame.body());

@@ -1,11 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use easy_error::{bail, err_msg, Error};
+use easy_error::{Error, bail, err_msg};
 use serde_yaml_ng::Value;
 use tokio::sync::mpsc::Sender;
 
-use crate::{context::ContextRef, GlobalState};
+use crate::{GlobalState, context::ContextRef};
 
 mod http;
 mod reverse;

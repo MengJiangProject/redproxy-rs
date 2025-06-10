@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{bail, Error, ResultExt};
+use easy_error::{Error, ResultExt, bail};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -7,12 +7,12 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Sender;
 use tracing::{error, info, warn};
 
+use crate::GlobalState;
 use crate::common::h11c::h11c_handshake;
 use crate::common::set_keepalive;
 use crate::common::tls::TlsServerConfig;
-use crate::context::{make_buffered_stream, ContextRef};
+use crate::context::{ContextRef, make_buffered_stream};
 use crate::listeners::Listener;
-use crate::GlobalState;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]

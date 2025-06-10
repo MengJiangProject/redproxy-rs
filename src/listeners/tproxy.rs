@@ -1,18 +1,17 @@
 use async_trait::async_trait;
 use bytes::BytesMut;
 use chashmap_async::CHashMap;
-use easy_error::{err_msg, Error, ResultExt};
+use easy_error::{Error, ResultExt, err_msg};
 use lru::LruCache;
 use nix::{
     cmsg_space,
     sys::socket::{
-        bind, getsockopt, recvmsg, setsockopt, socket,
+        AddressFamily, ControlMessageOwned, MsgFlags, SockFlag, SockProtocol, SockType, SockaddrIn,
+        SockaddrIn6, SockaddrLike, SockaddrStorage, bind, getsockopt, recvmsg, setsockopt, socket,
         sockopt::{
             Ip6tOriginalDst, IpTransparent, Ipv4OrigDstAddr, Ipv6OrigDstAddr, OriginalDst,
             ReuseAddr,
         },
-        AddressFamily, ControlMessageOwned, MsgFlags, SockFlag, SockProtocol, SockType, SockaddrIn,
-        SockaddrIn6, SockaddrLike, SockaddrStorage,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -29,23 +28,23 @@ use tokio::{
     io::unix::AsyncFd,
     net::{TcpListener, UdpSocket},
     sync::{
-        mpsc::{channel, Receiver, Sender},
         Mutex,
+        mpsc::{Receiver, Sender, channel},
     },
 };
 use tracing::{debug, error, info, trace};
 
 use crate::{
+    GlobalState,
     common::{
         frames::{Frame, FrameReader, FrameWriter},
         into_unspecified, set_keepalive, try_map_v4_addr,
         udp::{setup_udp_session, udp_socket},
     },
     context::{
-        make_buffered_stream, Context, ContextCallback, ContextRef, ContextRefOps, Feature,
-        TargetAddress,
+        Context, ContextCallback, ContextRef, ContextRefOps, Feature, TargetAddress,
+        make_buffered_stream,
     },
-    GlobalState,
 };
 
 use super::Listener;
@@ -279,7 +278,7 @@ fn ntohs(x: u16) -> u16 {
 }
 
 pub fn set_nonblocking<T: AsFd>(fd: T) -> std::io::Result<()> {
-    use nix::fcntl::{fcntl, FcntlArg, OFlag};
+    use nix::fcntl::{FcntlArg, OFlag, fcntl};
     let mut flags = fcntl(&fd, FcntlArg::F_GETFD)?;
     flags |= libc::O_NONBLOCK;
     fcntl(&fd, FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags)))?;
@@ -369,7 +368,7 @@ impl TproxyUdpSocket {
                         };
 
                         (ret.bytes, src, dst)
-                    })
+                    });
                 }
                 Err(_would_block) => continue,
             }

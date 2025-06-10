@@ -6,21 +6,21 @@ use std::{
 
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
-use easy_error::{bail, Error, ResultExt};
+use easy_error::{Error, ResultExt, bail};
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpSocket, UdpSocket};
 use tracing::{debug, trace};
 
 use super::ConnectorRef;
 use crate::{
+    GlobalState,
     common::{
         dns::{AddressFamily, DnsConfig},
         frames::{Frame, FrameIO, FrameReader, FrameWriter},
         into_unspecified, set_keepalive,
         udp::udp_socket,
     },
-    context::{make_buffered_stream, ContextRef, Feature, TargetAddress},
-    GlobalState,
+    context::{ContextRef, Feature, TargetAddress, make_buffered_stream},
 };
 
 #[derive(Serialize, Deserialize)]

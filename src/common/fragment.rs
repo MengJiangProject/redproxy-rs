@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap, VecDeque},
+    collections::{HashMap, VecDeque, hash_map::Entry},
     time::{Duration, Instant},
 };
 
@@ -159,11 +159,7 @@ impl ReassembleQueue {
 const fn div_ceil(a: usize, b: usize) -> usize {
     let d = a / b;
     let r = a % b;
-    if r > 0 && b > 0 {
-        d + 1
-    } else {
-        d
-    }
+    if r > 0 && b > 0 { d + 1 } else { d }
 }
 
 #[cfg(test)]

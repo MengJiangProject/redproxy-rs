@@ -3,15 +3,15 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use easy_error::{err_msg, Error, ResultExt};
-use rustls_pemfile::{certs, read_one, Item};
+use easy_error::{Error, ResultExt, err_msg};
+use rustls_pemfile::{Item, certs, read_one};
 use serde::{Deserialize, Serialize};
 use tokio_rustls::rustls::{
+    ClientConfig, DigitallySignedStruct, RootCertStore, ServerConfig, SignatureScheme,
     client::danger::HandshakeSignatureValid,
     client::danger::{ServerCertVerified, ServerCertVerifier},
     pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime},
-    server::{danger::ClientCertVerifier, NoClientAuth, WebPkiClientVerifier},
-    ClientConfig, DigitallySignedStruct, RootCertStore, ServerConfig, SignatureScheme,
+    server::{NoClientAuth, WebPkiClientVerifier, danger::ClientCertVerifier},
 };
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 

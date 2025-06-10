@@ -1,4 +1,4 @@
-use easy_error::{ensure, err_msg, Error, ResultExt};
+use easy_error::{Error, ResultExt, ensure, err_msg};
 use futures::TryFutureExt;
 use milu::{
     parser::parse,
@@ -13,12 +13,12 @@ use std::{
 use tokio::{
     fs::{File, OpenOptions},
     io::{AsyncWriteExt, BufWriter},
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::mpsc::{Receiver, Sender, channel},
 };
 use tracing::info;
 
 #[cfg(unix)]
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 
 use crate::{context::ContextProps, rules::script_ext::create_context};
 

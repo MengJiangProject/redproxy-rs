@@ -1,5 +1,5 @@
-use easy_error::{ensure, Error};
-use milu::parser::{parse, SyntaxError};
+use easy_error::{Error, ensure};
+use milu::parser::{SyntaxError, parse};
 use milu::script::{Evaluatable, Type, Value};
 use std::convert::TryInto;
 use std::str::FromStr;

@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 use std::{
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
     time::Instant,
 };
@@ -87,8 +87,7 @@ impl Rule {
     pub async fn evaluate(&self, request: &Context) -> bool {
         trace!(
             "evaluate filter={:?} target={}",
-            self.filter_str,
-            self.target_name
+            self.filter_str, self.target_name
         );
         self.stats.exec.fetch_add(1, Ordering::Relaxed);
         #[cfg(feature = "metrics")]

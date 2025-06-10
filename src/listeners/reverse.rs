@@ -6,16 +6,16 @@ use serde_yaml_ng::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, UdpSocket};
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::{Sender, channel};
 use tracing::{debug, error, info};
 
 use super::Listener;
+use crate::GlobalState;
 use crate::common::frames::Frame;
 use crate::common::set_keepalive;
 use crate::common::udp::{self, setup_udp_session, udp_socket};
-use crate::context::{make_buffered_stream, Context, ContextRef, Feature, TargetAddress};
+use crate::context::{Context, ContextRef, Feature, TargetAddress, make_buffered_stream};
 use crate::context::{ContextCallback, ContextRefOps};
-use crate::GlobalState;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

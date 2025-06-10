@@ -1,9 +1,9 @@
 use crate::{
-    context::{ContextRef, Feature},
     GlobalState,
+    context::{ContextRef, Feature},
 };
 use async_trait::async_trait;
-use easy_error::{bail, err_msg, Error};
+use easy_error::{Error, bail, err_msg};
 use serde_yaml_ng::Value;
 use std::{collections::HashMap, sync::Arc};
 

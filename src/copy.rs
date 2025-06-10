@@ -4,7 +4,7 @@ use crate::{
     context::{ContextRef, ContextState, ContextStatistics, IOBufStream},
 };
 use bytes::BytesMut;
-use easy_error::{err_msg, Error, ResultExt};
+use easy_error::{Error, ResultExt, err_msg};
 use futures::future::BoxFuture;
 use std::{io::Result as IoResult, sync::Arc, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};

@@ -1,16 +1,16 @@
 use std::{convert::TryFrom, sync::Arc};
 
 use async_trait::async_trait;
-use easy_error::{err_msg, Error, ResultExt};
+use easy_error::{Error, ResultExt, err_msg};
 use rustls::pki_types::ServerName;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tracing::trace;
 
 use crate::{
-    common::{h11c::h11c_connect, set_keepalive, tls::TlsClientConfig},
-    context::{make_buffered_stream, ContextRef, Feature},
     GlobalState,
+    common::{h11c::h11c_connect, set_keepalive, tls::TlsClientConfig},
+    context::{ContextRef, Feature, make_buffered_stream},
 };
 
 use super::ConnectorRef;
@@ -55,9 +55,7 @@ impl super::Connector for HttpConnector {
         let tls_connector = self.tls.as_ref().map(|options| options.connector());
         trace!(
             "{} connecting to server {}:{}",
-            self.name,
-            self.server,
-            self.port
+            self.name, self.server, self.port
         );
         let server = TcpStream::connect((self.server.as_str(), self.port))
             .await

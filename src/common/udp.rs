@@ -18,8 +18,8 @@ pub fn udp_socket(
     #[cfg(unix)]
     let socket = {
         use nix::sys::socket::sockopt::ReuseAddr;
-        use nix::sys::socket::{bind, connect, setsockopt, socket, SockaddrLike, SockaddrStorage};
         use nix::sys::socket::{SockFlag, SockProtocol, SockType};
+        use nix::sys::socket::{SockaddrLike, SockaddrStorage, bind, connect, setsockopt, socket};
         use std::os::unix::prelude::FromRawFd;
 
         tracing::trace!("udp_socket local: {:?} remote: {:?}", local, remote);

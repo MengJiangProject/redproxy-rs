@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
-use easy_error::{err_msg, Error, ResultExt};
+use easy_error::{Error, ResultExt, err_msg};
 use quinn::{Connection, Endpoint};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -12,16 +12,16 @@ use tracing::debug;
 
 use super::ConnectorRef;
 use crate::{
+    GlobalState,
     common::{
         h11c::h11c_connect,
         quic::{
-            create_quic_client, create_quic_frames, quic_frames_thread, QuicFrameSessions,
-            QuicStream,
+            QuicFrameSessions, QuicStream, create_quic_client, create_quic_frames,
+            quic_frames_thread,
         },
         tls::TlsClientConfig,
     },
-    context::{make_buffered_stream, ContextRef, Feature},
-    GlobalState,
+    context::{ContextRef, Feature, make_buffered_stream},
 };
 
 type QuicConn = (Connection, QuicFrameSessions);
