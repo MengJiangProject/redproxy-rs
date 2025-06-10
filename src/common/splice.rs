@@ -80,7 +80,7 @@ unsafe fn test_read_write_readiness(reader: RawFd, writer: RawFd) -> io::Result<
     ];
 
     // Specify timeout to 0 so that it returns immediately.
-    let ret = poll(&mut fds[0], 2, 0);
+    let ret = unsafe{poll(&mut fds[0], 2, 0)};
     if ret == -1 {
         return Err(io::Error::last_os_error());
     }
