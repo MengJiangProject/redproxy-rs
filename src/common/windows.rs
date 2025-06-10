@@ -115,7 +115,7 @@ impl SocketAddrCRepr {
 
 pub(crate) fn socket_addr(addr: &SocketAddr) -> (SocketAddrCRepr, c_int) {
     match addr {
-        SocketAddr::V4(ref addr) => {
+        SocketAddr::V4(addr) => {
             // `s_addr` is stored as BE on all machine and the array is in BE order.
             // So the native endian conversion method is used so that it's never swapped.
             let sin_addr = unsafe {
@@ -134,7 +134,7 @@ pub(crate) fn socket_addr(addr: &SocketAddr) -> (SocketAddrCRepr, c_int) {
             let sockaddr = SocketAddrCRepr { v4: sockaddr_in };
             (sockaddr, std::mem::size_of::<SOCKADDR_IN>() as c_int)
         }
-        SocketAddr::V6(ref addr) => {
+        SocketAddr::V6(addr) => {
             let sin6_addr = unsafe {
                 let mut u = std::mem::zeroed::<in6_addr_u>();
                 *u.Byte_mut() = addr.ip().octets();
