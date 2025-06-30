@@ -64,7 +64,7 @@ winapi = {version = "0.3.9", features = ["winsock2","in6addr","inaddr","ws2def",
 
 [dev-dependencies]
 tokio-test = "0.4.2"
-test-log = { version = "0.2.11", default-features = false, features = ["trace"] }
+test-log = { version = "0.2.18", default-features = false, features = ["trace"] }
 
 [build-dependencies]
 mime_guess = "2.0.4"
