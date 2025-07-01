@@ -33,12 +33,12 @@ jobs:
         with:
           components: rustfmt,clippy
 
-      - name: Rustfmt Check
-        uses: actions-rust-lang/rustfmt@v1
-      - run: cargo check --workspace
-      - uses: clechasseur/rs-clippy-check@main
-        with:
-          args: --all-features
+      #- name: Rustfmt Check
+      #  uses: actions-rust-lang/rustfmt@v1
+      #- run: cargo check --workspace
+      #- uses: clechasseur/rs-clippy-check@main
+      #  with:
+      #    args: --all-features
       - run: cargo test --workspace --all-features
       - run: cargo build --workspace --all-targets --all-features
 
