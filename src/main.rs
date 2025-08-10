@@ -1,7 +1,7 @@
 use clap::{builder::PossibleValuesParser, value_parser};
 use config::{IoParams, Timeouts};
 use context::{ContextRef, ContextState, GlobalState as ContextGlobalState};
-use easy_error::{Error, Terminator, err_msg};
+use anyhow::{Error, anyhow, Context, Result};
 use rules::Rule;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{RwLock, RwLockReadGuard, mpsc::channel};
@@ -41,21 +41,30 @@ pub struct GlobalState {
 
 impl GlobalState {
     async fn set_rules(&self, mut rules: Vec<Arc<Rule>>) -> Result<(), Error> {
+        // Initialize rules before putting them in Arc
         for r in rules.iter_mut() {
-            Arc::get_mut(r).unwrap().init().await?;
+            if let Some(rule_mut) = Arc::get_mut(r) {
+                rule_mut.init().await
+                    .with_context(|| "Failed to initialize rule")?;
+            } else {
+                return Err(anyhow!("Cannot get mutable reference to rule during initialization"));
+            }
         }
 
         let connectors = &self.connectors;
-        rules.iter_mut().try_for_each(move |r| {
+        for r in rules.iter_mut() {
             if r.target_name() == "deny" {
-                Ok(())
+                continue;
             } else if let Some(t) = connectors.get(r.target_name()) {
-                Arc::get_mut(r).unwrap().target = Some(t.clone());
-                Ok(())
+                if let Some(rule_mut) = Arc::get_mut(r) {
+                    rule_mut.target = Some(t.clone());
+                } else {
+                    return Err(anyhow!("Cannot get mutable reference to rule during target assignment"));
+                }
             } else {
-                Err(err_msg(format!("target not found: {}", r.target_name())))
+                return Err(anyhow!("target not found: {}", r.target_name()));
             }
-        })?;
+        }
         *self.rules.write().await = rules;
         Ok(())
     }
@@ -74,7 +83,7 @@ impl GlobalState {
     }
 }
 #[tokio::main]
-async fn main() -> Result<(), Terminator> {
+async fn main() -> Result<()> {
     let args = clap::Command::new(env!("CARGO_BIN_NAME"))
         .version(VERSION)
         .arg(
@@ -122,39 +131,70 @@ async fn main() -> Result<(), Terminator> {
         .init();
 
     let cfg = config::Config::load(config).await?;
-    let mut state: Arc<GlobalState> = Default::default();
-    {
-        let st_mut = Arc::get_mut(&mut state).unwrap();
-        let ctx_mut = Arc::get_mut(&mut st_mut.contexts).unwrap();
-        ctx_mut.default_timeout = st_mut.timeouts.idle;
-
-        st_mut.timeouts = cfg.timeouts;
-        st_mut.listeners = listeners::from_config(&cfg.listeners)?;
-        st_mut.connectors = connectors::from_config(&cfg.connectors)?;
-
-        #[cfg(feature = "metrics")]
-        if let Some(mut metrics) = cfg.metrics {
-            metrics.init()?;
-            ctx_mut.history_size = metrics.history_size;
-            st_mut.metrics = Some(Arc::new(metrics));
-        }
-
+    
+    // Build state safely without Arc::get_mut().unwrap() patterns
+    let mut contexts = Arc::new(ContextGlobalState::default());
+    let mut listeners = listeners::from_config(&cfg.listeners)?;
+    let mut connectors = connectors::from_config(&cfg.connectors)?;
+    
+    // Initialize contexts with timeout and access log
+    if let Some(ctx_mut) = Arc::get_mut(&mut contexts) {
+        ctx_mut.default_timeout = cfg.timeouts.idle;
+        
         if let Some(mut log) = cfg.access_log {
             log.init().await?;
             ctx_mut.access_log = Some(log);
         }
-
-        for l in st_mut.listeners.values_mut() {
-            Arc::get_mut(l).unwrap().init().await?;
-        }
-
-        for c in st_mut.connectors.values_mut() {
-            Arc::get_mut(c).unwrap().init().await?;
-        }
-
-        st_mut.set_rules(rules::from_config(&cfg.rules)?).await?;
-        st_mut.io_params = cfg.io_params;
+    } else {
+        return Err(anyhow!("Cannot initialize context state"));
     }
+    
+    // Initialize listeners
+    for l in listeners.values_mut() {
+        if let Some(listener_mut) = Arc::get_mut(l) {
+            listener_mut.init().await
+                .with_context(|| format!("Failed to initialize listener {}", listener_mut.name()))?;
+        } else {
+            return Err(anyhow!("Cannot get mutable reference to listener during initialization"));
+        }
+    }
+    
+    // Initialize connectors
+    for c in connectors.values_mut() {
+        if let Some(connector_mut) = Arc::get_mut(c) {
+            connector_mut.init().await
+                .context(format!("Failed to initialize connector {}", connector_mut.name()))?;
+        } else {
+            return Err(anyhow!("Cannot get mutable reference to connector during initialization"));
+        }
+    }
+    
+    // Handle metrics initialization
+    #[cfg(feature = "metrics")]
+    let metrics = if let Some(mut metrics_cfg) = cfg.metrics {
+        metrics_cfg.init()?;
+        if let Some(ctx_mut) = Arc::get_mut(&mut contexts) {
+            ctx_mut.history_size = metrics_cfg.history_size;
+        }
+        Some(Arc::new(metrics_cfg))
+    } else {
+        None
+    };
+    
+    // Build the global state
+    let state = Arc::new(GlobalState {
+        rules: RwLock::new(Vec::new()),
+        listeners,
+        connectors,
+        contexts,
+        timeouts: cfg.timeouts,
+        #[cfg(feature = "metrics")]
+        metrics,
+        io_params: cfg.io_params,
+    });
+    
+    // Initialize rules after state is fully constructed
+    state.set_rules(rules::from_config(&cfg.rules)?).await?;
 
     for l in state.listeners.values() {
         l.verify(state.clone()).await?;
@@ -181,7 +221,7 @@ async fn main() -> Result<(), Terminator> {
     state.contexts.clone().gc_thread();
 
     loop {
-        let ctx = rx.recv().await.unwrap();
+        let ctx = rx.recv().await.ok_or_else(|| anyhow!("Channel closed unexpectedly"))?;
         tokio::spawn(process_request(ctx, state.clone()));
     }
 }
@@ -189,24 +229,26 @@ async fn main() -> Result<(), Terminator> {
 async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
     let connector = state.eval_rules(&ctx).await;
 
-    if connector.is_none() {
-        info!("denied: {}", ctx.to_string().await);
-        return ctx.on_error(err_msg("access denied")).await;
-    }
-    let connector = connector.unwrap();
+    let connector = match connector {
+        Some(c) => c,
+        None => {
+            info!("denied: {}", ctx.to_string().await);
+            return ctx.on_error(anyhow!("access denied")).await;
+        }
+    };
 
     // Check if connector has requested feature
     let props = ctx.read().await.props().clone();
     let feature = props.request_feature;
     if !connector.has_feature(feature) {
-        let e = err_msg(format!("unsupported connector feature: {:?}", feature));
+        let e = anyhow!("unsupported connector feature: {:?}", feature);
         warn!(
             "failed to connect to upstream: {} \ncause: {:?} \nctx: {}",
             e,
-            e.cause,
+            e.source(),
             props.to_string()
         );
-        return ctx.on_error(e).await;
+        return ctx.on_error(anyhow!("{}", e)).await;
     }
 
     ctx.write()
@@ -218,10 +260,10 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
         warn!(
             "failed to connect to upstream: {} cause: {:?} \nctx: {}",
             e,
-            e.cause,
+            e.source(),
             props.to_string()
         );
-        return ctx.on_error(e).await;
+        return ctx.on_error(anyhow!("{}", e)).await;
     }
 
     ctx.on_connect().await;
@@ -229,7 +271,7 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
         warn!(
             "error in io thread: {} \ncause: {:?} \nctx: {}",
             e,
-            e.cause,
+            e.source(),
             props.to_string()
         );
         ctx.on_error(e).await;

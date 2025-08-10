@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{Error, ResultExt, bail};
+use anyhow::{Context, Result, bail};
 use std::net::IpAddr;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tracing::trace;
@@ -32,15 +32,15 @@ pub struct SocksRequest<T> {
 #[async_trait]
 pub trait SocksAuthServer<T> {
     fn select_method(&self, method: &[u8]) -> Option<u8>;
-    async fn auth_v4(&self, client_id: String) -> Result<T, Error>;
-    async fn auth_v5<IO: RW>(&self, method: u8, socket: &mut IO) -> Result<T, Error>;
+    async fn auth_v4(&self, client_id: String) -> Result<T>;
+    async fn auth_v5<IO: RW>(&self, method: u8, socket: &mut IO) -> Result<T>;
 }
 
 #[async_trait]
 pub trait SocksAuthClient<T> {
     fn supported_methods(&self, data: &T) -> &[u8];
-    async fn auth_v4(&self, data: &T) -> Result<String, Error>;
-    async fn auth_v5<IO: RW>(&self, data: &T, method: u8, socket: &mut IO) -> Result<(), Error>;
+    async fn auth_v4(&self, data: &T) -> Result<String>;
+    async fn auth_v5<IO: RW>(&self, data: &T, method: u8, socket: &mut IO) -> Result<()>;
 }
 
 #[allow(dead_code)]
@@ -48,7 +48,7 @@ impl<T> SocksRequest<T> {
     pub async fn read_from<IO: RW, A: SocksAuthServer<T>>(
         socket: &mut IO,
         auth: A,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self> {
         let version = socket.read_u8().await.context("read ver")?;
         match version {
             SOCKS_VER_4 => Self::read_v4(socket, auth).await,
@@ -59,7 +59,7 @@ impl<T> SocksRequest<T> {
     async fn read_v4<IO: RW, A: SocksAuthServer<T>>(
         socket: &mut IO,
         auth: A,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self> {
         let cmd = socket.read_u8().await.context("read cmd")?;
         let dport = socket.read_u16().await.context("read port")?;
         let dst = socket.read_u32().await.context("read dst")?;
@@ -81,7 +81,7 @@ impl<T> SocksRequest<T> {
     async fn read_v5<IO: RW, A: SocksAuthServer<T>>(
         socket: &mut IO,
         auth: A,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self> {
         // pre auth negotiation
         let n = socket.read_u8().await.context("read method count")?;
         let mut buf = vec![0; n as usize];
@@ -137,7 +137,7 @@ impl<T> SocksRequest<T> {
         &self,
         socket: &mut IO,
         auth: A,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         match self.version {
             SOCKS_VER_4 => self.write_v4(socket, auth).await,
             SOCKS_VER_5 => self.write_v5(socket, auth).await,
@@ -149,7 +149,7 @@ impl<T> SocksRequest<T> {
         &self,
         socket: &mut IO,
         auth: A,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         socket.write_u8(self.version).await.context("version")?;
         socket.write_u8(self.cmd).await.context("cmd")?;
         let (dst, dport, target) = match &self.target {
@@ -180,7 +180,7 @@ impl<T> SocksRequest<T> {
         &self,
         socket: &mut IO,
         auth: A,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         // pre auth negotiation
         socket.write_u8(self.version).await.context("version")?;
         let methods = auth.supported_methods(&self.auth);
@@ -229,10 +229,10 @@ impl SocksAuthServer<()> for NoAuth {
     fn select_method(&self, method: &[u8]) -> Option<u8> {
         if method.contains(&0) { Some(0) } else { None }
     }
-    async fn auth_v4(&self, _client_id: String) -> Result<(), Error> {
+    async fn auth_v4(&self, _client_id: String) -> Result<()> {
         Ok(())
     }
-    async fn auth_v5<IO: RW>(&self, _method: u8, _socket: &mut IO) -> Result<(), Error> {
+    async fn auth_v5<IO: RW>(&self, _method: u8, _socket: &mut IO) -> Result<()> {
         Ok(())
     }
 }
@@ -242,7 +242,7 @@ impl SocksAuthClient<()> for NoAuth {
     fn supported_methods(&self, _: &()) -> &[u8] {
         &[SOCKS_AUTH_NONE]
     }
-    async fn auth_v4(&self, _: &()) -> Result<String, Error> {
+    async fn auth_v4(&self, _: &()) -> Result<String> {
         Ok("NoAuth".into())
     }
     async fn auth_v5<IO: RW>(
@@ -250,7 +250,7 @@ impl SocksAuthClient<()> for NoAuth {
         _data: &(),
         _method: u8,
         _socket: &mut IO,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         Ok(())
     }
 }
@@ -282,14 +282,14 @@ impl SocksAuthServer<Option<(String, String)>> for PasswordAuth {
             None
         }
     }
-    async fn auth_v4(&self, client_id: String) -> Result<Option<(String, String)>, Error> {
+    async fn auth_v4(&self, client_id: String) -> Result<Option<(String, String)>> {
         Ok(Some((client_id, "".into())))
     }
     async fn auth_v5<IO: RW>(
         &self,
         method: u8,
         socket: &mut IO,
-    ) -> Result<Option<(String, String)>, Error> {
+    ) -> Result<Option<(String, String)>> {
         match method {
             SOCKS_AUTH_NONE => Ok(None),
             SOCKS_AUTH_USRPWD => {
@@ -316,7 +316,7 @@ impl SocksAuthClient<Option<(String, String)>> for PasswordAuth {
         }
     }
 
-    async fn auth_v4(&self, data: &Option<(String, String)>) -> Result<String, Error> {
+    async fn auth_v4(&self, data: &Option<(String, String)>) -> Result<String> {
         data.as_ref()
             .map_or_else(|| Ok("".to_owned()), |(user, _)| Ok(user.to_owned()))
     }
@@ -326,7 +326,7 @@ impl SocksAuthClient<Option<(String, String)>> for PasswordAuth {
         data: &Option<(String, String)>,
         method: u8,
         socket: &mut IO,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         match method {
             SOCKS_AUTH_NONE => Ok(()),
             SOCKS_AUTH_USRPWD => {
@@ -365,7 +365,7 @@ pub struct SocksResponse {
 
 #[allow(dead_code)]
 impl SocksResponse {
-    pub async fn read_from<IO: RW>(socket: &mut IO) -> Result<Self, Error> {
+    pub async fn read_from<IO: RW>(socket: &mut IO) -> Result<Self> {
         let version = socket.read_u8().await.context("read ver")?;
         match version {
             0 => Self::read_v4(socket).await,
@@ -373,7 +373,7 @@ impl SocksResponse {
             _ => bail!("Unknown socks version: {}", version),
         }
     }
-    async fn read_v4<IO: RW>(socket: &mut IO) -> Result<Self, Error> {
+    async fn read_v4<IO: RW>(socket: &mut IO) -> Result<Self> {
         let cmd = socket.read_u8().await.context("read cmd")?;
         let dport = socket.read_u16().await.context("read port")?;
         let dst = socket.read_u32().await.context("read dst")?;
@@ -384,7 +384,7 @@ impl SocksResponse {
             target,
         })
     }
-    async fn read_v5<IO: RW>(socket: &mut IO) -> Result<Self, Error> {
+    async fn read_v5<IO: RW>(socket: &mut IO) -> Result<Self> {
         // let version = socket.read_u8().await.context("read version")?;
         let cmd = socket.read_u8().await.context("read cmd")?;
         let _rsv = socket.read_u8().await.context("read")?;
@@ -415,7 +415,7 @@ impl SocksResponse {
             target,
         })
     }
-    pub async fn write_to<IO: RW>(&self, socket: &mut IO) -> Result<(), Error> {
+    pub async fn write_to<IO: RW>(&self, socket: &mut IO) -> Result<()> {
         match self.version {
             SOCKS_VER_4 => self.write_v4(socket).await,
             SOCKS_VER_5 => self.write_v5(socket).await,
@@ -423,7 +423,7 @@ impl SocksResponse {
         }?;
         socket.flush().await.context("flush")
     }
-    pub async fn write_v4<IO: RW>(&self, socket: &mut IO) -> Result<(), Error> {
+    pub async fn write_v4<IO: RW>(&self, socket: &mut IO) -> Result<()> {
         socket.write_u8(0).await.context("vn")?;
         let cmd = if self.cmd == 0 { 90 } else { 91 }; //map v5 response code to v4
         socket.write_u8(cmd).await.context("cmd")?;
@@ -442,7 +442,7 @@ impl SocksResponse {
         socket.write(&dst).await.context("dport")?;
         Ok(())
     }
-    pub async fn write_v5<IO: RW>(&self, socket: &mut IO) -> Result<(), Error> {
+    pub async fn write_v5<IO: RW>(&self, socket: &mut IO) -> Result<()> {
         socket.write_u8(self.version).await.context("version")?;
         socket.write_u8(self.cmd).await.context("version")?;
         socket.write_u8(0).await.context("write")?;
@@ -466,14 +466,14 @@ impl SocksResponse {
     }
 }
 
-async fn read_length_and_string<IO: RW>(io: &mut IO) -> Result<String, Error> {
+async fn read_length_and_string<IO: RW>(io: &mut IO) -> Result<String> {
     let len = io.read_u8().await.context("length")?;
     let mut buf = vec![0; len as usize];
     io.read_exact(&mut buf).await.context("data")?;
     Ok(String::from_utf8_lossy(&buf).to_string())
 }
 
-async fn read_null_terminated_string<IO: RW>(io: &mut IO) -> Result<String, Error> {
+async fn read_null_terminated_string<IO: RW>(io: &mut IO) -> Result<String> {
     let mut buf = Vec::new();
     io.read_until(0, &mut buf).await.context("read domain")?;
     buf.pop();

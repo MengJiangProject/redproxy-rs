@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{Error, ResultExt, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -22,8 +22,8 @@ pub struct HttpListener {
     tls: Option<TlsServerConfig>,
 }
 
-pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>, Error> {
-    let ret: HttpListener = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>> {
+    let ret: HttpListener = serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
     Ok(Box::new(ret))
 }
 
@@ -32,7 +32,7 @@ impl Listener for HttpListener {
     fn name(&self) -> &str {
         &self.name
     }
-    async fn init(&mut self) -> Result<(), Error> {
+    async fn init(&mut self) -> Result<()> {
         if let Some(Err(e)) = self.tls.as_mut().map(TlsServerConfig::init) {
             return Err(e);
         }
@@ -42,9 +42,9 @@ impl Listener for HttpListener {
         self: Arc<Self>,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         info!("{} listening on {}", self.name, self.bind);
-        let listener = TcpListener::bind(&self.bind).await.context("bind")?;
+        let listener = TcpListener::bind(&self.bind).await.with_context(|| "bind")?;
         let this = self.clone();
         tokio::spawn(this.accept(listener, state, queue));
         Ok(())
@@ -58,7 +58,7 @@ impl HttpListener {
         queue: Sender<ContextRef>,
     ) {
         loop {
-            match listener.accept().await.context("accept") {
+            match listener.accept().await.with_context(|| "accept") {
                 Ok((socket, source)) => {
                     // we spawn a new thread here to avoid handshake to block accept thread
                     let this = self.clone();
@@ -76,13 +76,13 @@ impl HttpListener {
                         if let Err(e) = res {
                             warn!(
                                 "{}: handshake failed: {}\ncause: {:?}",
-                                this.name, e, e.cause
+                                this.name, e, e.source()
                             );
                         }
                     });
                 }
                 Err(e) => {
-                    error!("{} accept error: {} \ncause: {:?}", self.name, e, e.cause);
+                    error!("{} accept error: {} \ncause: {:?}", self.name, e, e.source());
                     return;
                 }
             }
@@ -93,14 +93,17 @@ impl HttpListener {
         state: Arc<GlobalState>,
         source: SocketAddr,
         socket: TcpStream,
-    ) -> Result<ContextRef, Error> {
+    ) -> Result<ContextRef> {
         set_keepalive(&socket)?;
-        let tls_acceptor = self.tls.as_ref().map(|options| options.acceptor());
+        let tls_acceptor = self.tls.as_ref()
+            .map(|options| options.acceptor())
+            .transpose()
+            .with_context(|| "TLS acceptor initialization failed")?;
         let stream = if let Some(acceptor) = tls_acceptor {
             acceptor
                 .accept(socket)
                 .await
-                .context("tls accept error")
+                .with_context(|| "tls accept error")
                 .map(make_buffered_stream)?
         } else {
             make_buffered_stream(socket)

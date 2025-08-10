@@ -1,4 +1,4 @@
-use easy_error::{Error, ensure};
+use anyhow::{ensure, Result};
 use milu::parser::{SyntaxError, parse};
 use milu::script::{Evaluatable, Type, Value};
 use std::convert::TryInto;
@@ -14,7 +14,7 @@ pub struct Filter {
 }
 
 impl Filter {
-    pub async fn validate(&self) -> Result<(), Error> {
+    pub async fn validate(&self) -> Result<()> {
         let ctx = create_context(Default::default());
         let rtype = self.root.type_of(ctx.into()).await?;
         ensure!(
@@ -24,7 +24,7 @@ impl Filter {
         );
         Ok(())
     }
-    pub async fn evaluate(&self, request: &Context) -> Result<bool, Error> {
+    pub async fn evaluate(&self, request: &Context) -> Result<bool> {
         let ctx = create_context(request.props().clone());
         let ret = self.root.value_of(ctx.into()).await?.try_into()?;
         trace!("filter eval: {:?} => {}", request, ret);

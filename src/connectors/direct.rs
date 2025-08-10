@@ -6,7 +6,7 @@ use std::{
 
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
-use easy_error::{Error, ResultExt, bail};
+use anyhow::{Error, Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpSocket, UdpSocket};
 use tracing::{debug, trace};
@@ -41,14 +41,14 @@ fn default_keepalive() -> bool {
     true
 }
 
-pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef, Error> {
+pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
     let ret: DirectConnector = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
 }
 
 #[async_trait]
 impl super::Connector for DirectConnector {
-    async fn init(&mut self) -> Result<(), Error> {
+    async fn init(&mut self) -> Result<()> {
         let dns = Arc::get_mut(&mut self.dns).unwrap();
         dns.init()?;
         if let Some(addr) = self.bind {
@@ -218,7 +218,7 @@ impl FrameWriter for DirectFrames {
 }
 
 #[cfg(target_os = "linux")]
-pub fn set_fwmark<T: std::os::unix::prelude::AsFd>(sk: &T, mark: Option<u32>) -> Result<(), Error> {
+pub fn set_fwmark<T: std::os::unix::prelude::AsFd>(sk: &T, mark: Option<u32>) -> Result<()> {
     use nix::sys::socket::setsockopt;
     use nix::sys::socket::sockopt::Mark;
     if mark.is_none() {
@@ -229,7 +229,7 @@ pub fn set_fwmark<T: std::os::unix::prelude::AsFd>(sk: &T, mark: Option<u32>) ->
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn set_fwmark<T>(_sk: &T, _mark: Option<u32>) -> Result<(), Error> {
+pub fn set_fwmark<T>(_sk: &T, _mark: Option<u32>) -> Result<()> {
     tracing::warn!("fwmark not supported on this platform");
     Ok(())
 }

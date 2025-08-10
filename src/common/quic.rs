@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
-use easy_error::{Error, ResultExt};
+use anyhow::{Context, Result};
 use quinn::{
     ClientConfig, Connection, RecvStream, SendStream, ServerConfig, congestion,
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
@@ -26,7 +26,7 @@ use super::{
 
 pub const ALPN_QUIC_HTTP11C: &[&[u8]] = &[b"h11c"]; //this is not regular HTTP3 connection, it uses HTTP1.1 CONNECT instead.
 
-pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig, Error> {
+pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig> {
     let (certs, key) = tls.certs()?;
     let mut server_crypto = rustls::ServerConfig::builder()
         .with_no_client_auth()
@@ -47,7 +47,7 @@ pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig, Error> 
     Ok(cfg)
 }
 
-pub fn create_quic_client(tls: &TlsClientConfig, enable_bbr: bool) -> Result<ClientConfig, Error> {
+pub fn create_quic_client(tls: &TlsClientConfig, enable_bbr: bool) -> Result<ClientConfig> {
     let builder = rustls::ClientConfig::builder().with_root_certificates(tls.root_store()?);
 
     let mut client_crypto = if let Some(auth) = &tls.auth {

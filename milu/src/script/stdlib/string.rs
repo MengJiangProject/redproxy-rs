@@ -1,8 +1,7 @@
 use crate::function; // Added macro imports
-use easy_error::bail;
+use anyhow::bail;
 use std::convert::TryInto;
-use std::sync::Arc; // ResultExt can be removed
-// Keep if any functions use it
+use std::sync::Arc;
 
 use crate::script::{Type, Value}; // Evaluatable not directly used by these string fns
 

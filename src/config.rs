@@ -1,4 +1,4 @@
-use easy_error::{Error, ResultExt};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::access_log::AccessLog;
@@ -39,10 +39,10 @@ impl Default for IoParams {
 }
 
 impl Config {
-    pub async fn load(path: &str) -> Result<Self, Error> {
-        let s = tokio::fs::read(path).await.context("read file")?;
-        let s = String::from_utf8(s).context("parse utf8")?;
-        serde_yaml_ng::from_str(&s).context("parse yaml")
+    pub async fn load(path: &str) -> Result<Self> {
+        let s = tokio::fs::read(path).await.with_context(|| "read file")?;
+        let s = String::from_utf8(s).with_context(|| "parse utf8")?;
+        serde_yaml_ng::from_str(&s).with_context(|| "parse yaml")
     }
 }
 

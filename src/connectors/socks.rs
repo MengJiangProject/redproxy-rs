@@ -1,7 +1,7 @@
 use std::{convert::TryFrom, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
-use easy_error::{Error, ResultExt, bail, err_msg};
+use anyhow::{Context, Result, bail};
 use rustls::pki_types::ServerName;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
@@ -44,7 +44,7 @@ fn default_socks_version() -> u8 {
     5
 }
 
-pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef, Error> {
+pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
     let ret: SocksConnector = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
 }
@@ -59,7 +59,7 @@ impl super::Connector for SocksConnector {
         &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
     }
 
-    async fn init(&mut self) -> Result<(), Error> {
+    async fn init(&mut self) -> Result<()> {
         if let Some(Err(e)) = self.tls.as_mut().map(TlsClientConfig::init) {
             return Err(e);
         }
@@ -73,9 +73,12 @@ impl super::Connector for SocksConnector {
         self: Arc<Self>,
         _state: Arc<GlobalState>,
         ctx: ContextRef,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         let tls_insecure = self.tls.as_ref().map(|x| x.insecure).unwrap_or(false);
-        let tls_connector = self.tls.as_ref().map(|options| options.connector());
+        let tls_connector = self.tls.as_ref()
+            .map(|options| options.connector())
+            .transpose()
+            .context("TLS connector initialization failed")?;
         trace!(
             "{} connecting to server {}:{}",
             self.name, self.server, self.port
@@ -97,7 +100,7 @@ impl super::Connector for SocksConnector {
                         Err(e)
                     }
                 })
-                .map_err(|_e| err_msg(format!("invalid upstream address: {}", self.server)))?;
+                .map_err(|_e| anyhow::anyhow!("invalid upstream address: {}", self.server))?;
             make_buffered_stream(
                 connector
                     .connect(domain, server)
@@ -137,7 +140,7 @@ impl super::Connector for SocksConnector {
             let mut udp_remote = resp
                 .target
                 .as_socket_addr()
-                .ok_or_else(|| err_msg("bad bind address"))?;
+                .ok_or_else(|| anyhow::anyhow!("bad bind address"))?;
             if udp_remote.ip().is_unspecified() {
                 udp_remote = SocketAddr::new(remote.ip(), udp_remote.port());
             }

@@ -1,11 +1,11 @@
 use clap::value_parser;
-use easy_error::{ResultExt, Terminator};
+use anyhow::{Context, Result};
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::error::ReadlineError;
 use rustyline::highlight::{CmdKind, Highlighter, MatchingBracketHighlighter};
 use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::{self, MatchingBracketValidator, Validator};
-use rustyline::{Cmd, CompletionType, Config, Context, EditMode, Editor, KeyEvent};
+use rustyline::{Cmd, CompletionType, Config, Context as RustylineContext, EditMode, Editor, KeyEvent};
 use rustyline_derive::Helper;
 use std::borrow::Cow::{self, Borrowed, Owned};
 use std::path::PathBuf;
@@ -30,7 +30,7 @@ impl Completer for MyHelper {
         &self,
         line: &str,
         pos: usize,
-        ctx: &Context<'_>,
+        ctx: &RustylineContext<'_>,
     ) -> Result<(usize, Vec<Pair>), ReadlineError> {
         self.completer.complete(line, pos, ctx)
     }
@@ -39,7 +39,7 @@ impl Completer for MyHelper {
 impl Hinter for MyHelper {
     type Hint = String;
 
-    fn hint(&self, line: &str, pos: usize, ctx: &Context<'_>) -> Option<String> {
+    fn hint(&self, line: &str, pos: usize, ctx: &RustylineContext<'_>) -> Option<String> {
         self.hinter.hint(line, pos, ctx)
     }
 }
@@ -85,7 +85,7 @@ impl Validator for MyHelper {
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[tokio::main]
-async fn main() -> Result<(), Terminator> {
+async fn main() -> Result<()> {
     let args = clap::Command::new("milu-repl")
         .version(VERSION)
         .arg(
@@ -101,7 +101,7 @@ async fn main() -> Result<(), Terminator> {
         let buf = String::from_utf8(buf)?;
         eval(Default::default(), &buf).await; // Added await
     } else {
-        repl().await.context("repl")?; // Added await
+        repl().await.with_context(|| "repl")?; // Added await
     }
     Ok(())
 }

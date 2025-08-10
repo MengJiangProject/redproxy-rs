@@ -33,15 +33,15 @@ pub fn try_map_v4_addr(addr: SocketAddr) -> SocketAddr {
 }
 
 #[cfg(not(windows))]
-pub fn set_keepalive(stream: &tokio::net::TcpStream) -> Result<(), easy_error::Error> {
-    use easy_error::ResultExt;
+pub fn set_keepalive(stream: &tokio::net::TcpStream) -> anyhow::Result<()> {
+    use anyhow::Context;
     use nix::sys::socket::{setsockopt, sockopt::KeepAlive};
     setsockopt(stream, KeepAlive, &true).context("setsockopt")
 }
 
 #[cfg(windows)]
-pub fn set_keepalive(stream: &tokio::net::TcpStream) -> Result<(), easy_error::Error> {
-    use easy_error::ResultExt;
+pub fn set_keepalive(stream: &tokio::net::TcpStream) -> anyhow::Result<()> {
+    use anyhow::Context;
     use std::os::windows::prelude::AsRawSocket;
     windows::set_keepalive(stream.as_raw_socket() as _, true).context("setsockopt")
 }

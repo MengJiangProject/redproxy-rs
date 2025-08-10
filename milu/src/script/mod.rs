@@ -27,7 +27,7 @@ pub use value::*;
 // The `use` statements from the old script.rs that are broadly used.
 // Some of these might be more appropriately placed in submodules if their usage is localized.
 pub use async_trait::async_trait; // Used in traits.rs, functions.rs, etc.
-pub use easy_error::{Error, bail, err_msg}; // Widely used for error handling
+pub use anyhow::{Result, bail}; // Widely used for error handling
 pub use std::{
     collections::{HashMap, HashSet}, // HashMap used in context.rs, traits.rs; HashSet in traits.rs, functions.rs, value.rs
     convert::TryFrom,                // Used in value.rs (TryFrom<Value>) and stdlib functions

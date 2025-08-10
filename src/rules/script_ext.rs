@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use cidr::AnyIpCidr;
-use easy_error::{Error, bail};
+use anyhow::{Result, bail};
 use milu::script::ScriptContext;
 use milu::{
     function,
@@ -38,7 +38,7 @@ impl Accessible for ContextAdaptor {
         vec!["listener", "connector", "source", "target", "feature"]
     }
 
-    fn get(&self, name: &str) -> Result<Value, Error> {
+    fn get(&self, name: &str) -> Result<Value> {
         match name {
             "listener" => Ok(self.req.listener.clone().into()),
             "connector" => Ok(self.req.connector.as_deref().unwrap_or("").into()),
@@ -49,11 +49,11 @@ impl Accessible for ContextAdaptor {
         }
     }
 
-    async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error> {
+    async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type> {
         // Made async
         match name {
             "listener" | "connector" | "feature" => Ok(Type::String),
-            "target" | "source" => self.get(name)?.type_of(ctx).await, // Added await
+            "target" | "source" => self.get(name)?.type_of(ctx).await.map_err(|e| anyhow::anyhow!("{}", e)), // Added await
             _ => bail!("undefined field: {}", name),
         }
     }
@@ -88,12 +88,12 @@ impl NativeObject for TargetAddress {
 
 #[async_trait]
 impl Evaluatable for TargetAddress {
-    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
+    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type> {
         // Made async
         Ok(Type::String)
     }
 
-    async fn value_of(&self, _ctx: ScriptContextRef) -> Result<Value, Error> {
+    async fn value_of(&self, _ctx: ScriptContextRef) -> Result<Value> {
         Ok(self.to_string().into())
     }
 }
@@ -104,7 +104,7 @@ impl Accessible for TargetAddress {
         vec!["host", "port", "type"]
     }
 
-    fn get(&self, name: &str) -> Result<Value, Error> {
+    fn get(&self, name: &str) -> Result<Value> {
         match name {
             "host" => Ok(self.host().into()),
             "port" => Ok(self.port().into()),
@@ -113,7 +113,7 @@ impl Accessible for TargetAddress {
         }
     }
 
-    async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
+    async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type> {
         // Made async
         match name {
             "host" | "port" | "type" => Ok(Type::String),
@@ -153,12 +153,12 @@ impl NativeObject for SocketAddress {
 
 #[async_trait]
 impl Evaluatable for SocketAddress {
-    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
+    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type> {
         // Made async
         Ok(Type::String)
     }
 
-    async fn value_of(&self, _ctx: ScriptContextRef) -> Result<Value, Error> {
+    async fn value_of(&self, _ctx: ScriptContextRef) -> Result<Value> {
         Ok(self.0.to_string().into())
     }
 }
@@ -169,7 +169,7 @@ impl Accessible for SocketAddress {
         vec!["host", "port", "type"]
     }
 
-    fn get(&self, name: &str) -> Result<Value, Error> {
+    fn get(&self, name: &str) -> Result<Value> {
         match name {
             "host" => Ok(self.host().into()),
             "port" => Ok(self.port().into()),
@@ -178,7 +178,7 @@ impl Accessible for SocketAddress {
         }
     }
 
-    async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type, Error> {
+    async fn type_of(&self, name: &str, _ctx: ScriptContextRef) -> Result<Type> {
         // Made async
         match name {
             "host" | "port" | "type" => Ok(Type::String),

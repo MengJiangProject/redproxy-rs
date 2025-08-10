@@ -3,7 +3,7 @@ use crate::{
     context::{ContextRef, Feature},
 };
 use async_trait::async_trait;
-use easy_error::{Error, bail, err_msg};
+use anyhow::{bail, Result};
 use serde_yaml_ng::Value;
 use std::{collections::HashMap, sync::Arc};
 
@@ -16,17 +16,17 @@ mod socks;
 
 #[async_trait]
 pub trait Connector: Send + Sync {
-    async fn init(&mut self) -> Result<(), Error> {
+    async fn init(&mut self) -> Result<()> {
         Ok(())
     }
-    async fn verify(&self, _state: Arc<GlobalState>) -> Result<(), Error> {
+    async fn verify(&self, _state: Arc<GlobalState>) -> Result<()> {
         Ok(())
     }
     async fn connect(
         self: Arc<Self>,
         state: Arc<GlobalState>,
         ctx: ContextRef,
-    ) -> Result<(), Error>;
+    ) -> Result<()>;
     fn name(&self) -> &str;
     fn features(&self) -> &[Feature] {
         &[Feature::TcpForward]
@@ -37,7 +37,7 @@ pub trait Connector: Send + Sync {
 }
 
 pub type ConnectorRef = Box<dyn Connector>;
-pub fn from_config(cfg: &[Value]) -> Result<HashMap<String, Arc<dyn Connector>>, Error> {
+pub fn from_config(cfg: &[Value]) -> Result<HashMap<String, Arc<dyn Connector>>> {
     let mut ret: HashMap<String, Arc<dyn Connector>> = Default::default();
     for val in cfg {
         let r = from_value(val)?;
@@ -49,10 +49,10 @@ pub fn from_config(cfg: &[Value]) -> Result<HashMap<String, Arc<dyn Connector>>,
     Ok(ret)
 }
 
-pub fn from_value(value: &Value) -> Result<ConnectorRef, Error> {
+pub fn from_value(value: &Value) -> Result<ConnectorRef> {
     let name = value
         .get("name")
-        .ok_or_else(|| err_msg("missing connector name"))?;
+        .ok_or_else(|| anyhow::anyhow!("missing connector name"))?;
     if name == "deny" {
         bail!("connector name \"deny\" is reserved")
     }

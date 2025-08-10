@@ -1,8 +1,8 @@
-use easy_error::{Error, bail};
+use anyhow::{Result, bail};
 use std::{
     collections::HashMap,
     sync::{Arc, Weak},
-}; // Removed err_msg
+};
 
 // Assuming other modules are correctly set up in `super` or `crate::script`
 use super::stdlib;
@@ -25,7 +25,7 @@ impl ScriptContext {
         }
     }
 
-    pub fn lookup(&self, id: &str) -> Result<Value, Error> {
+    pub fn lookup(&self, id: &str) -> Result<Value> {
         if let Some(r) = self.varibles.get(id) {
             tracing::trace!("lookup({})={}", id, r);
             Ok(r.clone())

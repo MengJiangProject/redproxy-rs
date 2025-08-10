@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use easy_error::{Error, ResultExt, err_msg};
+use anyhow::{Context, Result, anyhow};
 use hickory_resolver::{
     Resolver,
     config::{NameServerConfig, ResolverConfig, ResolverOpts},
@@ -43,7 +43,7 @@ pub enum AddressFamily {
 }
 
 impl DnsConfig {
-    pub fn init(&mut self) -> Result<(), Error> {
+    pub fn init(&mut self) -> Result<()> {
         let config = Self::parse_servers(&self.servers)?;
         self.resolver = Some(Arc::new(
             Resolver::builder_with_config(config.0, TokioConnectionProvider::default())
@@ -53,7 +53,7 @@ impl DnsConfig {
         Ok(())
     }
 
-    fn parse_servers(servers: &str) -> Result<(ResolverConfig, ResolverOpts), Error> {
+    fn parse_servers(servers: &str) -> Result<(ResolverConfig, ResolverOpts)> {
         // println!("servers: {}", servers);
         if servers == "system" {
             read_system_conf().context("Failed to read system configuration")
@@ -81,7 +81,7 @@ impl DnsConfig {
             Ok((config, ResolverOpts::default()))
         }
     }
-    pub async fn lookup_host(&self, host: &str, port: u16) -> Result<SocketAddr, Error> {
+    pub async fn lookup_host(&self, host: &str, port: u16) -> Result<SocketAddr> {
         let resolver = self.resolver.as_ref().unwrap();
         let addr = match self.family {
             AddressFamily::V4Only => resolver
@@ -90,7 +90,7 @@ impl DnsConfig {
                 .context("ipv4_lookup")?
                 .into_iter()
                 .choose(&mut rand::rng())
-                .ok_or_else(|| err_msg(format!("No IPv4 address found for {}", host)))
+                .ok_or_else(|| anyhow!("No IPv4 address found for {}", host))
                 .map(|a| IpAddr::V4(Ipv4Addr::from(a.octets())))?,
             AddressFamily::V6Only => resolver
                 .ipv6_lookup(host)
@@ -98,7 +98,7 @@ impl DnsConfig {
                 .context("ipv6_lookup")?
                 .into_iter()
                 .choose(&mut rand::rng())
-                .ok_or_else(|| err_msg(format!("No IPv6 address found for {}", host)))
+                .ok_or_else(|| anyhow!("No IPv6 address found for {}", host))
                 .map(|a| IpAddr::V6(Ipv6Addr::from(a.octets())))?,
             AddressFamily::V4First => {
                 let (v4, v6): (Vec<_>, Vec<_>) = resolver
@@ -110,7 +110,7 @@ impl DnsConfig {
                 v4.into_iter()
                     .choose(&mut rand::rng())
                     .or_else(|| v6.into_iter().choose(&mut rand::rng()))
-                    .ok_or_else(|| err_msg(format!("No address found for {}", host)))?
+                    .ok_or_else(|| anyhow!("No address found for {}", host))?
             }
             AddressFamily::V6First => {
                 let (v4, v6): (Vec<_>, Vec<_>) = resolver
@@ -122,7 +122,7 @@ impl DnsConfig {
                 v6.into_iter()
                     .choose(&mut rand::rng())
                     .or_else(|| v4.into_iter().choose(&mut rand::rng()))
-                    .ok_or_else(|| err_msg(format!("No address found for {}", host)))?
+                    .ok_or_else(|| anyhow!("No address found for {}", host))?
             }
         };
         Ok(SocketAddr::new(addr, port))

@@ -10,7 +10,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use easy_error::{Error, ensure};
+use anyhow::{Error, ensure, Result};
 use futures::StreamExt;
 use prometheus::{
     Encoder, HistogramVec, IntCounterVec, TextEncoder, register_histogram_vec,
@@ -64,7 +64,7 @@ fn default_history_size() -> usize {
 }
 
 impl MetricsServer {
-    pub fn init(&mut self) -> Result<(), Error> {
+    pub fn init(&mut self) -> Result<()> {
         if let Some(ui) = &self.ui {
             #[cfg(feature = "embedded-ui")]
             if ui == "<embedded>" {
@@ -76,7 +76,7 @@ impl MetricsServer {
         Ok(())
     }
 
-    pub async fn listen(self: Arc<Self>, state: Arc<GlobalState>) -> Result<(), Error> {
+    pub async fn listen(self: Arc<Self>, state: Arc<GlobalState>) -> Result<()> {
         let api = Router::new()
             .route("/status", get(get_status))
             .route("/live", get(get_alive))
@@ -113,7 +113,7 @@ impl MetricsServer {
     }
 }
 
-fn ui_service(ui: Option<&str>) -> Result<Router, Error> {
+fn ui_service(ui: Option<&str>) -> Result<Router> {
     if let Some(ui) = ui {
         #[cfg(feature = "embedded-ui")]
         if ui == "<embedded>" {
@@ -241,7 +241,7 @@ struct MyError(Error);
 
 impl IntoResponse for MyError {
     fn into_response(self) -> Response<Body> {
-        let body = Body::from(format!("{} cause: {:?}", self.0, self.0.cause));
+        let body = Body::from(format!("{} cause: {:?}", self.0, self.0.source()));
         Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .body(body)

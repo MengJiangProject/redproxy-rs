@@ -1,5 +1,4 @@
-use easy_error::{Error, ResultExt, ensure, err_msg};
-use futures::TryFutureExt;
+use anyhow::{Context, Result, ensure};
 use milu::{
     parser::parse,
     script::{Evaluatable, ScriptContext, Type, Value},
@@ -15,7 +14,7 @@ use tokio::{
     io::{AsyncWriteExt, BufWriter},
     sync::mpsc::{Receiver, Sender, channel},
 };
-use tracing::info;
+use tracing::{info, error};
 
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
@@ -29,7 +28,7 @@ enum Format {
     Script(String),
 }
 impl Format {
-    async fn create(&self) -> Result<Box<dyn Formater>, Error> {
+    async fn create(&self) -> Result<Box<dyn Formater>> {
         match self {
             Self::Json => Ok(Box::new(JsonFormater)),
             Self::Script(s) => Ok(Box::new(ScriptFormater::new(s).await?)),
@@ -40,20 +39,20 @@ impl Format {
 
 #[async_trait::async_trait]
 trait Formater: Send + Sync {
-    async fn to_string(&self, e: Arc<ContextProps>) -> Result<String, Error>;
+    async fn to_string(&self, e: Arc<ContextProps>) -> Result<String>;
 }
 
 struct JsonFormater;
 #[async_trait::async_trait]
 impl Formater for JsonFormater {
-    async fn to_string(&self, e: Arc<ContextProps>) -> Result<String, Error> {
+    async fn to_string(&self, e: Arc<ContextProps>) -> Result<String> {
         serde_json::to_string(&e).context("deserializer failure")
     }
 }
 
 struct ScriptFormater(Value);
 impl ScriptFormater {
-    async fn new(s: &str) -> Result<Self, Error> {
+    async fn new(s: &str) -> Result<Self> {
         let value = parse(s).context("fail to compile")?;
         let ctx: Arc<ScriptContext> = create_context(Default::default()).into();
         let rtype = value.type_of(ctx.clone()).await?;
@@ -69,9 +68,9 @@ impl ScriptFormater {
 }
 #[async_trait::async_trait]
 impl Formater for ScriptFormater {
-    async fn to_string(&self, e: Arc<ContextProps>) -> Result<String, Error> {
+    async fn to_string(&self, e: Arc<ContextProps>) -> Result<String> {
         let ctx = create_context(e);
-        self.0.value_of(ctx.into()).await?.try_into()
+        self.0.value_of(ctx.into()).await?.try_into().map_err(|e| anyhow::anyhow!("{}", e))
     }
 }
 
@@ -85,21 +84,23 @@ pub struct AccessLog {
 }
 
 impl AccessLog {
-    pub async fn init(&mut self) -> Result<(), Error> {
+    pub async fn init(&mut self) -> Result<()> {
         let path = self.path.to_owned();
         drop(log_open(&path).await?);
         let (tx, rx) = channel(100);
         self.tx = Some(tx.clone());
         let format = self.format.create().await?;
-        tokio::spawn(
-            log_thread(format, rx, path).unwrap_or_else(|e| panic!("{} cause: {:?}", e, e.cause)),
-        );
+        tokio::spawn(async move {
+            if let Err(e) = log_thread(format, rx, path).await {
+                error!("Access log thread failed: {} cause: {:?}", e, e.source());
+            }
+        });
         tokio::spawn(signal_watch(tx));
         Ok(())
     }
 
     #[cfg(feature = "metrics")]
-    pub async fn reopen(&self) -> Result<(), Error> {
+    pub async fn reopen(&self) -> Result<()> {
         self.tx
             .as_ref()
             .unwrap()
@@ -108,7 +109,7 @@ impl AccessLog {
             .context("enqueue log")
     }
 
-    pub async fn write(&self, e: Arc<ContextProps>) -> Result<(), Error> {
+    pub async fn write(&self, e: Arc<ContextProps>) -> Result<()> {
         self.tx
             .as_ref()
             .unwrap()
@@ -118,7 +119,7 @@ impl AccessLog {
     }
 }
 
-async fn log_open(path: &Path) -> Result<File, Error> {
+async fn log_open(path: &Path) -> Result<File> {
     OpenOptions::new()
         .append(true)
         .create(true)
@@ -131,10 +132,10 @@ async fn log_thread(
     format: Box<dyn Formater>,
     mut rx: Receiver<Option<Arc<ContextProps>>>,
     path: PathBuf,
-) -> Result<(), Error> {
+) -> Result<()> {
     let mut stream = BufWriter::new(log_open(&path).await?);
     loop {
-        let e = rx.recv().await.ok_or_else(|| err_msg("dequeue"))?;
+        let e = rx.recv().await.ok_or_else(|| anyhow::anyhow!("dequeue"))?;
         if let Some(e) = e {
             let mut line = format.to_string(e).await.context("deserializer error")?;
             line += "\r\n";
@@ -156,7 +157,6 @@ async fn signal_watch(_tx: Sender<Option<Arc<ContextProps>>>) {}
 
 #[cfg(not(target_os = "windows"))]
 async fn signal_watch(tx: Sender<Option<Arc<ContextProps>>>) {
-    use tracing::error;
 
     let mut stream = signal(SignalKind::user_defined1()).unwrap();
     loop {

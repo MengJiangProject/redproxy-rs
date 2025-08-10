@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use easy_error::Error;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::{process::Command, sync::Mutex};
 use tracing::trace;
@@ -25,7 +25,7 @@ pub struct UserEntry {
 }
 
 impl AuthData {
-    pub async fn init(&mut self) -> Result<(), Error> {
+    pub async fn init(&mut self) -> Result<()> {
         self.cache.init().await
     }
     pub async fn auth_cmd(&self, user: &(String, String)) -> bool {
@@ -77,7 +77,7 @@ struct Cache {
 }
 
 impl Cache {
-    pub async fn init(&mut self) -> Result<(), Error> {
+    pub async fn init(&mut self) -> Result<()> {
         Ok(())
     }
     pub async fn check(&self, user: &(String, String)) -> Option<bool> {

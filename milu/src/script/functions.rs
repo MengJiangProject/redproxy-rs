@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use easy_error::{Error, bail, err_msg};
-use std::{collections::HashSet, fmt::Display, sync::Arc}; // Added err_msg back as it's used
+use anyhow::{Result, bail};
+use std::{collections::HashSet, fmt::Display, sync::Arc};
 
 use super::context::{ScriptContext, ScriptContextRef, ScriptContextWeakRef}; // For UDF context
 use super::traits::{Callable, Evaluatable, NativeObjectRef};
@@ -37,7 +37,7 @@ impl std::hash::Hash for UserDefinedFunction {
 
 #[async_trait]
 impl Callable for UserDefinedFunction {
-    async fn signature(&self, _ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+    async fn signature(&self, _ctx: ScriptContextRef, args: &[Value]) -> Result<Type> {
         if args.len() != self.arg_names.len() {
             bail!(
                 "expected {} arguments, got {}",
@@ -48,7 +48,7 @@ impl Callable for UserDefinedFunction {
         Ok(Type::Any) // UDFs are type-checked at runtime or more dynamically; Any for now
     }
 
-    async fn call(&self, caller_context: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
+    async fn call(&self, caller_context: ScriptContextRef, args: &[Value]) -> Result<Value> {
         if args.len() != self.arg_names.len() {
             bail!(
                 "expected {} arguments, got {}",
@@ -58,10 +58,10 @@ impl Callable for UserDefinedFunction {
         }
 
         let captured_ctx_strong = self.captured_context.upgrade().ok_or_else(|| {
-            err_msg(format!(
+            anyhow::anyhow!(
                 "Captured context for function '{}' was dropped",
                 self.name.as_deref().unwrap_or("<anonymous>")
-            ))
+            )
         })?;
 
         let mut fn_ctx = ScriptContext::new(Some(captured_ctx_strong));
@@ -140,14 +140,14 @@ impl Call {
         Self { func, args }
     }
 
-    pub async fn signature(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
+    pub async fn signature(&self, ctx: ScriptContextRef) -> Result<Type> {
         let resolved_func = self.resolve_func(ctx.clone()).await?;
         match resolved_func {
             ResolvedFunction::Native(native_ref) => {
                 native_ref
                     .as_callable()
                     .ok_or_else(|| {
-                        err_msg(
+                        anyhow::anyhow!(
                             "Internal error: NativeObject marked callable but as_callable is None",
                         )
                     })?
@@ -158,14 +158,14 @@ impl Call {
         }
     }
 
-    pub async fn call(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
+    pub async fn call(&self, ctx: ScriptContextRef) -> Result<Value> {
         let resolved_func = self.resolve_func(ctx.clone()).await?;
         match resolved_func {
             ResolvedFunction::Native(native_ref) => {
                 native_ref
                     .as_callable()
                     .ok_or_else(|| {
-                        err_msg(
+                        anyhow::anyhow!(
                             "Internal error: NativeObject marked callable but as_callable is None",
                         )
                     })?
@@ -176,7 +176,7 @@ impl Call {
         }
     }
 
-    async fn resolve_func(&self, ctx: ScriptContextRef) -> Result<ResolvedFunction, Error> {
+    async fn resolve_func(&self, ctx: ScriptContextRef) -> Result<ResolvedFunction> {
         // Renamed from `func` to avoid conflict
         let resolved_fn_val = if let Value::Identifier(_) = &self.func {
             self.func.value_of(ctx).await? // Assumes Value has value_of
@@ -189,14 +189,14 @@ impl Call {
                 if arc_native_ref.as_callable().is_some() {
                     Ok(ResolvedFunction::Native(arc_native_ref))
                 } else {
-                    Err(err_msg(format!(
+                    Err(anyhow::anyhow!(format!(
                         "Value {:?} is not a callable function type (NativeObject not callable)",
                         arc_native_ref
                     )))
                 }
             }
             Value::Function(arc_udf) => Ok(ResolvedFunction::User(arc_udf)),
-            other_val => Err(err_msg(format!(
+            other_val => Err(anyhow::anyhow!(format!(
                 "Value {:?} is not a callable function type",
                 other_val
             ))),

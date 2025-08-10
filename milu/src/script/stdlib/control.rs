@@ -1,6 +1,6 @@
 use crate::{args, function_head}; // Added macro imports
 use async_trait::async_trait;
-use easy_error::{Error, bail, err_msg}; // ResultExt can be removed
+use anyhow::{Result, bail}; // ResultExt can be removed
 use std::collections::HashSet; // For unresovled_ids in Access and Scope
 use std::convert::TryInto;
 use std::sync::Arc; // Added Weak for ScriptContextWeakRef
@@ -19,7 +19,7 @@ use crate::script::{
 function_head!(Index(obj: Any, index: Any) => Any);
 #[async_trait]
 impl Callable for Index {
-    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type> {
         let obj_val = &args[0];
         let index_val = &args[1];
         if index_val.type_of(ctx.clone()).await? != Type::Integer {
@@ -36,7 +36,7 @@ impl Callable for Index {
             bail!("Object does not implement Indexable: {:?}", obj_val)
         }
     }
-    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
+    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value> {
         args!(args, obj, index);
         let index_val: i64 = index.value_of(ctx.clone()).await?.try_into()?;
         let obj_eval = obj.value_of(ctx.clone()).await?;
@@ -44,7 +44,7 @@ impl Callable for Index {
             Value::Array(a) => a.as_ref(),
             Value::NativeObject(a) => a
                 .as_indexable()
-                .ok_or_else(|| err_msg("NativeObject does not implement Indexible"))?,
+                .ok_or_else(|| anyhow::anyhow!("NativeObject does not implement Indexible"))?,
             _ => bail!(
                 "type mismatch, expected Array or Indexable NativeObject, got {:?}",
                 obj_eval.type_of_simple()
@@ -57,12 +57,12 @@ impl Callable for Index {
 function_head!(Access(obj: Any, index: Any) => Any);
 #[async_trait]
 impl Callable for Access {
-    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type> {
         async fn get_accessible_type(
             ctx: ScriptContextRef,
             obj: &dyn Accessible,
             index_val: &Value,
-        ) -> Result<Type, Error> {
+        ) -> Result<Type> {
             let index_str = if let Value::Identifier(s) = index_val {
                 s
             } else {
@@ -75,7 +75,7 @@ impl Callable for Access {
             _ctx: ScriptContextRef,
             obj_type: Type,
             index_val: &Value,
-        ) -> Result<Type, Error> {
+        ) -> Result<Type> {
             let idx = if let Value::Integer(i) = index_val {
                 *i
             } else {
@@ -112,12 +112,12 @@ impl Callable for Access {
         }
     }
 
-    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
+    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value> {
         async fn call_accessible(
             ctx: ScriptContextRef,
             obj: &dyn Accessible,
             index_val: &Value,
-        ) -> Result<Value, Error> {
+        ) -> Result<Value> {
             let index_str = if let Value::Identifier(s) = index_val {
                 s
             } else {
@@ -131,7 +131,7 @@ impl Callable for Access {
             ctx: ScriptContextRef,
             obj_val: Value,
             index_val: &Value,
-        ) -> Result<Value, Error> {
+        ) -> Result<Value> {
             let idx_i64 = if let Value::Integer(i) = index_val {
                 *i
             } else {
@@ -185,7 +185,7 @@ impl Callable for Access {
 function_head!(If(cond: Boolean, yes: Any, no: Any) => Any);
 #[async_trait]
 impl Callable for If {
-    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
             targs.push(x.type_of(ctx.clone()).await?);
@@ -199,7 +199,7 @@ impl Callable for If {
         }
         Ok(yes)
     }
-    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
+    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value> {
         let cond: bool = args[0].value_of(ctx.clone()).await?.try_into()?;
         if cond {
             args[1].value_of(ctx).await
@@ -232,18 +232,18 @@ impl std::hash::Hash for ScopeBinding {
 
 #[async_trait]
 impl Evaluatable for ScopeBinding {
-    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type, Error> {
+    async fn type_of(&self, _ctx: ScriptContextRef) -> Result<Type> {
         let strong_ctx = self
             .ctx
             .upgrade()
-            .ok_or_else(|| err_msg("Scope context lost for type_of"))?;
+            .ok_or_else(|| anyhow::anyhow!("Scope context lost for type_of"))?;
         self.value.type_of(strong_ctx).await
     }
-    async fn value_of(&self, _calling_ctx: ScriptContextRef) -> Result<Value, Error> {
+    async fn value_of(&self, _calling_ctx: ScriptContextRef) -> Result<Value> {
         let strong_ctx = self
             .ctx
             .upgrade()
-            .ok_or_else(|| err_msg("Scope context lost for value_of"))?;
+            .ok_or_else(|| anyhow::anyhow!("Scope context lost for value_of"))?;
         self.value.real_value_of(strong_ctx).await
     }
 }
@@ -269,8 +269,8 @@ impl Scope {
     fn make_context(
         vars: &[Value],
         outer_ctx: ScriptContextRef,
-    ) -> Result<ScriptContextRef, Error> {
-        let mut error: Option<Error> = None;
+    ) -> Result<ScriptContextRef> {
+        let mut error: Option<anyhow::Error> = None;
         let ctx_arc = Arc::new_cyclic(|weak_self| {
             let mut new_ctx = ScriptContext::new(Some(outer_ctx.clone()));
             for v_or_pf in vars.iter() {
@@ -279,7 +279,7 @@ impl Scope {
                         let name_str = match &parsed_fn_arc.name_ident {
                             Value::Identifier(s) => s.clone(),
                             _ => {
-                                error = Some(err_msg("Function name must be an identifier"));
+                                error = Some(anyhow::anyhow!("Function name must be an identifier"));
                                 break;
                             }
                         };
@@ -288,7 +288,7 @@ impl Scope {
                             match arg_ident_val {
                                 Value::Identifier(s) => arg_names_str.push(s.clone()),
                                 _ => {
-                                    error = Some(err_msg("Function arguments must be identifiers"));
+                                    error = Some(anyhow::anyhow!("Function arguments must be identifiers"));
                                     break;
                                 }
                             }
@@ -310,13 +310,13 @@ impl Scope {
                         let t = pair_arc.as_ref();
                         if t.len() != 2 {
                             error =
-                                Some(err_msg(format!("Invalid variable binding tuple: {:?}", t)));
+                                Some(anyhow::anyhow!(format!("Invalid variable binding tuple: {:?}", t)));
                             break;
                         }
                         let id = match &t[0] {
                             Value::Identifier(s) => s.clone(),
                             _ => {
-                                error = Some(err_msg("Binding name must be an identifier"));
+                                error = Some(anyhow::anyhow!("Binding name must be an identifier"));
                                 break;
                             }
                         };
@@ -328,7 +328,7 @@ impl Scope {
                         new_ctx.varibles.insert(id, scope_bound_value.into());
                     }
                     _ => {
-                        error = Some(err_msg(format!(
+                        error = Some(anyhow::anyhow!(format!(
                             "Invalid item in let binding list: {:?}. Expected Tuple or ParsedFunction.",
                             v_or_pf
                         )));
@@ -347,12 +347,12 @@ impl Scope {
 }
 #[async_trait]
 impl Callable for Scope {
-    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type> {
         let fn_ctx = Self::make_context(args[0].as_vec(), ctx)?;
         let expr = args[1].type_of(fn_ctx).await?;
         Ok(expr)
     }
-    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
+    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value> {
         let new_scope_ctx = Self::make_context(args[0].as_vec(), ctx)?;
         args[1].real_value_of(new_scope_ctx).await
     }

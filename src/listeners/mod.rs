@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use easy_error::{Error, bail, err_msg};
+use anyhow::{bail, anyhow, Result};
 use serde_yaml_ng::Value;
 use tokio::sync::mpsc::Sender;
 
@@ -19,21 +19,21 @@ mod tproxy;
 
 #[async_trait]
 pub trait Listener: Send + Sync {
-    async fn init(&mut self) -> Result<(), Error> {
+    async fn init(&mut self) -> Result<()> {
         Ok(())
     }
-    async fn verify(&self, _state: Arc<GlobalState>) -> Result<(), Error> {
+    async fn verify(&self, _state: Arc<GlobalState>) -> Result<()> {
         Ok(())
     }
     async fn listen(
         self: Arc<Self>,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error>;
+    ) -> Result<()>;
     fn name(&self) -> &str;
 }
 
-pub fn from_config(cfg: &[Value]) -> Result<HashMap<String, Arc<dyn Listener>>, Error> {
+pub fn from_config(cfg: &[Value]) -> Result<HashMap<String, Arc<dyn Listener>>> {
     let mut ret: HashMap<String, Arc<dyn Listener>> = Default::default();
     for val in cfg {
         let r = from_value(val)?;
@@ -45,11 +45,11 @@ pub fn from_config(cfg: &[Value]) -> Result<HashMap<String, Arc<dyn Listener>>, 
     Ok(ret)
 }
 
-pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
+pub fn from_value(value: &Value) -> Result<Box<dyn Listener>> {
     let name = value
         .get("name")
         .and_then(Value::as_str)
-        .ok_or_else(|| err_msg("missing listener name"))?;
+        .ok_or_else(|| anyhow!("missing listener name"))?;
     let tname = value.get("type").and_then(Value::as_str).unwrap_or(name);
     match tname {
         "http" => http::from_value(value),

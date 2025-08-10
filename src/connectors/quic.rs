@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
-use easy_error::{Error, ResultExt, err_msg};
+use anyhow::{Context, Result, anyhow};
 use quinn::{Connection, Endpoint};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -57,7 +57,7 @@ fn default_inline_udp() -> bool {
     false
 }
 
-pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef, Error> {
+pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
     let ret: QuicConnector = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
 }
@@ -72,7 +72,7 @@ impl super::Connector for QuicConnector {
         &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
     }
 
-    async fn init(&mut self) -> Result<(), Error> {
+    async fn init(&mut self) -> Result<()> {
         self.tls.init()?;
         let cfg = create_quic_client(&self.tls, self.bbr)?;
         let bind = self.bind.parse().context("parse bind")?;
@@ -86,7 +86,7 @@ impl super::Connector for QuicConnector {
         self: Arc<Self>,
         _state: Arc<GlobalState>,
         ctx: ContextRef,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         let (conn, sessions) = self.get_connection().await?;
         let remote = conn.remote_address();
         let local = self
@@ -102,7 +102,7 @@ impl super::Connector for QuicConnector {
         match ret {
             Ok(()) => Ok(()),
             Err(e) => {
-                if e.ctx.starts_with("quic:") {
+                if e.to_string().starts_with("quic:") {
                     self.clear_connection().await;
                 }
                 Err(e)
@@ -119,7 +119,7 @@ impl QuicConnector {
         ctx: ContextRef,
         remote: SocketAddr,
         local: SocketAddr,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         let server: QuicStream = conn
             .open_bi()
             .await
@@ -137,7 +137,7 @@ impl QuicConnector {
         Ok(())
     }
 
-    async fn get_connection(self: &Arc<Self>) -> Result<QuicConn, Error> {
+    async fn get_connection(self: &Arc<Self>) -> Result<QuicConn> {
         let mut c = self.connection.lock().await;
         if c.is_none() {
             *c = Some(self.create_connection().await?);
@@ -151,12 +151,12 @@ impl QuicConnector {
         debug!("{}: connection cleared", self.name);
     }
 
-    async fn create_connection(self: &Arc<Self>) -> Result<QuicConn, Error> {
+    async fn create_connection(self: &Arc<Self>) -> Result<QuicConn> {
         let remote = (self.server.clone(), self.port)
             .to_socket_addrs()
             .context("resolve")?
             .next()
-            .ok_or_else(|| err_msg(format!("unable to resolve address: {}", self.server)))?;
+            .ok_or_else(|| anyhow!("unable to resolve address: {}", self.server))?;
 
         // if it's a insecure connection, we don't care whar domain name it is.
         // this could fixes InvalidDnsName error when connecting with a bare IP

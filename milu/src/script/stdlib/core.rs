@@ -1,9 +1,8 @@
 use crate::{args, function, function_head}; // Added macro imports
 use async_trait::async_trait;
-use easy_error::{Error, ResultExt, bail, err_msg};
+use anyhow::{Result, Context, bail};
 use std::convert::TryInto;
-use std::sync::Arc; // For IsMemberOf if it takes Arc<Vec<Value>> // Added ResultExt
-// Keep if any functions use it
+use std::sync::Arc; // For IsMemberOf if it takes Arc<Vec<Value>>
 
 use crate::script::{Callable, Evaluatable, ScriptContextRef, Type, Value}; // Added Evaluatable
 
@@ -29,8 +28,8 @@ function!(Negative(b:Integer)=>Integer, {
 macro_rules! int_op_div_mod {
     ($name:ident, $op:tt) => {
         function!($name(a: Integer, b: Integer) => Integer, {
-            let a_val: i64 = a.clone().try_into().map_err(|_| err_msg(format!("type mismatch: expected Integer for LHS, got {:?}", a)))?;
-            let b_val: i64 = b.clone().try_into().map_err(|_| err_msg(format!("type mismatch: expected Integer for RHS, got {:?}", b)))?;
+            let a_val: i64 = a.clone().try_into().map_err(|_| anyhow::anyhow!(format!("type mismatch: expected Integer for LHS, got {:?}", a)))?;
+            let b_val: i64 = b.clone().try_into().map_err(|_| anyhow::anyhow!(format!("type mismatch: expected Integer for RHS, got {:?}", b)))?;
             if b_val == 0 {
                 bail!("division by zero");
             }
@@ -42,8 +41,8 @@ macro_rules! int_op_div_mod {
 macro_rules! int_op {
     ($name:ident, $op:tt) => {
         function!($name(a: Integer, b: Integer) => Integer, {
-            let a_val: i64 = a.clone().try_into().map_err(|_| err_msg(format!("type mismatch: expected Integer for LHS, got {:?}", a)))?;
-            let b_val: i64 = b.clone().try_into().map_err(|_| err_msg(format!("type mismatch: expected Integer for RHS, got {:?}", b)))?;
+            let a_val: i64 = a.clone().try_into().map_err(|_| anyhow::anyhow!(format!("type mismatch: expected Integer for LHS, got {:?}", a)))?;
+            let b_val: i64 = b.clone().try_into().map_err(|_| anyhow::anyhow!(format!("type mismatch: expected Integer for RHS, got {:?}", b)))?;
             Ok((a_val $op b_val).into())
         });
     }
@@ -160,7 +159,7 @@ function!(ToInteger(s: String)=>Integer, {
 function_head!(IsMemberOf(a: Any, ary: Type::array_of(Type::Any)) => Boolean);
 #[async_trait]
 impl Callable for IsMemberOf {
-    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error> {
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type> {
         let mut targs: Vec<Type> = Vec::with_capacity(args.len());
         for x in args {
             targs.push(x.type_of(ctx.clone()).await?);
@@ -180,7 +179,7 @@ impl Callable for IsMemberOf {
         }
         Ok(Type::Boolean)
     }
-    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error> {
+    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value> {
         args!(args, ctx = ctx, a, ary);
         let vec: Arc<Vec<Value>> = ary.try_into()?;
         for v_val_in_array in vec.iter() {

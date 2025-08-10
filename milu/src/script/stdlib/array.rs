@@ -1,8 +1,7 @@
 use crate::function; // Added macro imports
-use easy_error::{bail, err_msg};
+use anyhow::bail;
 use std::convert::TryInto;
-use std::sync::Arc; // ResultExt can be removed if not used
-// Keep if any functions use it, remove otherwise
+use std::sync::Arc;
 
 // Adjust crate::script::* to specific imports if that's cleaner
 use crate::script::{Call, Evaluatable, Type, Value};
@@ -53,7 +52,7 @@ function!(Find(array: Type::array_of(Type::Any), func: Any) => Any, ctx=ctx, {
         let result_val = call.call(ctx.clone()).await?;
 
         let passes_test: bool = result_val.clone().try_into().map_err(|e| {
-            err_msg(format!("Find function must return a Boolean, got {:?} (error: {})", result_val, e))
+            anyhow::anyhow!(format!("Find function must return a Boolean, got {:?} (error: {})", result_val, e))
         })?;
 
         if passes_test {
@@ -81,7 +80,7 @@ function!(FindIndex(array: Type::array_of(Type::Any), func: Any) => Integer, ctx
         let result_val = call.call(ctx.clone()).await?;
 
         let passes_test: bool = result_val.clone().try_into().map_err(|e| {
-            err_msg(format!("FindIndex function must return a Boolean, got {:?} (error: {})", result_val, e))
+            anyhow::anyhow!(format!("FindIndex function must return a Boolean, got {:?} (error: {})", result_val, e))
         })?;
 
         if passes_test {
@@ -260,7 +259,7 @@ function!(Filter(array: Type::array_of(Type::Any), func: Any) => Type::array_of(
         let result_val = call.call(ctx.clone()).await?;
 
         let passes_test: bool = result_val.clone().try_into().map_err(|e| {
-            err_msg(format!("Filter function must return a Boolean, got {:?} (error: {})", result_val, e))
+            anyhow::anyhow!(format!("Filter function must return a Boolean, got {:?} (error: {})", result_val, e))
         })?;
 
         if passes_test {

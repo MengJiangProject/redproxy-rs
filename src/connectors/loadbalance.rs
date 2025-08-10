@@ -7,7 +7,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use easy_error::{Error, ResultExt, ensure};
+use anyhow::{Error, Context, Result, ensure};
 use milu::{
     parser::parse,
     script::{ScriptContext, Type, Value},
@@ -59,7 +59,7 @@ impl Default for Algorithm {
     }
 }
 
-pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef, Error> {
+pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
     let ret: LoadBalanceConnector =
         serde_yaml_ng::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
@@ -71,11 +71,11 @@ impl Connector for LoadBalanceConnector {
         self.name.as_str()
     }
 
-    async fn init(&mut self) -> Result<(), Error> {
+    async fn init(&mut self) -> Result<()> {
         if let Algorithm::HashBy(str) = &self.algorithm {
             let value = parse(str).context("unable to compile hash script")?;
             let ctx: Arc<ScriptContext> = create_context(Default::default()).into();
-            let rtype = value.real_type_of(ctx).await?;
+            let rtype = value.real_type_of(ctx).await.map_err(|e| anyhow::anyhow!("{}", e))?;
             ensure!(
                 rtype == Type::String,
                 "hash script type mismatch: required string, got {}\nsnippet: {}",
@@ -87,7 +87,7 @@ impl Connector for LoadBalanceConnector {
         Ok(())
     }
 
-    async fn verify(&self, state: Arc<GlobalState>) -> Result<(), Error> {
+    async fn verify(&self, state: Arc<GlobalState>) -> Result<()> {
         ensure!(!self.connectors.is_empty(), "connectors must not be empty");
         for n in &self.connectors {
             ensure!(
@@ -117,7 +117,7 @@ impl Connector for LoadBalanceConnector {
 }
 
 impl LoadBalanceConnector {
-    fn random(self: &Arc<Self>, state: &Arc<GlobalState>) -> Result<Arc<dyn Connector>, Error> {
+    fn random(self: &Arc<Self>, state: &Arc<GlobalState>) -> Result<Arc<dyn Connector>> {
         let next = self.connectors.choose(&mut rng()).unwrap();
         Ok(state.connectors.get(next).unwrap().clone())
     }

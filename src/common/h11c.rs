@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{Error, ResultExt, bail};
+use anyhow::{Error, Context as AnyhowContext, Result, bail};
 use futures::Future;
 use std::{
     net::SocketAddr,
@@ -22,7 +22,7 @@ pub async fn h11c_connect<T1, T2>(
     remote: SocketAddr,
     frame_channel: &str,
     frame_fn: T1,
-) -> Result<(), Error>
+) -> Result<()>
 where
     T1: FnOnce(u32) -> T2 + Sync,
     T2: Future<Output = FrameIO>,
@@ -90,10 +90,10 @@ pub async fn h11c_handshake<FrameFn, T2>(
     ctx: ContextRef,
     queue: Sender<ContextRef>,
     create_frames: FrameFn,
-) -> Result<(), Error>
+) -> Result<()>
 where
     FrameFn: FnOnce(&str, u32) -> T2 + Sync,
-    T2: Future<Output = Result<FrameIO, Error>>,
+    T2: Future<Output = Result<FrameIO>>,
 {
     let mut ctx_lock = ctx.write().await;
     let socket = ctx_lock.borrow_client_stream().unwrap();
@@ -166,7 +166,7 @@ impl ContextCallback for ConnectCallback {
         if socket.is_none() {
             return;
         }
-        let buf = format!("Error: {} Cause: {:?}", error, error.cause);
+        let buf = format!("Error: {} Cause: {:?}", error, error.source());
         if let Err(e) = HttpResponse::new(503, "Service unavailable")
             .with_header("Content-Type", "text/plain")
             .with_header("Content-Length", buf.len())
@@ -208,7 +208,7 @@ impl ContextCallback for FrameChannelCallback {
         if socket.is_none() {
             return;
         }
-        let buf = format!("Error: {} Cause: {:?}", error, error.cause);
+        let buf = format!("Error: {} Cause: {:?}", error, error.source());
         if let Err(e) = HttpResponse::new(503, "Service unavailable")
             .with_header("Content-Type", "text/plain")
             .with_header("Content-Length", buf.len())

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{Error, ResultExt, err_msg};
+use anyhow::{Error, Context as AnyhowContext, Result, anyhow};
 use futures::TryFutureExt;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -48,14 +48,14 @@ fn default_allow_udp() -> bool {
     true
 }
 
-pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>, Error> {
-    let ret: SocksListener = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>> {
+    let ret: SocksListener = serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
     Ok(Box::new(ret))
 }
 
 #[async_trait]
 impl Listener for SocksListener {
-    async fn init(&mut self) -> Result<(), Error> {
+    async fn init(&mut self) -> Result<()> {
         if let Some(Err(e)) = self.tls.as_mut().map(TlsServerConfig::init) {
             return Err(e);
         }
@@ -66,9 +66,9 @@ impl Listener for SocksListener {
         self: Arc<Self>,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         info!("{} listening on {}", self.name, self.bind);
-        let listener = TcpListener::bind(&self.bind).await.context("bind")?;
+        let listener = TcpListener::bind(&self.bind).await.with_context(|| "bind")?;
         let this = self.clone();
         tokio::spawn(this.accept(listener, state, queue));
         Ok(())
@@ -87,7 +87,7 @@ impl SocksListener {
         queue: Sender<ContextRef>,
     ) {
         loop {
-            match listener.accept().await.context("accept") {
+            match listener.accept().await.with_context(|| "accept") {
                 Ok((socket, source)) => {
                     let source = crate::common::try_map_v4_addr(source);
                     let this = self.clone();
@@ -101,13 +101,13 @@ impl SocksListener {
                             .unwrap_or_else(move |e| {
                                 warn!(
                                     "{}: handshake error: {}: cause: {:?}",
-                                    this.name, e, e.cause
+                                    this.name, e, e.source()
                                 );
                             }),
                     );
                 }
                 Err(e) => {
-                    error!("{}, Accept error: {}: cause: {:?}", self.name, e, e.cause);
+                    error!("{}, Accept error: {}: cause: {:?}", self.name, e, e.source());
                     return;
                 }
             }
@@ -120,12 +120,15 @@ impl SocksListener {
         source: SocketAddr,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error> {
-        let local_addr = socket.local_addr().context("local_addr")?;
+    ) -> Result<()> {
+        let local_addr = socket.local_addr().with_context(|| "local_addr")?;
         set_keepalive(&socket)?;
-        let tls_acceptor = self.tls.as_ref().map(|options| options.acceptor());
+        let tls_acceptor = self.tls.as_ref()
+            .map(|options| options.acceptor())
+            .transpose()
+            .with_context(|| "TLS acceptor initialization failed")?;
         let mut socket = if let Some(acceptor) = tls_acceptor {
-            make_buffered_stream(acceptor.accept(socket).await.context("tls accept error")?)
+            make_buffered_stream(acceptor.accept(socket).await.with_context(|| "tls accept error")?)
         } else {
             make_buffered_stream(socket)
         };
@@ -153,7 +156,7 @@ impl SocksListener {
             .set_client_stream(socket);
 
         if !self.auth.check(&request.auth).await {
-            ctx.on_error(err_msg("not authencated")).await;
+            ctx.on_error(anyhow!("not authencated")).await;
             debug!("client not authencated: {:?}", request.auth);
             return Ok(());
         }
@@ -163,12 +166,12 @@ impl SocksListener {
                 ctx.enqueue(&queue).await?;
             }
             SOCKS_CMD_BIND => {
-                ctx.on_error(err_msg("not supported")).await;
+                ctx.on_error(anyhow!("not supported")).await;
                 debug!("not supported cmd: {:?}", request.cmd);
             }
             SOCKS_CMD_UDP_ASSOCIATE => {
                 if !self.allow_udp {
-                    ctx.on_error(err_msg("not supported")).await;
+                    ctx.on_error(anyhow!("not supported")).await;
                     debug!("udp not allowed");
                     return Ok(());
                 }
@@ -184,7 +187,7 @@ impl SocksListener {
                 let target = into_unspecified(local).into();
                 let (mut listen_addr, frames) = setup_udp_session(local, remote)
                     .await
-                    .context("setup_udp_session")?;
+                    .with_context(|| "setup_udp_session")?;
 
                 if let Some(override_addr) = self.override_udp_address {
                     listen_addr = SocketAddr::new(override_addr, listen_addr.port());
@@ -205,7 +208,7 @@ impl SocksListener {
                 ctx.enqueue(&queue).await?;
             }
             _ => {
-                ctx.on_error(err_msg("unknown cmd")).await;
+                ctx.on_error(anyhow!("unknown cmd")).await;
                 debug!("unknown cmd: {:?}", request.cmd);
             }
         }

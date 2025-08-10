@@ -1,6 +1,6 @@
 use crate::{access_log::AccessLog, common::frames::FrameIO};
 use async_trait::async_trait;
-use easy_error::{Error, ResultExt};
+use anyhow::{Error, Context as AnyhowContext, Result};
 use serde::{Deserialize, Serialize, de::Visitor, ser::SerializeStruct};
 use std::{
     any::Any,
@@ -694,7 +694,7 @@ impl Context {
 // a set of opreations that aquires write lock
 #[async_trait]
 pub trait ContextRefOps {
-    async fn enqueue(self, queue: &Sender<ContextRef>) -> Result<(), Error>;
+    async fn enqueue(self, queue: &Sender<ContextRef>) -> Result<()>;
     async fn on_connect(&self);
     async fn on_error(&self, error: Error);
     async fn on_finish(&self);
@@ -703,7 +703,7 @@ pub trait ContextRefOps {
 
 #[async_trait]
 impl ContextRefOps for ContextRef {
-    async fn enqueue(self, queue: &Sender<ContextRef>) -> Result<(), Error> {
+    async fn enqueue(self, queue: &Sender<ContextRef>) -> Result<()> {
         self.write().await.set_state(ContextState::ClientRequested);
         queue.send(self).await.context("enqueue")
     }
@@ -719,7 +719,7 @@ impl ContextRefOps for ContextRef {
         let mut inner = self.write().await;
         inner
             .set_state(ContextState::ErrorOccured)
-            .set_error(format!("{} cause: {:?}", error, error.cause));
+            .set_error(format!("{} cause: {:?}", error, error.source()));
         if let Some(cb) = inner.callback.clone() {
             cb.on_error(&mut inner, error).await
         }

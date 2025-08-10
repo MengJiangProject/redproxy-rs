@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use easy_error::{Error, bail};
-use std::{collections::HashSet, convert::TryFrom, fmt::Display, sync::Arc}; // Removed err_msg as it might not be used directly here after refactor
+use anyhow::{Result, bail};
+use std::{collections::HashSet, convert::TryFrom, fmt::Display, sync::Arc};
 
 // Assuming other modules are correctly set up in `super` or `crate::script`
 use super::context::ScriptContextRef;
@@ -101,7 +101,7 @@ impl Value {
         matches!(self, Self::Identifier(..))
     }
 
-    pub async fn real_type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
+    pub async fn real_type_of(&self, ctx: ScriptContextRef) -> Result<Type> {
         let t = self.type_of(ctx.clone()).await?;
         if let Type::NativeObject(o) = t {
             if let Some(e) = o.as_evaluatable() {
@@ -113,7 +113,7 @@ impl Value {
             Ok(t)
         }
     }
-    pub async fn real_value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
+    pub async fn real_value_of(&self, ctx: ScriptContextRef) -> Result<Value> {
         let t = self.value_of(ctx.clone()).await?;
         if let Self::NativeObject(o) = t {
             if let Some(e) = o.as_evaluatable() {
@@ -129,7 +129,7 @@ impl Value {
 
 #[async_trait]
 impl Evaluatable for Value {
-    async fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
+    async fn type_of(&self, ctx: ScriptContextRef) -> Result<Type> {
         tracing::trace!("type_of={}", self);
         use Value::*;
         match self {
@@ -173,7 +173,7 @@ impl Evaluatable for Value {
         }
     }
 
-    async fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error> {
+    async fn value_of(&self, ctx: ScriptContextRef) -> Result<Value> {
         tracing::trace!("value_of={}", self);
         match self {
             Self::Identifier(id) => {
@@ -233,12 +233,12 @@ impl Display for Value {
 macro_rules! cast_value_to {
     ($ty:ty, $name:ident, | $v: ident | $transfrom:expr) => {
         impl TryFrom<Value> for $ty {
-            type Error = easy_error::Error;
+            type Error = anyhow::Error;
             fn try_from(x: Value) -> Result<$ty, Self::Error> {
                 if let Value::$name($v) = x {
                     Ok($transfrom)
                 } else {
-                    easy_error::bail!(
+                    bail!(
                         "unable to cast {:?} into {}",
                         x.type_of_simple(),
                         stringify!($ty)

@@ -2,7 +2,7 @@
 
 mod filter;
 pub(crate) mod script_ext;
-use easy_error::{Error, ResultExt};
+use anyhow::{Context as AnyhowContext, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 use std::{
@@ -16,10 +16,10 @@ use tracing::trace;
 
 use crate::{connectors::Connector, context::Context};
 
-pub fn from_config(cfg: &[Value]) -> Result<Vec<Arc<Rule>>, Error> {
+pub fn from_config(cfg: &[Value]) -> Result<Vec<Arc<Rule>>> {
     let mut ret = Vec::with_capacity(cfg.len());
     for val in cfg {
-        ret.push(serde_yaml_ng::from_value(val.clone()).context("parse rule")?);
+        ret.push(serde_yaml_ng::from_value(val.clone()).with_context(|| "parse rule")?);
     }
     Ok(ret)
 }
@@ -74,10 +74,10 @@ lazy_static::lazy_static! {
 }
 
 impl Rule {
-    pub async fn init(&mut self) -> Result<(), Error> {
+    pub async fn init(&mut self) -> Result<()> {
         if let Some(s) = &self.filter_str {
             trace!("compiling filter: {:?}", s);
-            let filter: filter::Filter = s.parse().context("parse filter")?;
+            let filter: filter::Filter = s.parse().with_context(|| "parse filter")?;
             filter.validate().await?;
             self.filter = Some(filter);
         }

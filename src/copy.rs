@@ -4,7 +4,7 @@ use crate::{
     context::{ContextRef, ContextState, ContextStatistics, IOBufStream},
 };
 use bytes::BytesMut;
-use easy_error::{Error, ResultExt, err_msg};
+use anyhow::{Context, Result};
 use futures::future::BoxFuture;
 use std::{io::Result as IoResult, sync::Arc, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
@@ -95,7 +95,7 @@ async fn copy_half<S, D>(
     #[cfg(feature = "metrics")] counter: prometheus::core::GenericCounter<
         prometheus::core::AtomicU64,
     >,
-) -> Result<(), Error>
+) -> Result<()>
 where
     S: AsyncRead,
     D: AsyncWrite,
@@ -216,7 +216,7 @@ async fn drain_buffers(from: &mut IOBufStream, to: &mut IOBufStream) -> IoResult
     }
     to.flush().await
 }
-pub async fn copy_bidi(ctx: ContextRef, params: &IoParams) -> Result<(), Error> {
+pub async fn copy_bidi(ctx: ContextRef, params: &IoParams) -> Result<()> {
     let mut ctx_lock = ctx.write().await;
     let idle_timeout = ctx_lock.idle_timeout();
     let streams = ctx_lock.take_streams();
@@ -311,7 +311,7 @@ pub async fn copy_bidi(ctx: ContextRef, params: &IoParams) -> Result<(), Error> 
                 ctx.write().await.set_state(ContextState::ServerShutdown);
             },
             _ = interval.tick() => if server_stat.is_timeout(idle_timeout) && client_stat.is_timeout(idle_timeout){
-                return Err(err_msg("idle timeout"))
+                return Err(anyhow::anyhow!("idle timeout"))
             }
         }
     }

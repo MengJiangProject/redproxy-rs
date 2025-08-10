@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use bytes::BytesMut;
 use chashmap_async::CHashMap;
-use easy_error::{Error, ResultExt, err_msg};
+use anyhow::{Error, Context, Result};
 use lru::LruCache;
 use nix::{
     cmsg_space,
@@ -84,20 +84,20 @@ fn default_max_udp_socket() -> usize {
     128
 }
 
-pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
+pub fn from_value(value: &Value) -> Result<Box<dyn Listener>> {
     let ret: TProxyListener = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
 }
 
 #[async_trait]
 impl Listener for TProxyListener {
-    async fn init(&mut self) -> Result<(), Error> {
+    async fn init(&mut self) -> Result<()> {
         self.inner = Some(
             Internals {
                 sessions: Default::default(),
                 sockets: Mutex::new(LruCache::new(
                     NonZeroUsize::new(self.max_udp_socket)
-                        .ok_or_else(|| err_msg("max_udp_socket must greater than zero"))?,
+                        .ok_or_else(|| anyhow::anyhow!("max_udp_socket must greater than zero"))?,
                 )),
             }
             .into(),
@@ -108,7 +108,7 @@ impl Listener for TProxyListener {
         self: Arc<Self>,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         info!(
             "{} listening on {} protocol: {:?}",
             self.name, self.bind, self.protocol
@@ -157,7 +157,7 @@ impl TProxyListener {
         listener: &TcpListener,
         state: &Arc<GlobalState>,
         queue: &Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         let (socket, source) = listener.accept().await.context("accept")?;
         debug!("connected from {:?}", source);
         set_keepalive(&socket)?;
@@ -193,7 +193,7 @@ impl TProxyListener {
         listener: &TproxyUdpSocket,
         state: &Arc<GlobalState>,
         queue: &Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         let mut buf = BytesMut::zeroed(65536);
         let (size, src, dst) = listener.recv_msg(&mut buf).await.context("accept")?;
         let src = try_map_v4_addr(src);
@@ -339,7 +339,13 @@ impl TproxyUdpSocket {
                             Some(AddressFamily::Inet6) => {
                                 SocketAddr::V6(src.as_sockaddr_in6().cloned().unwrap().into())
                             }
-                            _ => panic!("unknown address family"),
+                            _ => {
+                                error!("Unknown address family in TPROXY, skipping packet");
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "unknown address family"
+                                ));
+                            },
                         };
                         let mut cmsgs = ret.cmsgs().expect("cmsgs");
                         let dst: SocketAddr = match cmsgs.next() {
@@ -363,8 +369,20 @@ impl TproxyUdpSocket {
                                     .into(),
                                 )
                             },
-                            Some(_) => panic!("Unexpected control message"),
-                            None => panic!("No control message"),
+                            Some(_) => {
+                                error!("Unexpected control message in TPROXY, skipping packet");
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "Unexpected control message"
+                                ));
+                            },
+                            None => {
+                                error!("No control message in TPROXY, skipping packet");
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "No control message"
+                                ));
+                            },
                         };
 
                         (ret.bytes, src, dst)

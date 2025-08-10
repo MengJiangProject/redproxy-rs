@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
-use easy_error::{Error, ResultExt};
+use anyhow::{Context, Result};
 use futures_util::TryFutureExt;
 use quinn::{Connection, Endpoint, congestion};
 use serde::{Deserialize, Serialize};
@@ -30,8 +30,8 @@ fn default_bbr() -> bool {
     true
 }
 
-pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>, Error> {
-    let ret: QuicListener = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>> {
+    let ret: QuicListener = serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
     Ok(Box::new(ret))
 }
 
@@ -40,7 +40,7 @@ impl Listener for QuicListener {
     fn name(&self) -> &str {
         &self.name
     }
-    async fn init(&mut self) -> Result<(), Error> {
+    async fn init(&mut self) -> Result<()> {
         self.tls.init()?;
         Ok(())
     }
@@ -48,17 +48,17 @@ impl Listener for QuicListener {
         self: Arc<Self>,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         info!("{} listening on {}", self.name, self.bind);
         let mut cfg = create_quic_server(&self.tls)?;
         if self.bbr {
             let transport = Arc::get_mut(&mut cfg.transport).unwrap();
             transport.congestion_controller_factory(Arc::new(congestion::BbrConfig::default()));
         }
-        let endpoint = Endpoint::server(cfg, self.bind).context("quic_listen")?;
+        let endpoint = Endpoint::server(cfg, self.bind).with_context(|| "quic_listen")?;
         tokio::spawn(
             self.accept(endpoint, state, queue)
-                .unwrap_or_else(|e| panic!("{}: {:?}", e, e.cause)),
+                .unwrap_or_else(|e| panic!("{}: {:?}", e, e.source())),
         );
         Ok(())
     }
@@ -69,12 +69,12 @@ impl QuicListener {
         endpoint: Endpoint,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         while let Some(conn) = endpoint.accept().await {
             let source = conn.remote_address();
             let source = crate::common::try_map_v4_addr(source);
             debug!("{}: QUIC connected from {:?}", self.name, source);
-            match conn.await.context("connection") {
+            match conn.await.with_context(|| "connection") {
                 Ok(conn) => {
                     let this = self.clone();
                     let state = state.clone();
@@ -82,7 +82,7 @@ impl QuicListener {
                     tokio::spawn(this.client_thread(conn, source, state, queue));
                 }
                 Err(e) => {
-                    warn!("{}, Accept error: {}: cause: {:?}", self.name, e, e.cause);
+                    warn!("{}, Accept error: {}: cause: {:?}", self.name, e, e.source());
                 }
             }
         }
@@ -118,7 +118,7 @@ impl QuicListener {
                     Ok(create_quic_frames(conn, id, sessions).await)
                 })
                 .unwrap_or_else(move |e| {
-                    warn!("{}: h11c handshake error: {}: {:?}", this.name, e, e.cause)
+                    warn!("{}: h11c handshake error: {}: {:?}", this.name, e, e.source())
                 }),
             );
         }

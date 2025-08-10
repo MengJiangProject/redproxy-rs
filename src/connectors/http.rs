@@ -1,11 +1,11 @@
 use std::{convert::TryFrom, sync::Arc};
 
 use async_trait::async_trait;
-use easy_error::{Error, ResultExt, err_msg};
+use anyhow::{Context, Result};
 use rustls::pki_types::ServerName;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
-use tracing::trace;
+use tracing::{trace, error};
 
 use crate::{
     GlobalState,
@@ -24,7 +24,7 @@ pub struct HttpConnector {
     tls: Option<TlsClientConfig>,
 }
 
-pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef, Error> {
+pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
     let ret: HttpConnector = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
     Ok(Box::new(ret))
 }
@@ -35,7 +35,7 @@ impl super::Connector for HttpConnector {
         self.name.as_str()
     }
 
-    async fn init(&mut self) -> Result<(), Error> {
+    async fn init(&mut self) -> Result<()> {
         if let Some(Err(e)) = self.tls.as_mut().map(TlsClientConfig::init) {
             return Err(e);
         }
@@ -50,9 +50,12 @@ impl super::Connector for HttpConnector {
         self: Arc<Self>,
         _state: Arc<GlobalState>,
         ctx: ContextRef,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         let tls_insecure = self.tls.as_ref().map(|x| x.insecure).unwrap_or(false);
-        let tls_connector = self.tls.as_ref().map(|options| options.connector());
+        let tls_connector = self.tls.as_ref()
+            .map(|options| options.connector())
+            .transpose()
+            .context("TLS connector initialization failed")?;
         trace!(
             "{} connecting to server {}:{}",
             self.name, self.server, self.port
@@ -74,7 +77,7 @@ impl super::Connector for HttpConnector {
                         Err(e)
                     }
                 })
-                .map_err(|_e| err_msg(format!("invalid upstream address: {}", self.server)))?;
+                .map_err(|_e| anyhow::anyhow!("invalid upstream address: {}", self.server))?;
             make_buffered_stream(
                 connector
                     .connect(domain, server)
@@ -86,7 +89,12 @@ impl super::Connector for HttpConnector {
         };
 
         h11c_connect(server, ctx, local, remote, "inline", |_| async {
-            panic!("not supported")
+            // This should never be called when channel="inline"
+            error!("HTTP connector frame callback called unexpectedly - this indicates a bug");
+            // Return a dummy FrameIO that will fail immediately
+            use crate::common::frames::frames_from_stream;
+            let dummy_stream = tokio::io::duplex(1).0;
+            frames_from_stream(0, dummy_stream)
         })
         .await?;
         Ok(())

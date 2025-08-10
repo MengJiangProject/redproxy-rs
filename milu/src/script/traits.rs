@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use easy_error::{Error, bail, err_msg};
+use anyhow::{Result, bail};
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom; // For Indexable<Vec<Value>>
 
@@ -10,28 +10,28 @@ use super::value::Value; // Assuming value.rs for Value
 
 #[async_trait]
 pub trait Evaluatable: Send + Sync {
-    async fn type_of(&self, ctx: ScriptContextRef) -> Result<Type, Error>;
-    async fn value_of(&self, ctx: ScriptContextRef) -> Result<Value, Error>;
+    async fn type_of(&self, ctx: ScriptContextRef) -> Result<Type>;
+    async fn value_of(&self, ctx: ScriptContextRef) -> Result<Value>;
 }
 
 #[async_trait]
 pub trait Indexable: Send + Sync {
     fn length(&self) -> usize;
-    async fn type_of_member(&self, ctx: ScriptContextRef) -> Result<Type, Error>;
-    fn get(&self, index: i64) -> Result<Value, Error>;
+    async fn type_of_member(&self, ctx: ScriptContextRef) -> Result<Type>;
+    fn get(&self, index: i64) -> Result<Value>;
 }
 
 #[async_trait]
 pub trait Accessible: Send + Sync {
     fn names(&self) -> Vec<&str>;
-    async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error>;
-    fn get(&self, name: &str) -> Result<Value, Error>;
+    async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type>;
+    fn get(&self, name: &str) -> Result<Value>;
 }
 
 #[async_trait]
 pub trait Callable: Send + Sync {
-    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type, Error>;
-    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value, Error>;
+    async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type>;
+    async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value>;
     fn unresovled_ids<'s: 'o, 'o>(&'s self, args: &'s [Value], ids: &mut HashSet<&'o Value>) {
         args.iter().for_each(|v| v.unresovled_ids(ids))
     }
@@ -43,15 +43,15 @@ impl Accessible for HashMap<String, Value> {
         self.keys().map(String::as_str).collect()
     }
 
-    async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type, Error> {
+    async fn type_of(&self, name: &str, ctx: ScriptContextRef) -> Result<Type> {
         let val = Accessible::get(self, name)?;
         val.type_of(ctx).await
     }
 
-    fn get(&self, name: &str) -> Result<Value, Error> {
+    fn get(&self, name: &str) -> Result<Value> {
         self.get(name)
             .cloned()
-            .ok_or_else(|| err_msg(format!("undefined: {}", name)))
+            .ok_or_else(|| anyhow::anyhow!("undefined: {}", name))
     }
 }
 
@@ -61,7 +61,7 @@ impl Indexable for Vec<Value> {
         self.len()
     }
 
-    async fn type_of_member(&self, ctx: ScriptContextRef) -> Result<Type, Error> {
+    async fn type_of_member(&self, ctx: ScriptContextRef) -> Result<Type> {
         // To handle empty array, should return Type::Any or a specific error/option
         if self.is_empty() {
             return Ok(Type::Any); // Or appropriate type for empty array members if defined
@@ -70,7 +70,7 @@ impl Indexable for Vec<Value> {
         x.type_of(ctx).await
     }
 
-    fn get(&self, index: i64) -> Result<Value, Error> {
+    fn get(&self, index: i64) -> Result<Value> {
         let len = self.len();
         let final_idx: usize;
 

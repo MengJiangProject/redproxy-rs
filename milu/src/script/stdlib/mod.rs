@@ -84,7 +84,7 @@ macro_rules! function {
                 &self,
                 $ctx: $crate::script::ScriptContextRef, // Used crate::script::ScriptContextRef
                 args: &[$crate::script::Value], // Used crate::script::Value
-            ) -> Result<$crate::script::Type, easy_error::Error> // Used crate::script::Type, easy_error::Error
+            ) -> anyhow::Result<$crate::script::Type> // Used crate::script::Type
             {
                 let mut targs : Vec<$crate::script::Type> = Vec::with_capacity(args.len()); // Used crate::script::Type
                 for x in args {
@@ -94,7 +94,7 @@ macro_rules! function {
                 $crate::args!(targs, $($aname),+); // Used crate::args
                 use $crate::script::Type::*; // Used crate::script::Type
                 $(if $aname != $atype {
-                    easy_error::bail!("argument {} type mismatch, required: {} provided: {:?}", // Used easy_error::bail
+                    anyhow::bail!("argument {} type mismatch, required: {} provided: {:?}", // Used anyhow::bail
                         stringify!($aname),
                         stringify!($atype),
                         $aname
@@ -107,7 +107,7 @@ macro_rules! function {
                 &self,
                 $ctx: $crate::script::ScriptContextRef, // Used crate::script::ScriptContextRef
                 args: &[$crate::script::Value], // Used crate::script::Value
-            ) -> Result<$crate::script::Value, easy_error::Error> // Used crate::script::Value, easy_error::Error
+            ) -> anyhow::Result<$crate::script::Value> // Used crate::script::Value
             {
                 $crate::args!(args, ctx=$ctx, opts=$arg_opts, $($aname),+); // Used crate::args
                 $body

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
-use easy_error::{Error, ResultExt};
+use anyhow::{Error, Context as AnyhowContext, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 use std::net::SocketAddr;
@@ -40,9 +40,9 @@ fn default_protocol() -> Protocol {
     Protocol::Tcp
 }
 
-pub fn from_value(value: &Value) -> Result<Box<dyn Listener>, Error> {
+pub fn from_value(value: &Value) -> Result<Box<dyn Listener>> {
     let ret: ReverseProxyListener =
-        serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+        serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
     Ok(Box::new(ret))
 }
 
@@ -52,30 +52,30 @@ impl Listener for ReverseProxyListener {
         self: Arc<Self>,
         state: Arc<GlobalState>,
         queue: Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         info!("{} listening on {}", self.name, self.bind);
         match self.protocol {
             Protocol::Tcp => {
-                let listener = TcpListener::bind(&self.bind).await.context("bind")?;
+                let listener = TcpListener::bind(&self.bind).await.with_context(|| "bind")?;
                 tokio::spawn(async move {
                     loop {
                         self.tcp_accept(&listener, &state, &queue)
                             .await
                             .unwrap_or_else(|e| {
-                                error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
+                                error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.source())
                             });
                     }
                 });
             }
             Protocol::Udp => {
-                let socket = udp_socket(self.bind, None, false).context("bind")?;
+                let socket = udp_socket(self.bind, None, false).with_context(|| "bind")?;
                 let listener = Arc::new(socket);
                 tokio::spawn(async move {
                     loop {
                         self.udp_accept(&listener, &state, &queue)
                             .await
                             .unwrap_or_else(|e| {
-                                error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
+                                error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.source())
                             });
                     }
                 });
@@ -95,8 +95,8 @@ impl ReverseProxyListener {
         listener: &TcpListener,
         state: &Arc<GlobalState>,
         queue: &Sender<ContextRef>,
-    ) -> Result<(), Error> {
-        let (socket, source) = listener.accept().await.context("accept")?;
+    ) -> Result<()> {
+        let (socket, source) = listener.accept().await.with_context(|| "accept")?;
         let source = crate::common::try_map_v4_addr(source);
         set_keepalive(&socket)?;
         debug!("{}: connected from {:?}", self.name, source);
@@ -117,19 +117,19 @@ impl ReverseProxyListener {
         listener: &Arc<UdpSocket>,
         state: &Arc<GlobalState>,
         queue: &Sender<ContextRef>,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         let mut buf = Frame::new();
-        let (size, source) = buf.recv_from(listener).await.context("accept")?;
+        let (size, source) = buf.recv_from(listener).await.with_context(|| "accept")?;
         buf.addr = Some(self.target.clone());
         let source = crate::common::try_map_v4_addr(source);
         debug!("{}: recv from {:?} length: {}", self.name, source, size);
 
         if let Some(tx) = self.sessions.get(&source).await {
-            tx.send(buf).await.context("send")?;
+            tx.send(buf).await.with_context(|| "send")?;
         } else {
             let (tx, rx) = channel(100);
             let io = setup_udp_session(self.target.clone(), self.bind, source, rx, false)
-                .context("setup session")?;
+                .with_context(|| "setup session")?;
             self.sessions.insert(source, tx).await;
             let ctx = state
                 .contexts

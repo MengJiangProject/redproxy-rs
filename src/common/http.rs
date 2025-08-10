@@ -1,4 +1,4 @@
-use easy_error::{Error, ResultExt, err_msg};
+use anyhow::{Context, Result, anyhow};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::trace;
 
@@ -30,7 +30,7 @@ impl HttpRequest {
         }
         self
     }
-    pub async fn read_from(socket: Reader<'_>) -> Result<Self, Error> {
+    pub async fn read_from(socket: Reader<'_>) -> Result<Self> {
         let buf = read_line(socket).await?;
         let buf = buf.trim_end();
         let a: Vec<&str> = buf.split_ascii_whitespace().collect();
@@ -46,12 +46,12 @@ impl HttpRequest {
                 headers: vec![],
             }
         } else {
-            return Err(err_msg("bad request"));
+            return Err(anyhow!("bad request"));
         };
         read_headers(&mut ret.headers, socket).await?;
         Ok(ret)
     }
-    pub async fn write_to(&self, socket: Writer<'_>) -> Result<(), Error> {
+    pub async fn write_to(&self, socket: Writer<'_>) -> Result<()> {
         let buf = format!("{} {} {}\r\n", self.method, self.resource, self.version);
         socket.write(buf.as_bytes()).await.context("write error")?;
         for (k, v) in &self.headers {
@@ -106,7 +106,7 @@ impl HttpResponse {
         }
         self
     }
-    pub async fn read_from(socket: Reader<'_>) -> Result<Self, Error> {
+    pub async fn read_from(socket: Reader<'_>) -> Result<Self> {
         let buf = read_line(socket).await?;
         let buf = buf.trim_end();
         let a: Vec<&str> = buf.splitn(3, ' ').collect();
@@ -122,12 +122,12 @@ impl HttpResponse {
                 headers: vec![],
             }
         } else {
-            return Err(err_msg("bad response"));
+            return Err(anyhow!("bad response"));
         };
         read_headers(&mut ret.headers, socket).await?;
         Ok(ret)
     }
-    pub async fn write_to(&self, socket: Writer<'_>) -> Result<(), Error> {
+    pub async fn write_to(&self, socket: Writer<'_>) -> Result<()> {
         let buf = format!("{} {} {}\r\n", self.version, self.code, self.status);
         socket.write(buf.as_bytes()).await.context("write error")?;
         for (k, v) in &self.headers {
@@ -142,7 +142,7 @@ impl HttpResponse {
             .context("write error")?;
         socket.flush().await.context("flush")
     }
-    pub async fn write_with_body(&self, socket: Writer<'_>, body: &[u8]) -> Result<(), Error> {
+    pub async fn write_with_body(&self, socket: Writer<'_>, body: &[u8]) -> Result<()> {
         self.write_to(socket).await?;
         socket.write(body).await.context("write error")?;
         Ok(())
@@ -164,7 +164,7 @@ impl HttpResponse {
 async fn read_headers(
     headers: &mut Vec<(String, String)>,
     socket: Reader<'_>,
-) -> Result<(), Error> {
+) -> Result<()> {
     loop {
         let buf = read_line(socket).await?;
         let buf = buf.trim_end();
@@ -174,16 +174,16 @@ async fn read_headers(
         };
         let a = buf
             .split_once(": ")
-            .ok_or_else(|| err_msg(format!("bad response: {:?}", buf)))?;
+            .ok_or_else(|| anyhow!("bad response: {:?}", buf))?;
         headers.push((a.0.to_owned(), a.1.to_owned()))
     }
 }
 
-async fn read_line(s: Reader<'_>) -> Result<String, Error> {
+async fn read_line(s: Reader<'_>) -> Result<String> {
     let mut buf = String::with_capacity(256);
     let sz = s.read_line(&mut buf).await.context("readline")?;
     match sz {
-        0 => Err(err_msg("EOF")),
+        0 => Err(anyhow!("EOF")),
         _ => Ok(buf),
     }
 }
