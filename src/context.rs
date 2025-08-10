@@ -1,13 +1,12 @@
 use crate::{access_log::AccessLog, common::frames::FrameIO};
-use anyhow::{Context as AnyhowContext, Error, Result};
+use anyhow::{Context as AnyhowContext, Error, Result, anyhow};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize, de::Visitor, ser::SerializeStruct};
 use std::{
     any::Any,
     collections::{HashMap, LinkedList},
     fmt::{Debug, Display},
-    io::Error as IoError,
-    io::Result as IoResult,
+    io::{Error as IoError, Result as IoResult},
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     ops::DerefMut,
     str::FromStr,
@@ -22,7 +21,7 @@ use tokio::{
     net::lookup_host,
     sync::{Mutex, RwLock, mpsc::Sender},
 };
-use tracing::trace;
+use tracing::{error, trace, warn};
 
 #[derive(Debug)]
 pub struct InvalidAddress;
@@ -207,7 +206,7 @@ trait UnixTimestamp {
 impl UnixTimestamp for SystemTime {
     fn unix_timestamp(&self) -> u64 {
         self.duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| Duration::from_secs(0))
             .as_millis() as u64
     }
 }
@@ -244,8 +243,10 @@ pub trait ContextCallback: Send + Sync {
     async fn on_finish(&self, _ctx: &mut Context) {}
 }
 
-#[derive(Debug, Hash, Copy, Clone, Eq, PartialEq, Serialize)]
+#[derive(Debug, Hash, Copy, Clone, Eq, PartialEq, Serialize, Default)]
 pub enum ContextState {
+    #[default]
+    Invalid,
     ClientConnected,
     ClientRequested,
     ServerConnecting,
@@ -268,6 +269,7 @@ impl ContextState {
             Self::ServerShutdown => "ServerShutdown",
             Self::Terminated => "Terminated",
             Self::ErrorOccured => "ErrorOccured",
+            Self::Invalid => "Invalid",
         }
     }
 }
@@ -478,7 +480,12 @@ impl GlobalState {
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 let mut list = Default::default();
-                std::mem::swap(self.gc_list.lock().unwrap().deref_mut(), &mut list);
+                if let Ok(mut gc_list) = self.gc_list.lock() {
+                    std::mem::swap(gc_list.deref_mut(), &mut list);
+                } else {
+                    error!("Failed to acquire GC list lock");
+                    continue;
+                }
                 if !list.is_empty() {
                     trace!("context gc: {}", list.len());
                     #[cfg(feature = "metrics")]
@@ -488,13 +495,17 @@ impl GlobalState {
                     };
                     if let Some(log) = &self.access_log {
                         for props in list.iter().cloned() {
-                            log.write(props).await.unwrap();
+                            if let Err(e) = log.write(props).await {
+                                error!("Failed to write access log: {}", e);
+                            }
                         }
                     }
                     let mut terminated = self.terminated.lock().await;
                     let mut alive = self.alive.lock().await;
                     for props in list {
-                        alive.remove(&props.id).unwrap();
+                        if alive.remove(&props.id).is_none() {
+                            warn!("Context {} was not found in alive list during GC", props.id);
+                        }
                         terminated.push_front(props);
                     }
                     while terminated.len() > self.history_size {
@@ -561,18 +572,23 @@ impl Context {
         self.client_stream.as_mut()
     }
 
-    pub fn take_client_stream(&mut self) -> IOBufStream {
-        self.client_stream.take().unwrap()
+    pub fn take_client_stream(&mut self) -> Result<IOBufStream, anyhow::Error> {
+        self.client_stream
+            .take()
+            .ok_or_else(|| anyhow!("Client stream already taken or not available"))
     }
 
     pub fn take_streams(&mut self) -> Option<(IOBufStream, IOBufStream)> {
         if self.client_stream.is_none() || self.server_stream.is_none() {
             return None;
         }
-        Some((
-            self.client_stream.take().unwrap(),
-            self.server_stream.take().unwrap(),
-        ))
+        match (self.client_stream.take(), self.server_stream.take()) {
+            (Some(client), Some(server)) => Some((client, server)),
+            _ => {
+                error!("Cannot take both client and server streams - one or both unavailable");
+                None
+            }
+        }
     }
 
     pub fn set_client_frames(&mut self, frames: FrameIO) -> &mut Self {
@@ -589,10 +605,13 @@ impl Context {
         if self.client_frames.is_none() || self.server_frames.is_none() {
             return None;
         }
-        Some((
-            self.client_frames.take().unwrap(),
-            self.server_frames.take().unwrap(),
-        ))
+        match (self.client_frames.take(), self.server_frames.take()) {
+            (Some(client), Some(server)) => Some((client, server)),
+            _ => {
+                error!("Cannot take both client and server frames - one or both unavailable");
+                None
+            }
+        }
     }
 
     /// Get a clone to the context's target.
@@ -653,14 +672,14 @@ impl Context {
 
     // Get state of the context.
     pub fn state(&self) -> ContextState {
-        self.props.state.last().unwrap().state
+        self.props.state.last().map(|s| s.state).unwrap_or_default()
     }
 
     /// Set the context's state.
     pub fn set_state(&mut self, state: ContextState) -> &mut Self {
         #[cfg(feature = "metrics")]
         if let Some(last) = self.props.state.last() {
-            let t = last.time.elapsed().unwrap().as_secs_f64();
+            let t = last.time.elapsed().unwrap_or_default().as_secs_f64();
             CONTEXT_STATUS
                 .with_label_values(&[
                     last.state.as_str(),
@@ -740,7 +759,11 @@ impl ContextRefOps for ContextRef {
 impl Drop for Context {
     fn drop(&mut self) {
         trace!("Context dropped: {}", self);
-        self.state.gc_list.lock().unwrap().push(self.props.clone());
+        if let Ok(mut gc_list) = self.state.gc_list.lock() {
+            gc_list.push(self.props.clone());
+        } else {
+            error!("Failed to acquire GC list lock during context drop");
+        }
     }
 }
 

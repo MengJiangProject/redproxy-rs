@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use anyhow::{Context, Error, Result, ensure};
+use anyhow::{Context, Error, Result, anyhow, ensure};
 use async_trait::async_trait;
 use milu::{
     parser::parse,
@@ -121,17 +121,30 @@ impl Connector for LoadBalanceConnector {
 
 impl LoadBalanceConnector {
     fn random(self: &Arc<Self>, state: &Arc<GlobalState>) -> Result<Arc<dyn Connector>> {
-        let next = self.connectors.choose(&mut rng()).unwrap();
-        Ok(state.connector_registry.get(next).unwrap().clone())
+        let next = self
+            .connectors
+            .choose(&mut rng())
+            .ok_or_else(|| anyhow!("No connectors available for random selection"))?;
+        state
+            .connector_registry
+            .get(next)
+            .ok_or_else(|| anyhow!("Connector '{}' not found in registry", next))
+            .cloned()
     }
 
     fn round_robin(
         self: &Arc<Self>,
         state: &Arc<GlobalState>,
     ) -> Result<Arc<dyn Connector>, Error> {
+        if self.connectors.is_empty() {
+            return Err(anyhow!("No connectors available for round robin selection"));
+        }
         let next = self.idx.fetch_add(1, Ordering::Relaxed);
         let next = &self.connectors[next % self.connectors.len()];
-        Ok(state.connector_registry.get(next).unwrap().clone())
+        state
+            .connector_registry
+            .get(next)
+            .ok_or_else(|| anyhow!("Connector '{}' not found in registry", next)).cloned()
     }
 
     async fn hash_by(
@@ -143,7 +156,7 @@ impl LoadBalanceConnector {
         let result = self
             .hash_by
             .as_ref()
-            .unwrap()
+            .ok_or_else(|| anyhow!("Hash function not initialized"))?
             .real_value_of(ctx.into())
             .await?;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -151,7 +164,13 @@ impl LoadBalanceConnector {
         result.hash(&mut hasher);
         let hash = hasher.finish() as usize;
         debug!("result: {:?} hash: {:?}", result, hash);
+        if self.connectors.is_empty() {
+            return Err(anyhow!("No connectors available for hash selection"));
+        }
         let next = &self.connectors[hash % self.connectors.len()];
-        Ok(state.connector_registry.get(next).unwrap().clone())
+        state
+            .connector_registry
+            .get(next)
+            .ok_or_else(|| anyhow!("Connector '{}' not found in registry", next)).cloned()
     }
 }

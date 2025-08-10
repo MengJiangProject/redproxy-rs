@@ -3,7 +3,7 @@ use crate::{
     config::IoParams,
     context::{ContextRef, ContextState, ContextStatistics, IOBufStream},
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use bytes::BytesMut;
 use futures::future::BoxFuture;
 use std::{io::Result as IoResult, sync::Arc, time::Duration};
@@ -16,13 +16,13 @@ lazy_static::lazy_static! {
         "Number of bytes sent from client to server.",
         &["listener"]
     )
-    .unwrap();
+    .expect("Failed to register IO client bytes counter metric");
     static ref IO_BYTES_SERVER: prometheus::IntCounterVec = prometheus::register_int_counter_vec!(
         "io_server_bytes",
         "Number of bytes sent from server to client.",
         &["connector"]
     )
-    .unwrap();
+    .expect("Failed to register IO server bytes counter metric");
 }
 
 #[cfg(target_os = "linux")]
@@ -226,7 +226,12 @@ pub async fn copy_bidi(ctx: ContextRef, params: &IoParams) -> Result<()> {
     #[cfg(feature = "metrics")]
     let client_label = ctx_lock.props().listener.clone();
     #[cfg(feature = "metrics")]
-    let server_label = ctx_lock.props().connector.as_ref().unwrap().clone();
+    let server_label = ctx_lock
+        .props()
+        .connector
+        .as_ref()
+        .ok_or_else(|| anyhow!("No connector information available"))?
+        .clone();
     drop(ctx_lock);
 
     let mut csrc = SrcHalf::new("client");

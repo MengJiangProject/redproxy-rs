@@ -6,7 +6,7 @@ use std::{
     sync::atomic::{AtomicU32, Ordering},
 };
 use tokio::sync::mpsc::Sender;
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
 
 use crate::{
     common::http::{HttpRequest, HttpResponse},
@@ -186,7 +186,13 @@ struct FrameChannelCallback {
 impl ContextCallback for FrameChannelCallback {
     async fn on_connect(&self, ctx: &mut Context) {
         tracing::trace!("on_connect callback: id={} ctx={}", self.session_id, ctx);
-        let mut stream = ctx.take_client_stream();
+        let mut stream = match ctx.take_client_stream() {
+            Ok(s) => s,
+            Err(e) => {
+                error!("Failed to take client stream: {}", e);
+                return;
+            }
+        };
         if let Err(e) = HttpResponse::new(200, "Connection established")
             .with_header("Session-Id", self.session_id.to_string())
             .with_header(

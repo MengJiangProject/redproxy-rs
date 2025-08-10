@@ -22,7 +22,7 @@ use std::{
     sync::{Arc, Weak},
 };
 use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer, trace::TraceLayer};
-use tracing::info;
+use tracing::{error, info};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -94,7 +94,7 @@ impl MetricsServer {
             .nest(&self.api_prefix, api)
             .layer(SetResponseHeaderLayer::if_not_present(
                 ACCESS_CONTROL_ALLOW_ORIGIN,
-                HeaderValue::from_str(&self.cors).unwrap(),
+                HeaderValue::from_str(&self.cors).unwrap_or_else(|_| HeaderValue::from_static("*")),
             ))
             .layer(SetResponseHeaderLayer::if_not_present(
                 CACHE_CONTROL,
@@ -105,8 +105,16 @@ impl MetricsServer {
 
         tokio::spawn(async move {
             info!("metrics server listening on {}", self.bind);
-            let bind = tokio::net::TcpListener::bind(self.bind).await.unwrap();
-            axum::serve(bind, root.into_make_service()).await.unwrap();
+            match tokio::net::TcpListener::bind(self.bind).await {
+                Ok(listener) => {
+                    if let Err(e) = axum::serve(listener, root.into_make_service()).await {
+                        error!("Metrics server error: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to bind metrics server to {}: {}", self.bind, e);
+                }
+            }
         });
 
         Ok(())
@@ -131,7 +139,7 @@ lazy_static::lazy_static! {
         "Number of HTTP requests made.",
         &["handler"]
     )
-    .unwrap();
+    .expect("Failed to register HTTP counter metric");
     static ref HTTP_REQ_HISTOGRAM: HistogramVec = register_histogram_vec!(
         "http_request_duration_seconds",
         "The HTTP request latencies in seconds.",
@@ -142,7 +150,7 @@ lazy_static::lazy_static! {
             0.100, 0.250, 0.500, 0.750,
         ]
     )
-    .unwrap();
+    .expect("Failed to register HTTP histogram metric");
 }
 
 macro_rules! handler {
@@ -221,12 +229,17 @@ handler!(get_metrics() -> impl IntoResponse {
     let encoder = TextEncoder::new();
     let data = prometheus::gather();
     let mut buffer = vec![];
-    encoder.encode(&data, &mut buffer).unwrap();
+    if let Err(e) = encoder.encode(&data, &mut buffer) {
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(Body::from(format!("Failed to encode metrics: {}", e)))
+            .unwrap_or_else(|_| Response::new(Body::empty()));
+    }
     Response::builder()
         .status(200)
         .header(CONTENT_TYPE, encoder.format_type())
         .body(Body::from(buffer))
-        .unwrap()
+        .unwrap_or_else(|_| Response::new(Body::empty()))
 });
 
 handler!(post_logrotate(state: Extension<Arc<GlobalState>>) -> Result<(), MyError> {
@@ -245,7 +258,7 @@ impl IntoResponse for MyError {
         Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .body(body)
-            .unwrap()
+            .unwrap_or_else(|_| Response::new(Body::empty()))
             .into_response()
     }
 }
