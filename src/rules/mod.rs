@@ -1,7 +1,10 @@
 // Any sufficiently complicated C or Fortran program contains an ad hoc, informally-specified, bug-ridden, slow implementation of half of Common Lisp.  --Greenspun's tenth rule
 
 mod filter;
+mod rules_manager;
 pub(crate) mod script_ext;
+pub use rules_manager::RulesManager;
+
 use anyhow::{Context as AnyhowContext, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;

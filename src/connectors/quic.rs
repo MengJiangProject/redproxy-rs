@@ -1,6 +1,6 @@
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
-use anyhow::{Context, Result, anyhow};
 use quinn::{Connection, Endpoint};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -82,11 +82,7 @@ impl super::Connector for QuicConnector {
         Ok(())
     }
 
-    async fn connect(
-        self: Arc<Self>,
-        _state: Arc<GlobalState>,
-        ctx: ContextRef,
-    ) -> Result<()> {
+    async fn connect(self: Arc<Self>, _state: Arc<GlobalState>, ctx: ContextRef) -> Result<()> {
         let (conn, sessions) = self.get_connection().await?;
         let remote = conn.remote_address();
         let local = self

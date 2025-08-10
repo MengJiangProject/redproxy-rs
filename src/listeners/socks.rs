@@ -1,5 +1,5 @@
+use anyhow::{Context as AnyhowContext, Error, Result, anyhow};
 use async_trait::async_trait;
-use anyhow::{Error, Context as AnyhowContext, Result, anyhow};
 use futures::TryFutureExt;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -49,7 +49,8 @@ fn default_allow_udp() -> bool {
 }
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>> {
-    let ret: SocksListener = serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
+    let ret: SocksListener =
+        serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
     Ok(Box::new(ret))
 }
 
@@ -68,7 +69,9 @@ impl Listener for SocksListener {
         queue: Sender<ContextRef>,
     ) -> Result<()> {
         info!("{} listening on {}", self.name, self.bind);
-        let listener = TcpListener::bind(&self.bind).await.with_context(|| "bind")?;
+        let listener = TcpListener::bind(&self.bind)
+            .await
+            .with_context(|| "bind")?;
         let this = self.clone();
         tokio::spawn(this.accept(listener, state, queue));
         Ok(())
@@ -101,13 +104,20 @@ impl SocksListener {
                             .unwrap_or_else(move |e| {
                                 warn!(
                                     "{}: handshake error: {}: cause: {:?}",
-                                    this.name, e, e.source()
+                                    this.name,
+                                    e,
+                                    e.source()
                                 );
                             }),
                     );
                 }
                 Err(e) => {
-                    error!("{}, Accept error: {}: cause: {:?}", self.name, e, e.source());
+                    error!(
+                        "{}, Accept error: {}: cause: {:?}",
+                        self.name,
+                        e,
+                        e.source()
+                    );
                     return;
                 }
             }
@@ -123,12 +133,19 @@ impl SocksListener {
     ) -> Result<()> {
         let local_addr = socket.local_addr().with_context(|| "local_addr")?;
         set_keepalive(&socket)?;
-        let tls_acceptor = self.tls.as_ref()
+        let tls_acceptor = self
+            .tls
+            .as_ref()
             .map(|options| options.acceptor())
             .transpose()
             .with_context(|| "TLS acceptor initialization failed")?;
         let mut socket = if let Some(acceptor) = tls_acceptor {
-            make_buffered_stream(acceptor.accept(socket).await.with_context(|| "tls accept error")?)
+            make_buffered_stream(
+                acceptor
+                    .accept(socket)
+                    .await
+                    .with_context(|| "tls accept error")?,
+            )
         } else {
             make_buffered_stream(socket)
         };

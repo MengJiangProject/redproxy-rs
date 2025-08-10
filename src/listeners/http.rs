@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use anyhow::{Context, Result, bail};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -23,7 +23,8 @@ pub struct HttpListener {
 }
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>> {
-    let ret: HttpListener = serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
+    let ret: HttpListener =
+        serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
     Ok(Box::new(ret))
 }
 
@@ -44,7 +45,9 @@ impl Listener for HttpListener {
         queue: Sender<ContextRef>,
     ) -> Result<()> {
         info!("{} listening on {}", self.name, self.bind);
-        let listener = TcpListener::bind(&self.bind).await.with_context(|| "bind")?;
+        let listener = TcpListener::bind(&self.bind)
+            .await
+            .with_context(|| "bind")?;
         let this = self.clone();
         tokio::spawn(this.accept(listener, state, queue));
         Ok(())
@@ -76,13 +79,20 @@ impl HttpListener {
                         if let Err(e) = res {
                             warn!(
                                 "{}: handshake failed: {}\ncause: {:?}",
-                                this.name, e, e.source()
+                                this.name,
+                                e,
+                                e.source()
                             );
                         }
                     });
                 }
                 Err(e) => {
-                    error!("{} accept error: {} \ncause: {:?}", self.name, e, e.source());
+                    error!(
+                        "{} accept error: {} \ncause: {:?}",
+                        self.name,
+                        e,
+                        e.source()
+                    );
                     return;
                 }
             }
@@ -95,7 +105,9 @@ impl HttpListener {
         socket: TcpStream,
     ) -> Result<ContextRef> {
         set_keepalive(&socket)?;
-        let tls_acceptor = self.tls.as_ref()
+        let tls_acceptor = self
+            .tls
+            .as_ref()
             .map(|options| options.acceptor())
             .transpose()
             .with_context(|| "TLS acceptor initialization failed")?;

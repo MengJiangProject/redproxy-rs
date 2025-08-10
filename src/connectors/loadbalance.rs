@@ -6,8 +6,8 @@ use std::{
     },
 };
 
+use anyhow::{Context, Error, Result, ensure};
 use async_trait::async_trait;
-use anyhow::{Error, Context, Result, ensure};
 use milu::{
     parser::parse,
     script::{ScriptContext, Type, Value},
@@ -75,7 +75,10 @@ impl Connector for LoadBalanceConnector {
         if let Algorithm::HashBy(str) = &self.algorithm {
             let value = parse(str).context("unable to compile hash script")?;
             let ctx: Arc<ScriptContext> = create_context(Default::default()).into();
-            let rtype = value.real_type_of(ctx).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+            let rtype = value
+                .real_type_of(ctx)
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
             ensure!(
                 rtype == Type::String,
                 "hash script type mismatch: required string, got {}\nsnippet: {}",
@@ -91,7 +94,7 @@ impl Connector for LoadBalanceConnector {
         ensure!(!self.connectors.is_empty(), "connectors must not be empty");
         for n in &self.connectors {
             ensure!(
-                state.connectors.contains_key(n),
+                state.connector_registry.contains(n),
                 "connector not defined: {}",
                 n
             );
@@ -119,7 +122,7 @@ impl Connector for LoadBalanceConnector {
 impl LoadBalanceConnector {
     fn random(self: &Arc<Self>, state: &Arc<GlobalState>) -> Result<Arc<dyn Connector>> {
         let next = self.connectors.choose(&mut rng()).unwrap();
-        Ok(state.connectors.get(next).unwrap().clone())
+        Ok(state.connector_registry.get(next).unwrap().clone())
     }
 
     fn round_robin(
@@ -128,7 +131,7 @@ impl LoadBalanceConnector {
     ) -> Result<Arc<dyn Connector>, Error> {
         let next = self.idx.fetch_add(1, Ordering::Relaxed);
         let next = &self.connectors[next % self.connectors.len()];
-        Ok(state.connectors.get(next).unwrap().clone())
+        Ok(state.connector_registry.get(next).unwrap().clone())
     }
 
     async fn hash_by(
@@ -149,6 +152,6 @@ impl LoadBalanceConnector {
         let hash = hasher.finish() as usize;
         debug!("result: {:?} hash: {:?}", result, hash);
         let next = &self.connectors[hash % self.connectors.len()];
-        Ok(state.connectors.get(next).unwrap().clone())
+        Ok(state.connector_registry.get(next).unwrap().clone())
     }
 }

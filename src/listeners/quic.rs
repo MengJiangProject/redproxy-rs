@@ -1,6 +1,6 @@
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
-use anyhow::{Context, Result};
 use futures_util::TryFutureExt;
 use quinn::{Connection, Endpoint, congestion};
 use serde::{Deserialize, Serialize};
@@ -31,7 +31,8 @@ fn default_bbr() -> bool {
 }
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>> {
-    let ret: QuicListener = serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
+    let ret: QuicListener =
+        serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
     Ok(Box::new(ret))
 }
 
@@ -82,7 +83,12 @@ impl QuicListener {
                     tokio::spawn(this.client_thread(conn, source, state, queue));
                 }
                 Err(e) => {
-                    warn!("{}, Accept error: {}: cause: {:?}", self.name, e, e.source());
+                    warn!(
+                        "{}, Accept error: {}: cause: {:?}",
+                        self.name,
+                        e,
+                        e.source()
+                    );
                 }
             }
         }
@@ -118,7 +124,12 @@ impl QuicListener {
                     Ok(create_quic_frames(conn, id, sessions).await)
                 })
                 .unwrap_or_else(move |e| {
-                    warn!("{}: h11c handshake error: {}: {:?}", this.name, e, e.source())
+                    warn!(
+                        "{}: h11c handshake error: {}: {:?}",
+                        this.name,
+                        e,
+                        e.source()
+                    )
                 }),
             );
         }

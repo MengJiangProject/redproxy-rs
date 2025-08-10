@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use anyhow::{Result, bail};
+use async_trait::async_trait;
 use std::{collections::HashSet, fmt::Display, sync::Arc};
 
 use super::context::{ScriptContext, ScriptContextRef, ScriptContextWeakRef}; // For UDF context

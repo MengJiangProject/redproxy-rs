@@ -1,4 +1,5 @@
 use crate::{GlobalState, VERSION, rules::Rule};
+use anyhow::{Error, Result, ensure};
 use axum::{
     Json, Router,
     body::Body,
@@ -10,7 +11,6 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use anyhow::{Error, ensure, Result};
 use futures::StreamExt;
 use prometheus::{
     Encoder, HistogramVec, IntCounterVec, TextEncoder, register_histogram_vec,
@@ -170,7 +170,7 @@ handler!(get_status(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
         Status {
             version: VERSION.to_string(),
             listeners: state.listeners.keys().cloned().collect(),
-            connectors: state.connectors.keys().cloned().collect(),
+            connectors: state.connector_registry.connectors().keys().cloned().collect(),
         }
     )
 });

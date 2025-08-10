@@ -1,6 +1,6 @@
+use anyhow::{Context as AnyhowContext, Error, Result};
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
-use anyhow::{Error, Context as AnyhowContext, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
 use std::net::SocketAddr;
@@ -56,13 +56,20 @@ impl Listener for ReverseProxyListener {
         info!("{} listening on {}", self.name, self.bind);
         match self.protocol {
             Protocol::Tcp => {
-                let listener = TcpListener::bind(&self.bind).await.with_context(|| "bind")?;
+                let listener = TcpListener::bind(&self.bind)
+                    .await
+                    .with_context(|| "bind")?;
                 tokio::spawn(async move {
                     loop {
                         self.tcp_accept(&listener, &state, &queue)
                             .await
                             .unwrap_or_else(|e| {
-                                error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.source())
+                                error!(
+                                    "{}: accept error: {} \ncause: {:?}",
+                                    self.name,
+                                    e,
+                                    e.source()
+                                )
                             });
                     }
                 });
@@ -75,7 +82,12 @@ impl Listener for ReverseProxyListener {
                         self.udp_accept(&listener, &state, &queue)
                             .await
                             .unwrap_or_else(|e| {
-                                error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.source())
+                                error!(
+                                    "{}: accept error: {} \ncause: {:?}",
+                                    self.name,
+                                    e,
+                                    e.source()
+                                )
                             });
                     }
                 });

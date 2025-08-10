@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use anyhow::{Context, Result, bail};
+use async_trait::async_trait;
 use std::net::IpAddr;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tracing::trace;
@@ -56,10 +56,7 @@ impl<T> SocksRequest<T> {
             _ => bail!("Unknown socks version: {}", version),
         }
     }
-    async fn read_v4<IO: RW, A: SocksAuthServer<T>>(
-        socket: &mut IO,
-        auth: A,
-    ) -> Result<Self> {
+    async fn read_v4<IO: RW, A: SocksAuthServer<T>>(socket: &mut IO, auth: A) -> Result<Self> {
         let cmd = socket.read_u8().await.context("read cmd")?;
         let dport = socket.read_u16().await.context("read port")?;
         let dst = socket.read_u32().await.context("read dst")?;
@@ -78,10 +75,7 @@ impl<T> SocksRequest<T> {
             auth,
         })
     }
-    async fn read_v5<IO: RW, A: SocksAuthServer<T>>(
-        socket: &mut IO,
-        auth: A,
-    ) -> Result<Self> {
+    async fn read_v5<IO: RW, A: SocksAuthServer<T>>(socket: &mut IO, auth: A) -> Result<Self> {
         // pre auth negotiation
         let n = socket.read_u8().await.context("read method count")?;
         let mut buf = vec![0; n as usize];
@@ -245,12 +239,7 @@ impl SocksAuthClient<()> for NoAuth {
     async fn auth_v4(&self, _: &()) -> Result<String> {
         Ok("NoAuth".into())
     }
-    async fn auth_v5<IO: RW>(
-        &self,
-        _data: &(),
-        _method: u8,
-        _socket: &mut IO,
-    ) -> Result<()> {
+    async fn auth_v5<IO: RW>(&self, _data: &(), _method: u8, _socket: &mut IO) -> Result<()> {
         Ok(())
     }
 }

@@ -1,7 +1,7 @@
+use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use bytes::BytesMut;
 use chashmap_async::CHashMap;
-use anyhow::{Error, Context, Result};
 use lru::LruCache;
 use nix::{
     cmsg_space,
@@ -343,9 +343,9 @@ impl TproxyUdpSocket {
                                 error!("Unknown address family in TPROXY, skipping packet");
                                 return Err(std::io::Error::new(
                                     std::io::ErrorKind::InvalidData,
-                                    "unknown address family"
+                                    "unknown address family",
                                 ));
-                            },
+                            }
                         };
                         let mut cmsgs = ret.cmsgs().expect("cmsgs");
                         let dst: SocketAddr = match cmsgs.next() {
@@ -373,16 +373,16 @@ impl TproxyUdpSocket {
                                 error!("Unexpected control message in TPROXY, skipping packet");
                                 return Err(std::io::Error::new(
                                     std::io::ErrorKind::InvalidData,
-                                    "Unexpected control message"
+                                    "Unexpected control message",
                                 ));
-                            },
+                            }
                             None => {
                                 error!("No control message in TPROXY, skipping packet");
                                 return Err(std::io::Error::new(
                                     std::io::ErrorKind::InvalidData,
-                                    "No control message"
+                                    "No control message",
                                 ));
-                            },
+                            }
                         };
 
                         (ret.bytes, src, dst)

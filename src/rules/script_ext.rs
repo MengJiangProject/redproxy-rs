@@ -1,6 +1,6 @@
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use cidr::AnyIpCidr;
-use anyhow::{Result, bail};
 use milu::script::ScriptContext;
 use milu::{
     function,
@@ -53,7 +53,11 @@ impl Accessible for ContextAdaptor {
         // Made async
         match name {
             "listener" | "connector" | "feature" => Ok(Type::String),
-            "target" | "source" => self.get(name)?.type_of(ctx).await.map_err(|e| anyhow::anyhow!("{}", e)), // Added await
+            "target" | "source" => self
+                .get(name)?
+                .type_of(ctx)
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e)), // Added await
             _ => bail!("undefined field: {}", name),
         }
     }

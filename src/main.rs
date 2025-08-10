@@ -1,10 +1,10 @@
+use anyhow::{Context, Error, Result, anyhow};
 use clap::{builder::PossibleValuesParser, value_parser};
 use config::{IoParams, Timeouts};
 use context::{ContextRef, ContextState, GlobalState as ContextGlobalState};
-use anyhow::{Error, anyhow, Context, Result};
 use rules::Rule;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{RwLock, RwLockReadGuard, mpsc::channel};
+use tokio::sync::{RwLockReadGuard, mpsc::channel};
 use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -23,15 +23,18 @@ mod rules;
 #[cfg(feature = "metrics")]
 mod metrics;
 
-use crate::{connectors::Connector, context::ContextRefOps, copy::copy_bidi, listeners::Listener};
+use crate::{
+    connectors::Connector, connectors::ConnectorRegistry, context::ContextRefOps, copy::copy_bidi,
+    listeners::Listener, rules::RulesManager,
+};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Default)]
 pub struct GlobalState {
-    rules: RwLock<Vec<Arc<Rule>>>,
+    rules_manager: RulesManager,
     listeners: HashMap<String, Arc<dyn Listener>>,
-    connectors: HashMap<String, Arc<dyn Connector>>,
+    connector_registry: ConnectorRegistry,
     contexts: Arc<ContextGlobalState>,
     timeouts: Timeouts,
     #[cfg(feature = "metrics")]
@@ -40,46 +43,16 @@ pub struct GlobalState {
 }
 
 impl GlobalState {
-    async fn set_rules(&self, mut rules: Vec<Arc<Rule>>) -> Result<(), Error> {
-        // Initialize rules before putting them in Arc
-        for r in rules.iter_mut() {
-            if let Some(rule_mut) = Arc::get_mut(r) {
-                rule_mut.init().await
-                    .with_context(|| "Failed to initialize rule")?;
-            } else {
-                return Err(anyhow!("Cannot get mutable reference to rule during initialization"));
-            }
-        }
-
-        let connectors = &self.connectors;
-        for r in rules.iter_mut() {
-            if r.target_name() == "deny" {
-                continue;
-            } else if let Some(t) = connectors.get(r.target_name()) {
-                if let Some(rule_mut) = Arc::get_mut(r) {
-                    rule_mut.target = Some(t.clone());
-                } else {
-                    return Err(anyhow!("Cannot get mutable reference to rule during target assignment"));
-                }
-            } else {
-                return Err(anyhow!("target not found: {}", r.target_name()));
-            }
-        }
-        *self.rules.write().await = rules;
-        Ok(())
+    async fn set_rules(&self, rules: Vec<Arc<Rule>>) -> Result<(), Error> {
+        self.rules_manager
+            .set_rules(rules, self.connector_registry.connectors())
+            .await
     }
     async fn rules(&self) -> RwLockReadGuard<'_, Vec<Arc<Rule>>> {
-        self.rules.read().await
+        self.rules_manager.rules().await
     }
     async fn eval_rules(&self, ctx: &ContextRef) -> Option<Arc<dyn Connector>> {
-        let ctx = &ctx.clone().read_owned().await;
-        let rules = self.rules().await;
-        for rule in rules.iter() {
-            if rule.evaluate(ctx).await {
-                return rule.target.clone();
-            }
-        }
-        None
+        self.rules_manager.eval_rules(ctx).await
     }
 }
 #[tokio::main]
@@ -131,16 +104,17 @@ async fn main() -> Result<()> {
         .init();
 
     let cfg = config::Config::load(config).await?;
-    
+
     // Build state safely without Arc::get_mut().unwrap() patterns
     let mut contexts = Arc::new(ContextGlobalState::default());
     let mut listeners = listeners::from_config(&cfg.listeners)?;
-    let mut connectors = connectors::from_config(&cfg.connectors)?;
-    
+    let connectors = connectors::from_config(&cfg.connectors)?;
+    let mut connector_registry = ConnectorRegistry::new();
+
     // Initialize contexts with timeout and access log
     if let Some(ctx_mut) = Arc::get_mut(&mut contexts) {
         ctx_mut.default_timeout = cfg.timeouts.idle;
-        
+
         if let Some(mut log) = cfg.access_log {
             log.init().await?;
             ctx_mut.access_log = Some(log);
@@ -148,27 +122,35 @@ async fn main() -> Result<()> {
     } else {
         return Err(anyhow!("Cannot initialize context state"));
     }
-    
+
     // Initialize listeners
     for l in listeners.values_mut() {
         if let Some(listener_mut) = Arc::get_mut(l) {
-            listener_mut.init().await
-                .with_context(|| format!("Failed to initialize listener {}", listener_mut.name()))?;
+            listener_mut.init().await.with_context(|| {
+                format!("Failed to initialize listener {}", listener_mut.name())
+            })?;
         } else {
-            return Err(anyhow!("Cannot get mutable reference to listener during initialization"));
+            return Err(anyhow!(
+                "Cannot get mutable reference to listener during initialization"
+            ));
         }
     }
-    
-    // Initialize connectors
-    for c in connectors.values_mut() {
-        if let Some(connector_mut) = Arc::get_mut(c) {
-            connector_mut.init().await
-                .context(format!("Failed to initialize connector {}", connector_mut.name()))?;
+
+    // Initialize connectors and move them to registry
+    for (name, c) in connectors {
+        if let Some(connector_mut) = Arc::get_mut(&mut c.clone()) {
+            connector_mut.init().await.context(format!(
+                "Failed to initialize connector {}",
+                connector_mut.name()
+            ))?;
         } else {
-            return Err(anyhow!("Cannot get mutable reference to connector during initialization"));
+            return Err(anyhow!(
+                "Cannot get mutable reference to connector during initialization"
+            ));
         }
+        connector_registry.insert(name, c);
     }
-    
+
     // Handle metrics initialization
     #[cfg(feature = "metrics")]
     let metrics = if let Some(mut metrics_cfg) = cfg.metrics {
@@ -180,19 +162,19 @@ async fn main() -> Result<()> {
     } else {
         None
     };
-    
+
     // Build the global state
     let state = Arc::new(GlobalState {
-        rules: RwLock::new(Vec::new()),
+        rules_manager: RulesManager::new(),
         listeners,
-        connectors,
+        connector_registry,
         contexts,
         timeouts: cfg.timeouts,
         #[cfg(feature = "metrics")]
         metrics,
         io_params: cfg.io_params,
     });
-    
+
     // Initialize rules after state is fully constructed
     state.set_rules(rules::from_config(&cfg.rules)?).await?;
 
@@ -200,7 +182,7 @@ async fn main() -> Result<()> {
         l.verify(state.clone()).await?;
     }
 
-    for c in state.connectors.values() {
+    for c in state.connector_registry.connectors().values() {
         c.verify(state.clone()).await?;
     }
 
@@ -221,7 +203,10 @@ async fn main() -> Result<()> {
     state.contexts.clone().gc_thread();
 
     loop {
-        let ctx = rx.recv().await.ok_or_else(|| anyhow!("Channel closed unexpectedly"))?;
+        let ctx = rx
+            .recv()
+            .await
+            .ok_or_else(|| anyhow!("Channel closed unexpectedly"))?;
         tokio::spawn(process_request(ctx, state.clone()));
     }
 }

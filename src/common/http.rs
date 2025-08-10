@@ -161,10 +161,7 @@ impl HttpResponse {
     }
 }
 
-async fn read_headers(
-    headers: &mut Vec<(String, String)>,
-    socket: Reader<'_>,
-) -> Result<()> {
+async fn read_headers(headers: &mut Vec<(String, String)>, socket: Reader<'_>) -> Result<()> {
     loop {
         let buf = read_line(socket).await?;
         let buf = buf.trim_end();

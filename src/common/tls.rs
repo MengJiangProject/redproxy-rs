@@ -45,7 +45,8 @@ impl TlsClientVerifyConfig {
         let mut ret = RootCertStore::empty();
         let certs = load_certs(&self.ca)?;
         for cert in certs {
-            ret.add(cert).with_context(|| "fail to add trusted certificate")?;
+            ret.add(cert)
+                .with_context(|| "fail to add trusted certificate")?;
         }
         Ok(ret)
     }
@@ -161,7 +162,8 @@ impl TlsClientConfig {
             ret.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         } else {
             for cert in certs {
-                ret.add(cert).with_context(|| "fail to add trusted certificate")?;
+                ret.add(cert)
+                    .with_context(|| "fail to add trusted certificate")?;
             }
         }
         Ok(ret)

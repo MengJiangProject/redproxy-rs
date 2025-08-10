@@ -1,5 +1,5 @@
+use anyhow::{Context as AnyhowContext, Error, Result, bail};
 use async_trait::async_trait;
-use anyhow::{Error, Context as AnyhowContext, Result, bail};
 use futures::Future;
 use std::{
     net::SocketAddr,

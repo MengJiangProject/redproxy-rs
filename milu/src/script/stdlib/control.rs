@@ -1,6 +1,6 @@
 use crate::{args, function_head}; // Added macro imports
-use async_trait::async_trait;
 use anyhow::{Result, bail}; // ResultExt can be removed
+use async_trait::async_trait;
 use std::collections::HashSet; // For unresovled_ids in Access and Scope
 use std::convert::TryInto;
 use std::sync::Arc; // Added Weak for ScriptContextWeakRef
@@ -266,10 +266,7 @@ impl NativeObject for ScopeBinding {
 
 function_head!(Scope(vars: Type::array_of(Type::Any), expr: Any) => Any);
 impl Scope {
-    fn make_context(
-        vars: &[Value],
-        outer_ctx: ScriptContextRef,
-    ) -> Result<ScriptContextRef> {
+    fn make_context(vars: &[Value], outer_ctx: ScriptContextRef) -> Result<ScriptContextRef> {
         let mut error: Option<anyhow::Error> = None;
         let ctx_arc = Arc::new_cyclic(|weak_self| {
             let mut new_ctx = ScriptContext::new(Some(outer_ctx.clone()));
@@ -279,7 +276,8 @@ impl Scope {
                         let name_str = match &parsed_fn_arc.name_ident {
                             Value::Identifier(s) => s.clone(),
                             _ => {
-                                error = Some(anyhow::anyhow!("Function name must be an identifier"));
+                                error =
+                                    Some(anyhow::anyhow!("Function name must be an identifier"));
                                 break;
                             }
                         };
@@ -288,7 +286,9 @@ impl Scope {
                             match arg_ident_val {
                                 Value::Identifier(s) => arg_names_str.push(s.clone()),
                                 _ => {
-                                    error = Some(anyhow::anyhow!("Function arguments must be identifiers"));
+                                    error = Some(anyhow::anyhow!(
+                                        "Function arguments must be identifiers"
+                                    ));
                                     break;
                                 }
                             }
@@ -309,8 +309,10 @@ impl Scope {
                     Value::Tuple(pair_arc) => {
                         let t = pair_arc.as_ref();
                         if t.len() != 2 {
-                            error =
-                                Some(anyhow::anyhow!(format!("Invalid variable binding tuple: {:?}", t)));
+                            error = Some(anyhow::anyhow!(format!(
+                                "Invalid variable binding tuple: {:?}",
+                                t
+                            )));
                             break;
                         }
                         let id = match &t[0] {

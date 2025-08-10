@@ -14,7 +14,7 @@ use tokio::{
     io::{AsyncWriteExt, BufWriter},
     sync::mpsc::{Receiver, Sender, channel},
 };
-use tracing::{info, error};
+use tracing::{error, info};
 
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
@@ -70,7 +70,11 @@ impl ScriptFormater {
 impl Formater for ScriptFormater {
     async fn to_string(&self, e: Arc<ContextProps>) -> Result<String> {
         let ctx = create_context(e);
-        self.0.value_of(ctx.into()).await?.try_into().map_err(|e| anyhow::anyhow!("{}", e))
+        self.0
+            .value_of(ctx.into())
+            .await?
+            .try_into()
+            .map_err(|e| anyhow::anyhow!("{}", e))
     }
 }
 
@@ -157,7 +161,6 @@ async fn signal_watch(_tx: Sender<Option<Arc<ContextProps>>>) {}
 
 #[cfg(not(target_os = "windows"))]
 async fn signal_watch(tx: Sender<Option<Arc<ContextProps>>>) {
-
     let mut stream = signal(SignalKind::user_defined1()).unwrap();
     loop {
         let e = stream.recv().await;

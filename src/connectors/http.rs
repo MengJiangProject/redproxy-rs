@@ -1,11 +1,11 @@
 use std::{convert::TryFrom, sync::Arc};
 
-use async_trait::async_trait;
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use rustls::pki_types::ServerName;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
-use tracing::{trace, error};
+use tracing::{error, trace};
 
 use crate::{
     GlobalState,
@@ -46,13 +46,11 @@ impl super::Connector for HttpConnector {
         &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
     }
 
-    async fn connect(
-        self: Arc<Self>,
-        _state: Arc<GlobalState>,
-        ctx: ContextRef,
-    ) -> Result<()> {
+    async fn connect(self: Arc<Self>, _state: Arc<GlobalState>, ctx: ContextRef) -> Result<()> {
         let tls_insecure = self.tls.as_ref().map(|x| x.insecure).unwrap_or(false);
-        let tls_connector = self.tls.as_ref()
+        let tls_connector = self
+            .tls
+            .as_ref()
             .map(|options| options.connector())
             .transpose()
             .context("TLS connector initialization failed")?;

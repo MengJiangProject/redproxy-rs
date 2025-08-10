@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
+use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
-use anyhow::{bail, anyhow, Result};
 use serde_yaml_ng::Value;
 use tokio::sync::mpsc::Sender;
 

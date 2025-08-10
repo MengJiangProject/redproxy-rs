@@ -1,4 +1,4 @@
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use milu::parser::{SyntaxError, parse};
 use milu::script::{Evaluatable, Type, Value};
 use std::convert::TryInto;

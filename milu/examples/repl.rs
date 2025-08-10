@@ -1,11 +1,13 @@
-use clap::value_parser;
 use anyhow::{Context, Result};
+use clap::value_parser;
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::error::ReadlineError;
 use rustyline::highlight::{CmdKind, Highlighter, MatchingBracketHighlighter};
 use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::{self, MatchingBracketValidator, Validator};
-use rustyline::{Cmd, CompletionType, Config, Context as RustylineContext, EditMode, Editor, KeyEvent};
+use rustyline::{
+    Cmd, CompletionType, Config, Context as RustylineContext, EditMode, Editor, KeyEvent,
+};
 use rustyline_derive::Helper;
 use std::borrow::Cow::{self, Borrowed, Owned};
 use std::path::PathBuf;

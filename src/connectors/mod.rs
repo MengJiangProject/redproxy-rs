@@ -2,8 +2,8 @@ use crate::{
     GlobalState,
     context::{ContextRef, Feature},
 };
+use anyhow::{Result, bail};
 use async_trait::async_trait;
-use anyhow::{bail, Result};
 use serde_yaml_ng::Value;
 use std::{collections::HashMap, sync::Arc};
 
@@ -22,11 +22,7 @@ pub trait Connector: Send + Sync {
     async fn verify(&self, _state: Arc<GlobalState>) -> Result<()> {
         Ok(())
     }
-    async fn connect(
-        self: Arc<Self>,
-        state: Arc<GlobalState>,
-        ctx: ContextRef,
-    ) -> Result<()>;
+    async fn connect(self: Arc<Self>, state: Arc<GlobalState>, ctx: ContextRef) -> Result<()>;
     fn name(&self) -> &str;
     fn features(&self) -> &[Feature] {
         &[Feature::TcpForward]
@@ -66,5 +62,44 @@ pub fn from_value(value: &Value) -> Result<ConnectorRef> {
         "quic" => quic::from_value(value),
 
         name => bail!("unknown connector type: {:?}", name),
+    }
+}
+
+/// Registry for managing connectors
+pub struct ConnectorRegistry {
+    connectors: HashMap<String, Arc<dyn Connector>>,
+}
+
+impl ConnectorRegistry {
+    pub fn new() -> Self {
+        Self {
+            connectors: HashMap::new(),
+        }
+    }
+
+    /// Insert a connector with the given name
+    pub fn insert(&mut self, name: String, connector: Arc<dyn Connector>) {
+        self.connectors.insert(name, connector);
+    }
+
+    /// Get a connector by name
+    pub fn get(&self, name: &str) -> Option<&Arc<dyn Connector>> {
+        self.connectors.get(name)
+    }
+
+    /// Get immutable reference to all connectors
+    pub fn connectors(&self) -> &HashMap<String, Arc<dyn Connector>> {
+        &self.connectors
+    }
+
+    /// Check if connector exists
+    pub fn contains(&self, name: &str) -> bool {
+        self.connectors.contains_key(name)
+    }
+}
+
+impl Default for ConnectorRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
