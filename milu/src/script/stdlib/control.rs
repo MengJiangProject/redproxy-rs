@@ -350,12 +350,12 @@ impl Scope {
 #[async_trait]
 impl Callable for Scope {
     async fn signature(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Type> {
-        let fn_ctx = Self::make_context(args[0].as_vec(), ctx)?;
+        let fn_ctx = Self::make_context(args[0].as_vec()?, ctx)?;
         let expr = args[1].type_of(fn_ctx).await?;
         Ok(expr)
     }
     async fn call(&self, ctx: ScriptContextRef, args: &[Value]) -> Result<Value> {
-        let new_scope_ctx = Self::make_context(args[0].as_vec(), ctx)?;
+        let new_scope_ctx = Self::make_context(args[0].as_vec()?, ctx)?;
         args[1].real_value_of(new_scope_ctx).await
     }
     fn unresovled_ids<'s: 'o, 'o>(

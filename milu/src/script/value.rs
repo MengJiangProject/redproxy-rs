@@ -38,20 +38,20 @@ impl Value {
         }
     }
 
-    pub fn as_vec(&self) -> &Vec<Value> {
+    pub fn as_vec(&self) -> Result<&Vec<Value>> {
         // Made pub
         match self {
-            Self::Array(a) => a,
-            Self::Tuple(a) => a,
-            _ => panic!("as_vec: type mismatch, possible bug in parse"),
+            Self::Array(a) => Ok(a),
+            Self::Tuple(a) => Ok(a),
+            _ => bail!("as_vec: type mismatch, expected Array or Tuple, got {}", self.type_of_simple()),
         }
     }
     #[allow(dead_code)]
-    pub fn as_i64(&self) -> i64 {
+    pub fn as_i64(&self) -> Result<i64> {
         // Made pub
         match self {
-            Self::Integer(a) => *a,
-            _ => panic!("as_i64: type mismatch, possible bug in parse"),
+            Self::Integer(a) => Ok(*a),
+            _ => bail!("as_i64: type mismatch, expected Integer, got {}", self.type_of_simple()),
         }
     }
     pub fn unresovled_ids<'s: 'o, 'o>(&'s self, ids: &mut HashSet<&'o Value>) {

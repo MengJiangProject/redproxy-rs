@@ -57,10 +57,12 @@ impl Listener for QuicListener {
             transport.congestion_controller_factory(Arc::new(congestion::BbrConfig::default()));
         }
         let endpoint = Endpoint::server(cfg, self.bind).with_context(|| "quic_listen")?;
-        tokio::spawn(
-            self.accept(endpoint, state, queue)
-                .unwrap_or_else(|e| panic!("{}: {:?}", e, e.source())),
-        );
+        let listener = self.clone();
+        tokio::spawn(async move {
+            if let Err(e) = listener.accept(endpoint, state, queue).await {
+                tracing::error!("QUIC listener accept error: {} cause: {:?}", e, e.source());
+            }
+        });
         Ok(())
     }
 }

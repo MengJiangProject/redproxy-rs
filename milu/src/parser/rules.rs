@@ -39,7 +39,7 @@ pub fn parse_many(op: Span, mut args: Vec<Value>) -> Value {
             let p2 = args.remove(0);
             Access::make_call(p1, p2).into()
         }
-        _ => panic!("not implemented"),
+        _ => panic!("impossible: unsupported operation '{}' reached parser - this indicates a parser bug", op),
     }
 }
 pub fn parse1(op: Span, p1: Value) -> Value {
@@ -49,7 +49,7 @@ pub fn parse1(op: Span, p1: Value) -> Value {
         "!" => Not::make_call(p1).into(),
         "~" => BitNot::make_call(p1).into(),
         "-" => Negative::make_call(p1).into(),
-        _ => panic!("not implemented"),
+        _ => panic!("impossible: unsupported unary operation '{}' reached parser - this indicates a parser bug", op),
     }
 }
 pub fn parse2(op: Span, p1: Value, p2: Value) -> Value {
@@ -88,7 +88,7 @@ pub fn parse2(op: Span, p1: Value, p2: Value) -> Value {
         "^^" | "xor" => Xor::make_call(p1, p2).into(),
         //prioity 1
         "||" | "or" => Or::make_call(p1, p2).into(),
-        _ => panic!("not implemented"),
+        _ => panic!("impossible: unsupported binary operation '{}' reached parser - this indicates a parser bug", op),
     }
 }
 
