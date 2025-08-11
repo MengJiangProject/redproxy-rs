@@ -9,10 +9,11 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, info, warn};
 
-use crate::GlobalState;
 use crate::common::h11c::h11c_handshake;
 use crate::common::quic::{QuicStream, create_quic_frames, create_quic_server, quic_frames_thread};
 use crate::common::tls::TlsServerConfig;
+use crate::config::Timeouts;
+use crate::context::ContextManager;
 use crate::context::{ContextRef, make_buffered_stream};
 use crate::listeners::Listener;
 
@@ -47,7 +48,8 @@ impl Listener for QuicListener {
     }
     async fn listen(
         self: Arc<Self>,
-        state: Arc<GlobalState>,
+        contexts: Arc<ContextManager>,
+        timeouts: Timeouts,
         queue: Sender<ContextRef>,
     ) -> Result<()> {
         info!("{} listening on {}", self.name, self.bind);
@@ -59,7 +61,7 @@ impl Listener for QuicListener {
         let endpoint = Endpoint::server(cfg, self.bind).with_context(|| "quic_listen")?;
         let listener = self.clone();
         tokio::spawn(async move {
-            if let Err(e) = listener.accept(endpoint, state, queue).await {
+            if let Err(e) = listener.accept(endpoint, contexts, timeouts, queue).await {
                 tracing::error!("QUIC listener accept error: {} cause: {:?}", e, e.source());
             }
         });
@@ -70,7 +72,8 @@ impl QuicListener {
     async fn accept(
         self: Arc<Self>,
         endpoint: Endpoint,
-        state: Arc<GlobalState>,
+        contexts: Arc<ContextManager>,
+        _timeouts: Timeouts,
         queue: Sender<ContextRef>,
     ) -> Result<()> {
         while let Some(conn) = endpoint.accept().await {
@@ -80,9 +83,9 @@ impl QuicListener {
             match conn.await.with_context(|| "connection") {
                 Ok(conn) => {
                     let this = self.clone();
-                    let state = state.clone();
+                    let contexts = contexts.clone();
                     let queue = queue.clone();
-                    tokio::spawn(this.client_thread(conn, source, state, queue));
+                    tokio::spawn(this.client_thread(conn, source, contexts, queue));
                 }
                 Err(e) => {
                     warn!(
@@ -100,7 +103,7 @@ impl QuicListener {
         self: Arc<Self>,
         conn: Connection,
         source: SocketAddr,
-        state: Arc<GlobalState>,
+        contexts: Arc<ContextManager>,
         queue: Sender<ContextRef>,
     ) {
         let sessions = Arc::new(CHashMap::new());
@@ -113,10 +116,7 @@ impl QuicListener {
             debug!("{}: BiStream connected from {:?}", self.name, source);
             let stream: QuicStream = stream.into();
             let stream = make_buffered_stream(stream);
-            let ctx = state
-                .contexts
-                .create_context(self.name.to_owned(), source)
-                .await;
+            let ctx = contexts.create_context(self.name.to_owned(), source).await;
             ctx.write().await.set_client_stream(stream);
             let this = self.clone();
             let conn = conn.clone();

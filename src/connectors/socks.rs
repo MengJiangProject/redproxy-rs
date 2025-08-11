@@ -8,7 +8,6 @@ use tokio::net::TcpStream;
 use tracing::trace;
 
 use crate::{
-    GlobalState,
     common::{
         into_unspecified, set_keepalive,
         socks::{
@@ -69,7 +68,7 @@ impl super::Connector for SocksConnector {
         Ok(())
     }
 
-    async fn connect(self: Arc<Self>, _state: Arc<GlobalState>, ctx: ContextRef) -> Result<()> {
+    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<()> {
         let tls_insecure = self.tls.as_ref().map(|x| x.insecure).unwrap_or(false);
         let tls_connector = self
             .tls

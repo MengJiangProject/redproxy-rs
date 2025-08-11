@@ -13,7 +13,6 @@ use tracing::{debug, trace};
 
 use super::ConnectorRef;
 use crate::{
-    GlobalState,
     common::{
         dns::{AddressFamily, DnsConfig},
         frames::{Frame, FrameIO, FrameReader, FrameWriter},
@@ -70,11 +69,7 @@ impl super::Connector for DirectConnector {
         &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
     }
 
-    async fn connect(
-        self: Arc<Self>,
-        _state: Arc<GlobalState>,
-        ctx: ContextRef,
-    ) -> Result<(), Error> {
+    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<(), Error> {
         let target = ctx.read().await.target();
         trace!("connecting to {}", target);
         let remote = match &target {

@@ -13,7 +13,6 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    GlobalState,
     common::{
         auth::AuthData,
         into_unspecified, set_keepalive,
@@ -24,6 +23,8 @@ use crate::{
         },
         tls::TlsServerConfig,
     },
+    config::Timeouts,
+    context::ContextManager,
     context::{Context, ContextCallback, ContextRef, ContextRefOps, Feature, make_buffered_stream},
     listeners::Listener,
 };
@@ -65,7 +66,8 @@ impl Listener for SocksListener {
     }
     async fn listen(
         self: Arc<Self>,
-        state: Arc<GlobalState>,
+        contexts: Arc<ContextManager>,
+        timeouts: Timeouts,
         queue: Sender<ContextRef>,
     ) -> Result<()> {
         info!("{} listening on {}", self.name, self.bind);
@@ -73,7 +75,7 @@ impl Listener for SocksListener {
             .await
             .with_context(|| "bind")?;
         let this = self.clone();
-        tokio::spawn(this.accept(listener, state, queue));
+        tokio::spawn(this.accept(listener, contexts, timeouts, queue));
         Ok(())
     }
 
@@ -86,7 +88,8 @@ impl SocksListener {
     async fn accept(
         self: Arc<Self>,
         listener: TcpListener,
-        state: Arc<GlobalState>,
+        contexts: Arc<ContextManager>,
+        timeouts: Timeouts,
         queue: Sender<ContextRef>,
     ) {
         loop {
@@ -95,12 +98,13 @@ impl SocksListener {
                     let source = crate::common::try_map_v4_addr(source);
                     let this = self.clone();
                     let queue = queue.clone();
-                    let state = state.clone();
+                    let contexts = contexts.clone();
+                    let timeouts = timeouts.clone();
                     debug!("{}: connected from {:?}", self.name, source);
                     // we spawn a new thread here to avoid handshake to block accept thread
                     tokio::spawn(
                         this.clone()
-                            .handshake(socket, source, state, queue)
+                            .handshake(socket, source, contexts, timeouts, queue)
                             .unwrap_or_else(move |e| {
                                 warn!(
                                     "{}: handshake error: {}: cause: {:?}",
@@ -128,7 +132,8 @@ impl SocksListener {
         self: Arc<Self>,
         socket: TcpStream,
         source: SocketAddr,
-        state: Arc<GlobalState>,
+        contexts: Arc<ContextManager>,
+        timeouts: Timeouts,
         queue: Sender<ContextRef>,
     ) -> Result<()> {
         let local_addr = socket.local_addr().with_context(|| "local_addr")?;
@@ -149,10 +154,7 @@ impl SocksListener {
         } else {
             make_buffered_stream(socket)
         };
-        let ctx = state
-            .contexts
-            .create_context(self.name.to_owned(), source)
-            .await;
+        let ctx = contexts.create_context(self.name.to_owned(), source).await;
 
         let auth_server = PasswordAuth {
             required: self.auth.required,
@@ -221,7 +223,7 @@ impl SocksListener {
                         version: request.version,
                         listen_addr: Some(listen_addr),
                     })
-                    .set_idle_timeout(state.timeouts.udp);
+                    .set_idle_timeout(timeouts.udp);
                 ctx.enqueue(&queue).await?;
             }
             _ => {

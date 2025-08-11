@@ -420,13 +420,10 @@ impl ContextMetrics {
             status: prometheus::register_histogram_vec!(
                 "context_state_time",
                 "Time of context in this state.",
-                &["state","listener","connector"],
+                &["state", "listener", "connector"],
                 vec![
-                    0.001, 0.0025, 0.005, 0.0075,
-                    0.010, 0.025, 0.050, 0.075,
-                    0.100, 0.250, 0.500, 0.750,
-                    1.0,   2.5,   5.0,   7.5,
-                    10.0,  25.0,  50.0,  75.0,
+                    0.001, 0.0025, 0.005, 0.0075, 0.010, 0.025, 0.050, 0.075, 0.100, 0.250, 0.500,
+                    0.750, 1.0, 2.5, 5.0, 7.5, 10.0, 25.0, 50.0, 75.0,
                 ]
             )
             .unwrap(),
@@ -439,9 +436,8 @@ impl ContextMetrics {
                 "context_gc_time",
                 "Context GC time in seconds.",
                 vec![
-                    0.000_001, 0.000_002, 0.000_005, 0.000_007,
-                    0.000_010, 0.000_025, 0.000_050, 0.000_075,
-                    0.000_100, 0.000_250, 0.000_500, 0.001_000
+                    0.000_001, 0.000_002, 0.000_005, 0.000_007, 0.000_010, 0.000_025, 0.000_050,
+                    0.000_075, 0.000_100, 0.000_250, 0.000_500, 0.001_000
                 ]
             )
             .unwrap(),
@@ -458,7 +454,7 @@ fn context_metrics() -> &'static ContextMetrics {
 }
 
 #[derive(Default)]
-pub struct GlobalState {
+pub struct ContextManager {
     pub history_size: usize,
     next_id: AtomicU64,
     pub alive: Mutex<HashMap<u64, ContextWeakRef>>,
@@ -469,7 +465,7 @@ pub struct GlobalState {
     pub default_timeout: u64,
 }
 
-impl GlobalState {
+impl ContextManager {
     pub async fn create_context(
         self: &Arc<Self>,
         listener: String,
@@ -548,7 +544,7 @@ pub struct Context {
     client_frames: Option<FrameIO>,
     server_frames: Option<FrameIO>,
     callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
-    state: Arc<GlobalState>,
+    state: Arc<ContextManager>,
 }
 
 pub type ContextRef = Arc<RwLock<Context>>;
@@ -702,7 +698,8 @@ impl Context {
         #[cfg(feature = "metrics")]
         if let Some(last) = self.props.state.last() {
             let t = last.time.elapsed().unwrap_or_default().as_secs_f64();
-            context_metrics().status
+            context_metrics()
+                .status
                 .with_label_values(&[
                     last.state.as_str(),
                     self.props.listener.as_str(),

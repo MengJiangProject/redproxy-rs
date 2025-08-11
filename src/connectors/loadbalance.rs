@@ -1,12 +1,12 @@
 use std::{
     hash::Hash,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicUsize, Ordering},
     },
 };
 
-use anyhow::{Context, Error, Result, anyhow, ensure};
+use anyhow::{Context, Error, Result, anyhow, ensure, bail};
 use async_trait::async_trait;
 use milu::{
     parser::parse,
@@ -16,10 +16,10 @@ use rand::{rng, seq::IndexedRandom};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use super::{Connector, ConnectorRef};
-use crate::{GlobalState, context::ContextRef, rules::script_ext::create_context};
+use super::{Connector, ConnectorRef, ConnectorRegistry};
+use crate::{context::ContextRef, rules::script_ext::create_context};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadBalanceConnector {
     name: String,
@@ -38,6 +38,9 @@ pub struct LoadBalanceConnector {
 
     #[serde(skip)]
     hash_by: Option<Value>,
+
+    #[serde(skip)]
+    pub registry: OnceLock<ConnectorRegistry>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -59,6 +62,19 @@ impl Default for Algorithm {
     }
 }
 
+impl Default for LoadBalanceConnector {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            connectors: Vec::new(),
+            algorithm: Algorithm::default(),
+            idx: AtomicUsize::new(0),
+            hash_by: None,
+            registry: OnceLock::new(),
+        }
+    }
+}
+
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
     let ret: LoadBalanceConnector =
         serde_yaml_ng::from_value(value.clone()).context("parse config")?;
@@ -72,93 +88,123 @@ impl Connector for LoadBalanceConnector {
     }
 
     async fn init(&mut self) -> Result<()> {
-        if let Algorithm::HashBy(str) = &self.algorithm {
-            let value = parse(str).context("unable to compile hash script")?;
-            let ctx: Arc<ScriptContext> = create_context(Default::default()).into();
-            let rtype = value
-                .real_type_of(ctx)
-                .await
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            ensure!(
-                rtype == Type::String,
-                "hash script type mismatch: required string, got {}\nsnippet: {}",
-                rtype,
-                str
-            );
-            self.hash_by = Some(value);
-        }
+        // Basic initialization without resolver
         Ok(())
     }
 
-    async fn verify(&self, state: Arc<GlobalState>) -> Result<()> {
+    async fn verify(&self) -> Result<()> {
         ensure!(!self.connectors.is_empty(), "connectors must not be empty");
-        for n in &self.connectors {
-            ensure!(
-                state.connector_registry.contains(n),
-                "connector not defined: {}",
-                n
-            );
+        
+        if let Some(registry) = self.registry.get() {
+            for n in &self.connectors {
+                ensure!(registry.contains_key(n), "connector not defined: {}", n);
+                
+                // Disallow LoadBalance connectors as targets to prevent recursion
+                if let Some(target_connector) = registry.get(n) {
+                    if (target_connector.as_ref() as &dyn std::any::Any)
+                        .downcast_ref::<LoadBalanceConnector>()
+                        .is_some()
+                    {
+                        bail!("LoadBalance connector '{}' cannot use another LoadBalance connector '{}' as target", self.name, n);
+                    }
+                }
+            }
         }
         Ok(())
     }
 
-    async fn connect(
-        self: Arc<Self>,
-        state: Arc<GlobalState>,
-        ctx: ContextRef,
-    ) -> Result<(), Error> {
+    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<(), Error> {
+        let registry = self
+            .registry
+            .get()
+            .ok_or_else(|| anyhow!("Connector registry not initialized"))?;
         let conn = match self.algorithm {
-            Algorithm::RoundRobin => self.round_robin(&state)?,
-            Algorithm::Random => self.random(&state)?,
-            Algorithm::HashBy(_) => self.hash_by(&state, &ctx).await?,
+            Algorithm::RoundRobin => self.round_robin(registry)?,
+            Algorithm::Random => self.random(registry)?,
+            Algorithm::HashBy(_) => self.hash_by(registry, &ctx).await?,
         };
         let next = conn.name().to_owned();
         debug!("{}: selected connector: {}", self.name, next);
         ctx.write().await.set_connector(next);
-        conn.connect(state, ctx).await
+        conn.connect(ctx).await
+    }
+}
+
+impl std::fmt::Debug for LoadBalanceConnector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoadBalanceConnector")
+            .field("name", &self.name)
+            .field("connectors", &self.connectors)
+            .field("algorithm", &self.algorithm)
+            .field("idx", &self.idx)
+            .field("hash_by", &self.hash_by.as_ref().map(|_| "Some(Value)"))
+            .field(
+                "registry",
+                &self
+                    .registry
+                    .get()
+                    .map(|_| "ConnectorRegistry")
+                    .unwrap_or("None"),
+            )
+            .finish()
     }
 }
 
 impl LoadBalanceConnector {
-    fn random(self: &Arc<Self>, state: &Arc<GlobalState>) -> Result<Arc<dyn Connector>> {
+    fn random(self: &Arc<Self>, registry: &ConnectorRegistry) -> Result<Arc<dyn Connector>> {
         let next = self
             .connectors
             .choose(&mut rng())
             .ok_or_else(|| anyhow!("No connectors available for random selection"))?;
-        state
-            .connector_registry
+        registry
             .get(next)
-            .ok_or_else(|| anyhow!("Connector '{}' not found in registry", next))
             .cloned()
+            .ok_or_else(|| anyhow!("Connector '{}' not found in registry", next))
     }
 
     fn round_robin(
         self: &Arc<Self>,
-        state: &Arc<GlobalState>,
+        registry: &ConnectorRegistry,
     ) -> Result<Arc<dyn Connector>, Error> {
         if self.connectors.is_empty() {
             return Err(anyhow!("No connectors available for round robin selection"));
         }
         let next = self.idx.fetch_add(1, Ordering::Relaxed);
         let next = &self.connectors[next % self.connectors.len()];
-        state
-            .connector_registry
+        registry
             .get(next)
-            .ok_or_else(|| anyhow!("Connector '{}' not found in registry", next)).cloned()
+            .cloned()
+            .ok_or_else(|| anyhow!("Connector '{}' not found in registry", next))
     }
 
     async fn hash_by(
         self: &Arc<Self>,
-        state: &Arc<GlobalState>,
+        registry: &ConnectorRegistry,
         ctx: &ContextRef,
     ) -> Result<Arc<dyn Connector>, Error> {
-        let ctx = create_context(ctx.read().await.props().clone());
-        let result = self
-            .hash_by
-            .as_ref()
-            .ok_or_else(|| anyhow!("Hash function not initialized"))?
-            .real_value_of(ctx.into())
-            .await?;
+        let script_ctx = create_context(ctx.read().await.props().clone());
+
+        // Handle lazy compilation if hash_by is not set
+        let result = if let Some(ref hash_func) = self.hash_by {
+            hash_func.real_value_of(script_ctx.into()).await?
+        } else if let Algorithm::HashBy(ref script) = self.algorithm {
+            // Compile on-demand
+            let value = parse(script).context("unable to compile hash script")?;
+            let type_ctx: Arc<ScriptContext> = create_context(Default::default()).into();
+            let rtype = value
+                .real_type_of(type_ctx)
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            ensure!(
+                rtype == Type::String,
+                "hash script type mismatch: required string, got {}\nsnippet: {}",
+                rtype,
+                script
+            );
+            value.real_value_of(script_ctx.into()).await?
+        } else {
+            return Err(anyhow!("Hash function not available"));
+        };
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         use std::hash::Hasher;
         result.hash(&mut hasher);
@@ -168,9 +214,9 @@ impl LoadBalanceConnector {
             return Err(anyhow!("No connectors available for hash selection"));
         }
         let next = &self.connectors[hash % self.connectors.len()];
-        state
-            .connector_registry
+        registry
             .get(next)
-            .ok_or_else(|| anyhow!("Connector '{}' not found in registry", next)).cloned()
+            .cloned()
+            .ok_or_else(|| anyhow!("Connector '{}' not found in registry", next))
     }
 }

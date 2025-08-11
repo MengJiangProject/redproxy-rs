@@ -1,7 +1,7 @@
 use anyhow::{Context, Error, Result, anyhow};
 use clap::{builder::PossibleValuesParser, value_parser};
 use config::{IoParams, Timeouts};
-use context::{ContextRef, ContextState, GlobalState as ContextGlobalState};
+use context::{ContextManager, ContextRef, ContextState};
 use rules::Rule;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{RwLockReadGuard, mpsc::channel};
@@ -24,8 +24,11 @@ mod rules;
 mod metrics;
 
 use crate::{
-    connectors::Connector, connectors::ConnectorRegistry, context::ContextRefOps, copy::copy_bidi,
-    listeners::Listener, rules::RulesManager,
+    connectors::{Connector, ConnectorRegistry},
+    context::ContextRefOps,
+    copy::copy_bidi,
+    listeners::Listener,
+    rules::RulesManager,
 };
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -34,8 +37,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct GlobalState {
     rules_manager: RulesManager,
     listeners: HashMap<String, Arc<dyn Listener>>,
-    connector_registry: ConnectorRegistry,
-    contexts: Arc<ContextGlobalState>,
+    connectors: ConnectorRegistry,
+    contexts: Arc<ContextManager>,
     timeouts: Timeouts,
     #[cfg(feature = "metrics")]
     metrics: Option<Arc<MetricsServer>>,
@@ -44,9 +47,7 @@ pub struct GlobalState {
 
 impl GlobalState {
     async fn set_rules(&self, rules: Vec<Arc<Rule>>) -> Result<(), Error> {
-        self.rules_manager
-            .set_rules(rules, self.connector_registry.connectors())
-            .await
+        self.rules_manager.set_rules(rules, &self.connectors).await
     }
     async fn rules(&self) -> RwLockReadGuard<'_, Vec<Arc<Rule>>> {
         self.rules_manager.rules().await
@@ -106,10 +107,9 @@ async fn main() -> Result<()> {
     let cfg = config::Config::load(config).await?;
 
     // Build state safely without Arc::get_mut().unwrap() patterns
-    let mut contexts = Arc::new(ContextGlobalState::default());
+    let mut contexts = Arc::new(ContextManager::default());
     let mut listeners = listeners::from_config(&cfg.listeners)?;
-    let connectors = connectors::from_config(&cfg.connectors)?;
-    let mut connector_registry = ConnectorRegistry::new();
+    let mut connectors = connectors::from_config(&cfg.connectors)?;
 
     // Initialize contexts with timeout and access log
     if let Some(ctx_mut) = Arc::get_mut(&mut contexts) {
@@ -136,8 +136,8 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Initialize connectors and move them to registry
-    for (name, c) in connectors {
+    // Initialize connectors (original approach from git history)
+    for c in connectors.values_mut() {
         if let Some(connector_mut) = Arc::get_mut(&mut c.clone()) {
             connector_mut.init().await.context(format!(
                 "Failed to initialize connector {}",
@@ -148,7 +148,19 @@ async fn main() -> Result<()> {
                 "Cannot get mutable reference to connector during initialization"
             ));
         }
-        connector_registry.insert(name, c);
+    }
+
+    // After initialization, inject registry into LoadBalance connectors using OnceLock
+    for connector in connectors.values() {
+        if let Some(lb_connector) = (connector.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<crate::connectors::loadbalance::LoadBalanceConnector>(
+        ) {
+            // Use OnceLock to inject registry - works through shared reference
+            lb_connector
+                .registry
+                .set(connectors.clone())
+                .map_err(|_| anyhow!("LoadBalance connector registry already initialized"))?;
+        }
     }
 
     // Handle metrics initialization
@@ -167,7 +179,7 @@ async fn main() -> Result<()> {
     let state = Arc::new(GlobalState {
         rules_manager: RulesManager::new(),
         listeners,
-        connector_registry,
+        connectors,
         contexts,
         timeouts: cfg.timeouts,
         #[cfg(feature = "metrics")]
@@ -179,11 +191,11 @@ async fn main() -> Result<()> {
     state.set_rules(rules::from_config(&cfg.rules)?).await?;
 
     for l in state.listeners.values() {
-        l.verify(state.clone()).await?;
+        l.verify().await?;
     }
 
-    for c in state.connector_registry.connectors().values() {
-        c.verify(state.clone()).await?;
+    for c in state.connectors.values() {
+        c.verify().await?;
     }
 
     if config_test {
@@ -193,7 +205,8 @@ async fn main() -> Result<()> {
 
     let (tx, mut rx) = channel(100);
     for l in state.listeners.values().cloned() {
-        l.listen(state.clone(), tx.clone()).await?;
+        l.listen(state.contexts.clone(), state.timeouts.clone(), tx.clone())
+            .await?;
     }
 
     #[cfg(feature = "metrics")]
@@ -241,7 +254,7 @@ async fn process_request(ctx: ContextRef, state: Arc<GlobalState>) {
         .set_state(ContextState::ServerConnecting)
         .set_connector(connector.name().to_owned());
     let props = ctx.read().await.props().clone();
-    if let Err(e) = connector.connect(state.clone(), ctx.clone()).await {
+    if let Err(e) = connector.connect(ctx.clone()).await {
         warn!(
             "failed to connect to upstream: {} cause: {:?} \nctx: {}",
             e,

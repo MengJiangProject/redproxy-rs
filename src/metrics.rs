@@ -154,9 +154,8 @@ impl HttpMetrics {
                 "The HTTP request latencies in seconds.",
                 &["handler"],
                 vec![
-                    0.001, 0.0025, 0.005, 0.0075,
-                    0.010, 0.025, 0.050, 0.075,
-                    0.100, 0.250, 0.500, 0.750,
+                    0.001, 0.0025, 0.005, 0.0075, 0.010, 0.025, 0.050, 0.075, 0.100, 0.250, 0.500,
+                    0.750,
                 ]
             )
             .expect("Failed to register HTTP histogram metric"),
@@ -195,7 +194,7 @@ handler!(get_status(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
         Status {
             version: VERSION.to_string(),
             listeners: state.listeners.keys().cloned().collect(),
-            connectors: state.connector_registry.connectors().keys().cloned().collect(),
+            connectors: state.connectors.keys().cloned().collect(),
         }
     )
 });

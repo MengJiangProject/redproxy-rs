@@ -5,7 +5,10 @@ use async_trait::async_trait;
 use serde_yaml_ng::Value;
 use tokio::sync::mpsc::Sender;
 
-use crate::{GlobalState, context::ContextRef};
+use crate::{
+    config::Timeouts,
+    context::{ContextManager, ContextRef},
+};
 
 mod http;
 mod reverse;
@@ -22,12 +25,13 @@ pub trait Listener: Send + Sync {
     async fn init(&mut self) -> Result<()> {
         Ok(())
     }
-    async fn verify(&self, _state: Arc<GlobalState>) -> Result<()> {
+    async fn verify(&self) -> Result<()> {
         Ok(())
     }
     async fn listen(
         self: Arc<Self>,
-        state: Arc<GlobalState>,
+        contexts: Arc<ContextManager>,
+        timeouts: Timeouts,
         queue: Sender<ContextRef>,
     ) -> Result<()>;
     fn name(&self) -> &str;

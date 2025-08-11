@@ -12,7 +12,6 @@ use tracing::debug;
 
 use super::ConnectorRef;
 use crate::{
-    GlobalState,
     common::{
         h11c::h11c_connect,
         quic::{
@@ -82,7 +81,7 @@ impl super::Connector for QuicConnector {
         Ok(())
     }
 
-    async fn connect(self: Arc<Self>, _state: Arc<GlobalState>, ctx: ContextRef) -> Result<()> {
+    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<()> {
         let (conn, sessions) = self.get_connection().await?;
         let remote = conn.remote_address();
         let local = self

@@ -35,12 +35,13 @@ use tokio::{
 use tracing::{debug, error, info, trace};
 
 use crate::{
-    GlobalState,
     common::{
         frames::{Frame, FrameReader, FrameWriter},
         into_unspecified, set_keepalive, try_map_v4_addr,
         udp::{setup_udp_session, udp_socket},
     },
+    config::Timeouts,
+    context::ContextManager,
     context::{
         Context, ContextCallback, ContextRef, ContextRefOps, Feature, TargetAddress,
         make_buffered_stream,
@@ -106,7 +107,8 @@ impl Listener for TProxyListener {
     }
     async fn listen(
         self: Arc<Self>,
-        state: Arc<GlobalState>,
+        contexts: Arc<ContextManager>,
+        timeouts: Timeouts,
         queue: Sender<ContextRef>,
     ) -> Result<()> {
         info!(
@@ -119,7 +121,7 @@ impl Listener for TProxyListener {
                 tokio::spawn(async move {
                     loop {
                         self.clone()
-                            .tcp_accept(&listener, &state, &queue)
+                            .tcp_accept(&listener, &contexts, &timeouts, &queue)
                             .await
                             .map_err(|e| {
                                 error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
@@ -133,7 +135,7 @@ impl Listener for TProxyListener {
                 tokio::spawn(async move {
                     loop {
                         self.clone()
-                            .udp_accept(&listener, &state, &queue)
+                            .udp_accept(&listener, &contexts, &timeouts, &queue)
                             .await
                             .map_err(|e| {
                                 error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
@@ -155,7 +157,8 @@ impl TProxyListener {
     async fn tcp_accept(
         self: Arc<Self>,
         listener: &TcpListener,
-        state: &Arc<GlobalState>,
+        contexts: &Arc<ContextManager>,
+        timeouts: &Timeouts,
         queue: &Sender<ContextRef>,
     ) -> Result<()> {
         let (socket, source) = listener.accept().await.context("accept")?;
@@ -176,10 +179,7 @@ impl TProxyListener {
         };
 
         trace!("{}: target={}", self.name, target);
-        let ctx = state
-            .contexts
-            .create_context(self.name.to_owned(), source)
-            .await;
+        let ctx = contexts.create_context(self.name.to_owned(), source).await;
         ctx.write()
             .await
             .set_target(target)
@@ -191,7 +191,8 @@ impl TProxyListener {
     async fn udp_accept(
         self: &Arc<Self>,
         listener: &TproxyUdpSocket,
-        state: &Arc<GlobalState>,
+        contexts: &Arc<ContextManager>,
+        timeouts: &Timeouts,
         queue: &Sender<ContextRef>,
     ) -> Result<()> {
         let mut buf = BytesMut::zeroed(65536);
@@ -254,7 +255,7 @@ impl TProxyListener {
             ctx.write()
                 .await
                 .set_callback(TproxyCallback::new(key, inner.clone()))
-                .set_idle_timeout(state.timeouts.udp);
+                .set_idle_timeout(timeouts.udp);
             ctx.enqueue(queue).await?;
         }
 

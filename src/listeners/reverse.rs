@@ -10,10 +10,11 @@ use tokio::sync::mpsc::{Sender, channel};
 use tracing::{debug, error, info};
 
 use super::Listener;
-use crate::GlobalState;
 use crate::common::frames::Frame;
 use crate::common::set_keepalive;
 use crate::common::udp::{self, setup_udp_session, udp_socket};
+use crate::config::Timeouts;
+use crate::context::ContextManager;
 use crate::context::{Context, ContextRef, Feature, TargetAddress, make_buffered_stream};
 use crate::context::{ContextCallback, ContextRefOps};
 
@@ -50,7 +51,8 @@ pub fn from_value(value: &Value) -> Result<Box<dyn Listener>> {
 impl Listener for ReverseProxyListener {
     async fn listen(
         self: Arc<Self>,
-        state: Arc<GlobalState>,
+        contexts: Arc<ContextManager>,
+        timeouts: Timeouts,
         queue: Sender<ContextRef>,
     ) -> Result<()> {
         info!("{} listening on {}", self.name, self.bind);
@@ -61,7 +63,7 @@ impl Listener for ReverseProxyListener {
                     .with_context(|| "bind")?;
                 tokio::spawn(async move {
                     loop {
-                        self.tcp_accept(&listener, &state, &queue)
+                        self.tcp_accept(&listener, &contexts, &timeouts, &queue)
                             .await
                             .unwrap_or_else(|e| {
                                 error!(
@@ -79,7 +81,7 @@ impl Listener for ReverseProxyListener {
                 let listener = Arc::new(socket);
                 tokio::spawn(async move {
                     loop {
-                        self.udp_accept(&listener, &state, &queue)
+                        self.udp_accept(&listener, &contexts, &timeouts, &queue)
                             .await
                             .unwrap_or_else(|e| {
                                 error!(
@@ -105,17 +107,15 @@ impl ReverseProxyListener {
     async fn tcp_accept(
         self: &Arc<Self>,
         listener: &TcpListener,
-        state: &Arc<GlobalState>,
+        contexts: &Arc<ContextManager>,
+        _timeouts: &Timeouts,
         queue: &Sender<ContextRef>,
     ) -> Result<()> {
         let (socket, source) = listener.accept().await.with_context(|| "accept")?;
         let source = crate::common::try_map_v4_addr(source);
         set_keepalive(&socket)?;
         debug!("{}: connected from {:?}", self.name, source);
-        let ctx = state
-            .contexts
-            .create_context(self.name.to_owned(), source)
-            .await;
+        let ctx = contexts.create_context(self.name.to_owned(), source).await;
         ctx.write()
             .await
             .set_target(self.target.clone())
@@ -127,7 +127,8 @@ impl ReverseProxyListener {
     async fn udp_accept(
         self: &Arc<Self>,
         listener: &Arc<UdpSocket>,
-        state: &Arc<GlobalState>,
+        contexts: &Arc<ContextManager>,
+        timeouts: &Timeouts,
         queue: &Sender<ContextRef>,
     ) -> Result<()> {
         let mut buf = Frame::new();
@@ -143,15 +144,12 @@ impl ReverseProxyListener {
             let io = setup_udp_session(self.target.clone(), self.bind, source, rx, false)
                 .with_context(|| "setup session")?;
             self.sessions.insert(source, tx).await;
-            let ctx = state
-                .contexts
-                .create_context(self.name.to_owned(), source)
-                .await;
+            let ctx = contexts.create_context(self.name.to_owned(), source).await;
             ctx.write()
                 .await
                 .set_target(self.target.clone())
                 .set_feature(Feature::UdpForward)
-                .set_idle_timeout(state.timeouts.udp)
+                .set_idle_timeout(timeouts.udp)
                 .set_callback(ReverseCallback::new(source, self.sessions.clone()))
                 .set_client_frames(io);
             ctx.enqueue(queue).await?;

@@ -8,7 +8,6 @@ use tokio::net::TcpStream;
 use tracing::{error, trace};
 
 use crate::{
-    GlobalState,
     common::{h11c::h11c_connect, set_keepalive, tls::TlsClientConfig},
     context::{ContextRef, Feature, make_buffered_stream},
 };
@@ -46,7 +45,7 @@ impl super::Connector for HttpConnector {
         &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
     }
 
-    async fn connect(self: Arc<Self>, _state: Arc<GlobalState>, ctx: ContextRef) -> Result<()> {
+    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<()> {
         let tls_insecure = self.tls.as_ref().map(|x| x.insecure).unwrap_or(false);
         let tls_connector = self
             .tls
