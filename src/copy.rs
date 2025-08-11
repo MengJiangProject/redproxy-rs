@@ -308,7 +308,9 @@ pub async fn copy_bidi(ctx: ContextRef, params: &IoParams) -> Result<()> {
         sdst,
         client_stat.clone(),
         #[cfg(feature = "metrics")]
-        io_metrics().client_bytes.with_label_values(&[client_label.as_str()]),
+        io_metrics()
+            .client_bytes
+            .with_label_values(&[client_label.as_str()]),
     );
     let copy_s2c = copy_half(
         params,
@@ -316,7 +318,9 @@ pub async fn copy_bidi(ctx: ContextRef, params: &IoParams) -> Result<()> {
         cdst,
         server_stat.clone(),
         #[cfg(feature = "metrics")]
-        io_metrics().server_bytes.with_label_values(&[server_label.as_str()]),
+        io_metrics()
+            .server_bytes
+            .with_label_values(&[server_label.as_str()]),
     );
     let interval = tokio::time::interval(Duration::from_secs(1));
     tokio::pin!(copy_c2s);

@@ -43,7 +43,10 @@ impl Value {
         match self {
             Self::Array(a) => Ok(a),
             Self::Tuple(a) => Ok(a),
-            _ => bail!("as_vec: type mismatch, expected Array or Tuple, got {}", self.type_of_simple()),
+            _ => bail!(
+                "as_vec: type mismatch, expected Array or Tuple, got {}",
+                self.type_of_simple()
+            ),
         }
     }
     #[allow(dead_code)]
@@ -51,7 +54,10 @@ impl Value {
         // Made pub
         match self {
             Self::Integer(a) => Ok(*a),
-            _ => bail!("as_i64: type mismatch, expected Integer, got {}", self.type_of_simple()),
+            _ => bail!(
+                "as_i64: type mismatch, expected Integer, got {}",
+                self.type_of_simple()
+            ),
         }
     }
     pub fn unresovled_ids<'s: 'o, 'o>(&'s self, ids: &mut HashSet<&'o Value>) {
