@@ -100,7 +100,8 @@ where
     S: AsyncRead,
     D: AsyncWrite,
 {
-    let mut sbuf = BytesMut::zeroed(params.buffer_size);
+    let mut sbuf = BytesMut::with_capacity(params.buffer_size);
+    sbuf.resize(params.buffer_size, 0);
     let have_stream = src.stream.is_some() && dst.stream.is_some();
     let have_frames = src.frames.is_some() && dst.frames.is_some();
     let have_rawfd = src.rawfd.is_some() && dst.rawfd.is_some();
