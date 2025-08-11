@@ -10,19 +10,40 @@ use std::{io::Result as IoResult, sync::Arc, time::Duration};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 
 #[cfg(feature = "metrics")]
-lazy_static::lazy_static! {
-    static ref IO_BYTES_CLIENT: prometheus::IntCounterVec = prometheus::register_int_counter_vec!(
-        "io_client_bytes",
-        "Number of bytes sent from client to server.",
-        &["listener"]
-    )
-    .expect("Failed to register IO client bytes counter metric");
-    static ref IO_BYTES_SERVER: prometheus::IntCounterVec = prometheus::register_int_counter_vec!(
-        "io_server_bytes",
-        "Number of bytes sent from server to client.",
-        &["connector"]
-    )
-    .expect("Failed to register IO server bytes counter metric");
+use std::sync::OnceLock;
+
+#[cfg(feature = "metrics")]
+struct IoMetrics {
+    client_bytes: prometheus::IntCounterVec,
+    server_bytes: prometheus::IntCounterVec,
+}
+
+#[cfg(feature = "metrics")]
+impl IoMetrics {
+    fn new() -> Self {
+        Self {
+            client_bytes: prometheus::register_int_counter_vec!(
+                "io_client_bytes",
+                "Number of bytes sent from client to server.",
+                &["listener"]
+            )
+            .expect("Failed to register IO client bytes counter metric"),
+            server_bytes: prometheus::register_int_counter_vec!(
+                "io_server_bytes",
+                "Number of bytes sent from server to client.",
+                &["connector"]
+            )
+            .expect("Failed to register IO server bytes counter metric"),
+        }
+    }
+}
+
+#[cfg(feature = "metrics")]
+static IO_METRICS: OnceLock<IoMetrics> = OnceLock::new();
+
+#[cfg(feature = "metrics")]
+fn io_metrics() -> &'static IoMetrics {
+    IO_METRICS.get_or_init(IoMetrics::new)
 }
 
 #[cfg(target_os = "linux")]
@@ -287,7 +308,7 @@ pub async fn copy_bidi(ctx: ContextRef, params: &IoParams) -> Result<()> {
         sdst,
         client_stat.clone(),
         #[cfg(feature = "metrics")]
-        IO_BYTES_CLIENT.with_label_values(&[client_label.as_str()]),
+        io_metrics().client_bytes.with_label_values(&[client_label.as_str()]),
     );
     let copy_s2c = copy_half(
         params,
@@ -295,7 +316,7 @@ pub async fn copy_bidi(ctx: ContextRef, params: &IoParams) -> Result<()> {
         cdst,
         server_stat.clone(),
         #[cfg(feature = "metrics")]
-        IO_BYTES_SERVER.with_label_values(&[server_label.as_str()]),
+        io_metrics().server_bytes.with_label_values(&[server_label.as_str()]),
     );
     let interval = tokio::time::interval(Duration::from_secs(1));
     tokio::pin!(copy_c2s);

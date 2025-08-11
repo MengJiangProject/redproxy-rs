@@ -1728,7 +1728,6 @@ dependencies = [
  "futures",
  "futures-util",
  "hickory-resolver",
- "lazy_static",
  "libc",
  "lru",
  "milu",

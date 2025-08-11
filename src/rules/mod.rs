@@ -52,28 +52,50 @@ pub struct RuleStatistics {
 }
 
 #[cfg(feature = "metrics")]
-lazy_static::lazy_static! {
-    static ref RULES_EXECUTE_COUNT: prometheus::IntCounter = prometheus::register_int_counter!(
-        "rules_exec_count",
-        "Number of all rules executions."
-    )
-    .unwrap();
-    static ref RULES_HIT_COUNT: prometheus::IntCounter = prometheus::register_int_counter!(
-        "rules_hit_count",
-        "Number of rules executions hits."
-    )
-    .unwrap();
-    static ref RULES_EXECUTE_TIME: prometheus::Histogram = prometheus::register_histogram!(
-        "rules_exec_time",
-        "Rules execution time in seconds.",
-        vec![
-            0.000_100, 0.000_250, 0.000_500, 0.000_750,
-            0.001_000, 0.002_500, 0.005_000, 0.007_500,
-            0.010_000, 0.025_000, 0.050_000, 0.075_000,
-            0.100_000, 0.250_000, 0.500_000, 0.750_000,
-        ]
-    )
-    .unwrap();
+use std::sync::OnceLock;
+
+#[cfg(feature = "metrics")]
+struct RulesMetrics {
+    execute_count: prometheus::IntCounter,
+    hit_count: prometheus::IntCounter,
+    execute_time: prometheus::Histogram,
+}
+
+#[cfg(feature = "metrics")]
+impl RulesMetrics {
+    fn new() -> Self {
+        Self {
+            execute_count: prometheus::register_int_counter!(
+                "rules_exec_count",
+                "Number of all rules executions."
+            )
+            .unwrap(),
+            hit_count: prometheus::register_int_counter!(
+                "rules_hit_count",
+                "Number of rules executions hits."
+            )
+            .unwrap(),
+            execute_time: prometheus::register_histogram!(
+                "rules_exec_time",
+                "Rules execution time in seconds.",
+                vec![
+                    0.000_100, 0.000_250, 0.000_500, 0.000_750,
+                    0.001_000, 0.002_500, 0.005_000, 0.007_500,
+                    0.010_000, 0.025_000, 0.050_000, 0.075_000,
+                    0.100_000, 0.250_000, 0.500_000, 0.750_000,
+                ]
+            )
+            .unwrap(),
+        }
+    }
+}
+
+#[cfg(feature = "metrics")]
+static RULES_METRICS: OnceLock<RulesMetrics> = OnceLock::new();
+
+#[cfg(feature = "metrics")]
+fn rules_metrics() -> &'static RulesMetrics {
+    RULES_METRICS.get_or_init(RulesMetrics::new)
 }
 
 impl Rule {
@@ -95,8 +117,8 @@ impl Rule {
         self.stats.exec.fetch_add(1, Ordering::Relaxed);
         #[cfg(feature = "metrics")]
         let timer = {
-            RULES_EXECUTE_COUNT.inc();
-            RULES_EXECUTE_TIME.start_timer()
+            rules_metrics().execute_count.inc();
+            rules_metrics().execute_time.start_timer()
         };
         let t = Instant::now();
         let ret = if self.filter.is_none() {
@@ -116,7 +138,7 @@ impl Rule {
         self.stats.time.fetch_add(t, Ordering::Relaxed);
         if ret {
             #[cfg(feature = "metrics")]
-            RULES_EXECUTE_COUNT.inc();
+            rules_metrics().hit_count.inc();
             self.stats.hits.fetch_add(1, Ordering::Relaxed);
         }
         trace!("evaluation finished in {} ns", t);

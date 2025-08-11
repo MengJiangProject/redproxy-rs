@@ -133,31 +133,48 @@ fn ui_service(ui: Option<&str>) -> Result<Router> {
     }
 }
 
-lazy_static::lazy_static! {
-    static ref HTTP_COUNTER: IntCounterVec = register_int_counter_vec!(
-        "http_requests_total",
-        "Number of HTTP requests made.",
-        &["handler"]
-    )
-    .expect("Failed to register HTTP counter metric");
-    static ref HTTP_REQ_HISTOGRAM: HistogramVec = register_histogram_vec!(
-        "http_request_duration_seconds",
-        "The HTTP request latencies in seconds.",
-        &["handler"],
-        vec![
-            0.001, 0.0025, 0.005, 0.0075,
-            0.010, 0.025, 0.050, 0.075,
-            0.100, 0.250, 0.500, 0.750,
-        ]
-    )
-    .expect("Failed to register HTTP histogram metric");
+use std::sync::OnceLock;
+
+struct HttpMetrics {
+    counter: IntCounterVec,
+    histogram: HistogramVec,
+}
+
+impl HttpMetrics {
+    fn new() -> Self {
+        Self {
+            counter: register_int_counter_vec!(
+                "http_requests_total",
+                "Number of HTTP requests made.",
+                &["handler"]
+            )
+            .expect("Failed to register HTTP counter metric"),
+            histogram: register_histogram_vec!(
+                "http_request_duration_seconds",
+                "The HTTP request latencies in seconds.",
+                &["handler"],
+                vec![
+                    0.001, 0.0025, 0.005, 0.0075,
+                    0.010, 0.025, 0.050, 0.075,
+                    0.100, 0.250, 0.500, 0.750,
+                ]
+            )
+            .expect("Failed to register HTTP histogram metric"),
+        }
+    }
+}
+
+static HTTP_METRICS: OnceLock<HttpMetrics> = OnceLock::new();
+
+fn http_metrics() -> &'static HttpMetrics {
+    HTTP_METRICS.get_or_init(HttpMetrics::new)
 }
 
 macro_rules! handler {
     ( $name:ident ( $($aname:ident : $atype:ty),* ) -> $rtype:ty $body:block ) => {
         async fn $name ($($aname : $atype),*) -> $rtype {
-            HTTP_COUNTER.with_label_values(&[stringify!($name)]).inc();
-            let timer = HTTP_REQ_HISTOGRAM
+            http_metrics().counter.with_label_values(&[stringify!($name)]).inc();
+            let timer = http_metrics().histogram
                 .with_label_values(&[stringify!($name)])
                 .start_timer();
             let ret = { $body };

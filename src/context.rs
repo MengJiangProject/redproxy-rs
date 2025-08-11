@@ -404,35 +404,57 @@ impl ContextStatistics {
 }
 
 #[cfg(feature = "metrics")]
-lazy_static::lazy_static! {
-    static ref CONTEXT_STATUS: prometheus::HistogramVec = prometheus::register_histogram_vec!(
-        "context_state_time",
-        "Time of context in this state.",
-        &["state","listener","connector"],
-        vec![
-            0.001, 0.0025, 0.005, 0.0075,
-            0.010, 0.025, 0.050, 0.075,
-            0.100, 0.250, 0.500, 0.750,
-            1.0,   2.5,   5.0,   7.5,
-            10.0,  25.0,  50.0,  75.0,
-        ]
-    )
-    .unwrap();
-    static ref CONTEXT_GC_COUNT: prometheus::IntCounter = prometheus::register_int_counter!(
-        "context_gc_count",
-        "Number of garbbage collected contexts."
-    )
-    .unwrap();
-    static ref CONTEXT_GC_TIME: prometheus::Histogram = prometheus::register_histogram!(
-        "context_gc_time",
-        "Context GC time in seconds.",
-        vec![
-            0.000_001, 0.000_002, 0.000_005, 0.000_007,
-            0.000_010, 0.000_025, 0.000_050, 0.000_075,
-            0.000_100, 0.000_250, 0.000_500, 0.001_000
-        ]
-    )
-    .unwrap();
+use std::sync::OnceLock;
+
+#[cfg(feature = "metrics")]
+struct ContextMetrics {
+    status: prometheus::HistogramVec,
+    gc_count: prometheus::IntCounter,
+    gc_time: prometheus::Histogram,
+}
+
+#[cfg(feature = "metrics")]
+impl ContextMetrics {
+    fn new() -> Self {
+        Self {
+            status: prometheus::register_histogram_vec!(
+                "context_state_time",
+                "Time of context in this state.",
+                &["state","listener","connector"],
+                vec![
+                    0.001, 0.0025, 0.005, 0.0075,
+                    0.010, 0.025, 0.050, 0.075,
+                    0.100, 0.250, 0.500, 0.750,
+                    1.0,   2.5,   5.0,   7.5,
+                    10.0,  25.0,  50.0,  75.0,
+                ]
+            )
+            .unwrap(),
+            gc_count: prometheus::register_int_counter!(
+                "context_gc_count",
+                "Number of garbbage collected contexts."
+            )
+            .unwrap(),
+            gc_time: prometheus::register_histogram!(
+                "context_gc_time",
+                "Context GC time in seconds.",
+                vec![
+                    0.000_001, 0.000_002, 0.000_005, 0.000_007,
+                    0.000_010, 0.000_025, 0.000_050, 0.000_075,
+                    0.000_100, 0.000_250, 0.000_500, 0.001_000
+                ]
+            )
+            .unwrap(),
+        }
+    }
+}
+
+#[cfg(feature = "metrics")]
+static CONTEXT_METRICS: OnceLock<ContextMetrics> = OnceLock::new();
+
+#[cfg(feature = "metrics")]
+fn context_metrics() -> &'static ContextMetrics {
+    CONTEXT_METRICS.get_or_init(ContextMetrics::new)
 }
 
 #[derive(Default)]
@@ -490,8 +512,8 @@ impl GlobalState {
                     trace!("context gc: {}", list.len());
                     #[cfg(feature = "metrics")]
                     let timer = {
-                        CONTEXT_GC_COUNT.inc_by(list.len() as u64);
-                        CONTEXT_GC_TIME.start_timer()
+                        context_metrics().gc_count.inc_by(list.len() as u64);
+                        context_metrics().gc_time.start_timer()
                     };
                     if let Some(log) = &self.access_log {
                         for props in list.iter().cloned() {
@@ -680,7 +702,7 @@ impl Context {
         #[cfg(feature = "metrics")]
         if let Some(last) = self.props.state.last() {
             let t = last.time.elapsed().unwrap_or_default().as_secs_f64();
-            CONTEXT_STATUS
+            context_metrics().status
                 .with_label_values(&[
                     last.state.as_str(),
                     self.props.listener.as_str(),

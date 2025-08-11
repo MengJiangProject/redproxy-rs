@@ -30,8 +30,37 @@
 
 **Risk Level:** RESOLVED - Performance optimization completed without architectural changes
 
+### 3. **Modern Rust Patterns Upgrade** ✅ COMPLETED
+- ✅ **Replace lazy_static with std::sync::OnceLock** - Eliminated external dependency in favor of standard library
+- ✅ **Structured metrics initialization** - Grouped related metrics into cohesive structs (IoMetrics, ContextMetrics, etc.)
+- ✅ **Cleaner static initialization** - Using modern `OnceLock::get_or_init()` pattern instead of macro magic
+
+**Performance Impact:**
+- **Dependency reduction**: Removed `lazy_static` external crate dependency
+- **Modern patterns**: Uses Rust 1.70+ standard library features  
+- **Better organization**: Metrics grouped into logical structs instead of individual statics
+- **Cleaner code**: Less macro magic, more explicit initialization
+
+**Risk Level:** RESOLVED - Modern Rust patterns adopted, dependency eliminated
+
 **Examples:**
 ```rust
+// BEFORE (copy.rs:13) - lazy_static macro
+lazy_static::lazy_static! {
+    static ref IO_BYTES_CLIENT: prometheus::IntCounterVec = prometheus::register_int_counter_vec!(...);
+}
+
+// AFTER (copy.rs:16-46) - Modern OnceLock with structured metrics
+struct IoMetrics {
+    client_bytes: prometheus::IntCounterVec,
+    server_bytes: prometheus::IntCounterVec,
+}
+static IO_METRICS: OnceLock<IoMetrics> = OnceLock::new();
+fn io_metrics() -> &'static IoMetrics { IO_METRICS.get_or_init(IoMetrics::new) }
+```
+
+```rust
+// Buffer allocation improvement
 // BEFORE (copy.rs:103) - Wasteful buffer zeroing
 let mut sbuf = BytesMut::zeroed(params.buffer_size);
 
@@ -178,8 +207,8 @@ milu/src/script/tests.rs
 
 1. **Simplify Milu macro system** - consider procedural macros or code generation
 2. ✅ **Implement zero-copy buffer handling** where possible - COMPLETED
-3. **Add compile-time configuration validation**
-4. **Replace `lazy_static` with `std::sync::OnceLock`** (modern Rust pattern)
+3. ✅ **Add compile-time configuration validation** - NOT APPLICABLE (dynamic plugin architecture uses serde for proper runtime validation)
+4. ✅ **Replace `lazy_static` with `std::sync::OnceLock`** (modern Rust pattern) - COMPLETED
 5. **Add property-based tests** for complex parsing logic
 
 **Expected Impact:** Easier maintenance, better performance, modern Rust patterns
