@@ -11,9 +11,6 @@ pub mod socks;
 pub mod tls;
 pub mod udp;
 
-// Re-export socket operations for backward compatibility
-pub use socket_ops::set_keepalive;
-
 #[cfg(feature = "quic")]
 pub mod quic;
 
@@ -35,7 +32,6 @@ pub fn try_map_v4_addr(addr: SocketAddr) -> SocketAddr {
         addr
     }
 }
-
 
 pub fn into_unspecified(source: SocketAddr) -> SocketAddr {
     if source.is_ipv4() {

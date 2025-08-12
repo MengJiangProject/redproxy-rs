@@ -1,14 +1,17 @@
-use std::{convert::TryFrom, sync::Arc};
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use rustls::pki_types::ServerName;
 use serde::{Deserialize, Serialize};
-use tokio::net::TcpStream;
 use tracing::{error, trace};
 
 use crate::{
-    common::{h11c::h11c_connect, set_keepalive, tls::TlsClientConfig},
+    common::{
+        h11c::h11c_connect,
+        socket_ops::{RealSocketOps, SocketOps},
+        tls::TlsClientConfig,
+    },
     context::{ContextRef, Feature, make_buffered_stream},
 };
 
@@ -16,20 +19,64 @@ use super::ConnectorRef;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct HttpConnector {
+pub struct HttpConnectorConfig {
     name: String,
     server: String,
     port: u16,
     tls: Option<TlsClientConfig>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct HttpConnector<S = RealSocketOps>
+where
+    S: SocketOps,
+{
+    #[serde(flatten)]
+    config: HttpConnectorConfig,
+    #[serde(skip)]
+    socket_ops: Arc<S>,
+}
+
+impl<S: SocketOps> Deref for HttpConnector<S> {
+    type Target = HttpConnectorConfig;
+    fn deref(&self) -> &Self::Target {
+        &self.config
+    }
+}
+
+impl<S: SocketOps> DerefMut for HttpConnector<S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.config
+    }
+}
+
+// Production constructor (zero-cost)
+impl HttpConnector<RealSocketOps> {
+    pub fn new(config: HttpConnectorConfig) -> Self {
+        Self {
+            config,
+            socket_ops: Arc::new(RealSocketOps),
+        }
+    }
+}
+
+// Generic constructor for testing
+#[cfg(test)]
+impl<S: SocketOps> HttpConnector<S> {
+    pub fn with_socket_ops(config: HttpConnectorConfig, socket_ops: Arc<S>) -> Self {
+        Self { config, socket_ops }
+    }
+}
+
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
-    let ret: HttpConnector = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+    let config: HttpConnectorConfig =
+        serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+    let ret = HttpConnector::new(config);
     Ok(Box::new(ret))
 }
 
 #[async_trait]
-impl super::Connector for HttpConnector {
+impl<S: SocketOps + Send + Sync + 'static> super::Connector for HttpConnector<S> {
     fn name(&self) -> &str {
         self.name.as_str()
     }
@@ -46,44 +93,35 @@ impl super::Connector for HttpConnector {
     }
 
     async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<()> {
-        let tls_insecure = self.tls.as_ref().map(|x| x.insecure).unwrap_or(false);
-        let tls_connector = self
-            .tls
-            .as_ref()
-            .map(|options| options.connector())
-            .transpose()
-            .context("TLS connector initialization failed")?;
         trace!(
             "{} connecting to server {}:{}",
             self.name, self.server, self.port
         );
-        let server = TcpStream::connect((self.server.as_str(), self.port))
-            .await
-            .with_context(|| format!("failed to connect to upstream server: {}", self.server))?;
-        let local = server.local_addr().context("local_addr")?;
-        let remote = server.peer_addr().context("peer_addr")?;
-        set_keepalive(&server)?;
 
-        let server = if let Some(connector) = tls_connector {
-            let server_name = self.server.clone();
-            let domain = ServerName::try_from(server_name)
-                .or_else(|e| {
-                    if tls_insecure {
-                        ServerName::try_from("example.com")
-                    } else {
-                        Err(e)
-                    }
-                })
-                .map_err(|_e| anyhow::anyhow!("invalid upstream address: {}", self.server))?;
-            make_buffered_stream(
-                connector
-                    .connect(domain, server)
-                    .await
-                    .context("tls connector error")?,
-            )
-        } else {
-            make_buffered_stream(server)
-        };
+        let addrs = self.socket_ops.resolve(&self.server).await?;
+        let server_addr = addrs
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("no address found for {}", self.server))?;
+        let server_addr = std::net::SocketAddr::new(*server_addr, self.port);
+
+        let (mut server_stream, local, remote) = self
+            .socket_ops
+            .tcp_connect(server_addr, None)
+            .await
+            .context("TCP connection failed")?;
+
+        if let Some(tls_config) = &self.tls {
+            server_stream = self
+                .socket_ops
+                .tls_handshake_client(server_stream, &self.server, tls_config)
+                .await
+                .context("TLS handshake failed")?;
+        }
+
+        self.socket_ops
+            .set_keepalive(server_stream.as_ref(), true)
+            .await?;
+        let server = make_buffered_stream(server_stream);
 
         h11c_connect(server, ctx, local, remote, "inline", |_| async {
             // This should never be called when channel="inline"
@@ -95,5 +133,146 @@ impl super::Connector for HttpConnector {
         })
         .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        common::socket_ops::{
+            SocketOps,
+            test_utils::{MockSocketOps, StreamScript},
+        },
+        connectors::Connector,
+        context::{ContextManager, Feature, TargetAddress},
+    };
+    use std::net::SocketAddr;
+    use tokio_test::io::Mock;
+
+    // HTTP CONNECT protocol stream builder for HttpConnector tests
+    fn http_connect_stream(target_host: &str, target_port: u16) -> Mock {
+        StreamScript::new()
+            .write(
+                format!(
+                    "CONNECT {}:{} HTTP/1.1\r\nHost: {}:{}\r\n\r\n",
+                    target_host, target_port, target_host, target_port
+                )
+                .as_bytes(),
+            )
+            .read(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            .build()
+    }
+
+    fn create_test_connector<S: SocketOps>(
+        server: String,
+        port: u16,
+        tls: Option<TlsClientConfig>,
+        socket_ops: Arc<S>,
+    ) -> HttpConnector<S> {
+        HttpConnector::with_socket_ops(
+            HttpConnectorConfig {
+                name: "test_http".to_string(),
+                server,
+                port,
+                tls,
+            },
+            socket_ops,
+        )
+    }
+
+    async fn create_test_context(target: TargetAddress, feature: Feature) -> ContextRef {
+        let manager = Arc::new(ContextManager::default());
+        let source = "127.0.0.1:1234".parse::<SocketAddr>().unwrap();
+        let ctx = manager.create_context("test".to_string(), source).await;
+
+        ctx.write().await.set_target(target).set_feature(feature);
+        ctx
+    }
+
+    #[tokio::test]
+    async fn test_http_connector_basic_interface() {
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            http_connect_stream("httpbin.org", 80)
+        }));
+        let connector = create_test_connector("192.0.2.12".to_string(), 8080, None, mock_ops);
+
+        // Test basic interface
+        assert_eq!(connector.name(), "test_http");
+        assert_eq!(
+            connector.features(),
+            &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
+        );
+
+        // Test init
+        let mut connector_copy = connector.clone();
+        let result = connector_copy.init().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_http_connector_connection_success() {
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            http_connect_stream("httpbin.org", 80)
+        }));
+        let connector = Arc::new(create_test_connector(
+            "192.0.2.10".to_string(), // Use IP address instead of domain
+            8080,
+            None,
+            mock_ops,
+        ));
+
+        let target = TargetAddress::DomainPort("httpbin.org".to_string(), 80);
+        let ctx = create_test_context(target, Feature::TcpForward).await;
+
+        // This should succeed with mock socket ops
+        let result = connector.connect(ctx.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify context was updated correctly with mock addresses
+        let context_read = ctx.read().await;
+        assert_eq!(context_read.local_addr().to_string(), "127.0.0.1:12345");
+        assert_eq!(context_read.server_addr().to_string(), "192.0.2.1:80");
+    }
+
+    #[tokio::test]
+    async fn test_http_connector_connection_failure() {
+        let mock_ops = Arc::new(
+            MockSocketOps::new_with_builder(|| http_connect_stream("example.com", 80))
+                .with_tcp_error("Connection refused".to_string()),
+        );
+        let connector = Arc::new(create_test_connector(
+            "192.0.2.11".to_string(), // Use IP address instead of domain
+            8080,
+            None,
+            mock_ops,
+        ));
+
+        let target = TargetAddress::DomainPort("example.com".to_string(), 80);
+        let ctx = create_test_context(target, Feature::TcpForward).await;
+
+        // This should fail with mock error
+        let result = connector.connect(ctx).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("TCP connection failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_http_connector_features() {
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            http_connect_stream("httpbin.org", 80)
+        }));
+        let connector = create_test_connector("192.0.2.13".to_string(), 8080, None, mock_ops);
+
+        // Test supported features
+        let features = connector.features();
+        assert!(features.contains(&Feature::TcpForward));
+        assert!(features.contains(&Feature::UdpForward));
+        assert!(features.contains(&Feature::UdpBind));
     }
 }

@@ -6,16 +6,14 @@ use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,
 };
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::mpsc::Sender,
-};
+use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, info, warn};
 
 use crate::{
     common::{
         auth::AuthData,
-        into_unspecified, set_keepalive,
+        into_unspecified,
+        socket_ops::{AppTcpListener, RealSocketOps, SocketOps, Stream},
         socks::{
             PasswordAuth, SOCKS_CMD_BIND, SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE,
             SOCKS_REPLY_GENERAL_FAILURE, SOCKS_REPLY_OK, SocksRequest, SocksResponse,
@@ -24,14 +22,17 @@ use crate::{
         tls::TlsServerConfig,
     },
     config::Timeouts,
-    context::ContextManager,
-    context::{Context, ContextCallback, ContextRef, ContextRefOps, Feature, make_buffered_stream},
+    context::{
+        Context, ContextCallback, ContextManager, ContextRef, ContextRefOps, Feature,
+        make_buffered_stream,
+    },
     listeners::Listener,
 };
+use std::ops::{Deref, DerefMut};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct SocksListener {
+pub struct SocksListenerConfig {
     name: String,
     bind: SocketAddr,
     tls: Option<TlsServerConfig>,
@@ -45,18 +46,49 @@ pub struct SocksListener {
     override_udp_address: Option<IpAddr>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SocksListener<S = RealSocketOps>
+where
+    S: SocketOps,
+{
+    #[serde(flatten)]
+    config: SocksListenerConfig,
+    #[serde(skip)]
+    socket_ops: Arc<S>,
+}
+
+impl<S: SocketOps> Deref for SocksListener<S> {
+    type Target = SocksListenerConfig;
+    fn deref(&self) -> &Self::Target {
+        &self.config
+    }
+}
+
+impl<S: SocketOps> DerefMut for SocksListener<S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.config
+    }
+}
+
+impl<S: SocketOps> SocksListener<S> {
+    pub fn new(config: SocksListenerConfig, socket_ops: Arc<S>) -> Self {
+        Self { config, socket_ops }
+    }
+}
+
 fn default_allow_udp() -> bool {
     true
 }
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>> {
-    let ret: SocksListener =
+    let config: SocksListenerConfig =
         serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
+    let ret = SocksListener::new(config, Arc::new(RealSocketOps));
     Ok(Box::new(ret))
 }
 
 #[async_trait]
-impl Listener for SocksListener {
+impl<S: SocketOps + Send + Sync + 'static> Listener for SocksListener<S> {
     async fn init(&mut self) -> Result<()> {
         if let Some(Err(e)) = self.tls.as_mut().map(TlsServerConfig::init) {
             return Err(e);
@@ -71,9 +103,7 @@ impl Listener for SocksListener {
         queue: Sender<ContextRef>,
     ) -> Result<()> {
         info!("{} listening on {}", self.name, self.bind);
-        let listener = TcpListener::bind(&self.bind)
-            .await
-            .with_context(|| "bind")?;
+        let listener = self.socket_ops.tcp_listen(self.bind).await?;
         let this = self.clone();
         tokio::spawn(this.accept(listener, contexts, timeouts, queue));
         Ok(())
@@ -84,10 +114,10 @@ impl Listener for SocksListener {
     }
 }
 
-impl SocksListener {
+impl<S: SocketOps + Send + Sync + 'static> SocksListener<S> {
     async fn accept(
         self: Arc<Self>,
-        listener: TcpListener,
+        listener: Box<dyn AppTcpListener>,
         contexts: Arc<ContextManager>,
         timeouts: Timeouts,
         queue: Sender<ContextRef>,
@@ -130,30 +160,35 @@ impl SocksListener {
 
     async fn handshake(
         self: Arc<Self>,
-        socket: TcpStream,
+        socket: Box<dyn Stream>,
         source: SocketAddr,
         contexts: Arc<ContextManager>,
         timeouts: Timeouts,
         queue: Sender<ContextRef>,
     ) -> Result<()> {
-        let local_addr = socket.local_addr().with_context(|| "local_addr")?;
-        set_keepalive(&socket)?;
-        let tls_acceptor = self
-            .tls
-            .as_ref()
-            .map(|options| options.acceptor())
-            .transpose()
-            .with_context(|| "TLS acceptor initialization failed")?;
-        let mut socket = if let Some(acceptor) = tls_acceptor {
-            make_buffered_stream(
-                acceptor
-                    .accept(socket)
-                    .await
-                    .with_context(|| "tls accept error")?,
-            )
+        let local_addr =
+            if let Some(tcp_stream) = socket.as_any().downcast_ref::<tokio::net::TcpStream>() {
+                tcp_stream.local_addr().with_context(|| "local_addr")?
+            } else {
+                // For mock streams, we don't have a local address.
+                "0.0.0.0:0".parse().unwrap()
+            };
+
+        self.socket_ops
+            .set_keepalive(socket.as_ref(), true)
+            .await
+            .unwrap_or_else(|e| warn!("set_keepalive failed: {}", e));
+
+        let mut socket = if let Some(tls_config) = &self.tls {
+            let stream = self
+                .socket_ops
+                .tls_handshake_server(socket, tls_config)
+                .await?;
+            make_buffered_stream(stream)
         } else {
             make_buffered_stream(socket)
         };
+
         let ctx = contexts.create_context(self.name.to_owned(), source).await;
 
         let auth_server = PasswordAuth {

@@ -5,6 +5,7 @@ use quinn::{Connection, Endpoint};
 use serde::{Deserialize, Serialize};
 use std::{
     net::{SocketAddr, ToSocketAddrs},
+    ops::{Deref, DerefMut},
     sync::Arc,
 };
 use tokio::sync::Mutex;
@@ -25,9 +26,9 @@ use crate::{
 
 type QuicConn = (Connection, QuicFrameSessions);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct QuicConnector {
+pub struct QuicConnectorConfig {
     name: String,
     server: String,
     port: u16,
@@ -38,10 +39,29 @@ pub struct QuicConnector {
     bbr: bool,
     #[serde(default = "default_inline_udp")]
     inline_udp: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct QuicConnector {
+    #[serde(flatten)]
+    config: QuicConnectorConfig,
     #[serde(skip)]
     endpoint: Option<Endpoint>,
     #[serde(skip)]
-    connection: Mutex<Option<QuicConn>>,
+    connection: Arc<Mutex<Option<QuicConn>>>,
+}
+
+impl Deref for QuicConnector {
+    type Target = QuicConnectorConfig;
+    fn deref(&self) -> &Self::Target {
+        &self.config
+    }
+}
+
+impl DerefMut for QuicConnector {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.config
+    }
 }
 
 fn default_bind_addr() -> String {
@@ -57,7 +77,13 @@ fn default_inline_udp() -> bool {
 }
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
-    let ret: QuicConnector = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+    let config: QuicConnectorConfig =
+        serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+    let ret = QuicConnector {
+        config,
+        endpoint: None,
+        connection: Arc::new(Mutex::new(None)),
+    };
     Ok(Box::new(ret))
 }
 

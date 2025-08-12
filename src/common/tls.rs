@@ -235,20 +235,22 @@ impl std::fmt::Debug for TlsClientConfigPopulated {
 }
 
 fn load_certs<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Result<Vec<CertificateDer<'static>>> {
-    let file = File::open(&path).with_context(|| format!("failed to read certificates: {:?}",path))?;
+    let file =
+        File::open(&path).with_context(|| format!("failed to read certificates: {:?}", path))?;
     let mut reader = BufReader::new(file);
     let raw = certs(&mut reader)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| anyhow!("fail to load certificate: {:?}",path))?;
+        .map_err(|_| anyhow!("fail to load certificate: {:?}", path))?;
     Ok(raw.into_iter().collect())
 }
 
-fn load_keys<P: AsRef<Path>+ std::fmt::Debug>(path: P) -> Result<PrivateKeyDer<'static>> {
-    let file = File::open(&path).with_context(|| format!("failed to read private key: {:?}",path))?;
+fn load_keys<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Result<PrivateKeyDer<'static>> {
+    let file =
+        File::open(&path).with_context(|| format!("failed to read private key: {:?}", path))?;
     let mut reader = BufReader::new(file);
     let item = read_one(&mut reader)
         .with_context(|| format!("fail to load private key: {:?}", path))?
-        .ok_or_else(||anyhow!("no keys loaded from {:?}", path))?;
+        .ok_or_else(|| anyhow!("no keys loaded from {:?}", path))?;
     let key = match item {
         Item::Pkcs1Key(key) => PrivateKeyDer::Pkcs1(key),
         Item::Pkcs8Key(key) => PrivateKeyDer::Pkcs8(key),

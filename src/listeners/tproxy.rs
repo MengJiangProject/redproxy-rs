@@ -49,10 +49,11 @@ use crate::{
 };
 
 use super::Listener;
+use std::ops::{Deref, DerefMut};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct TProxyListener {
+pub struct TProxyListenerConfig {
     name: String,
     bind: SocketAddr,
     #[serde(default = "default_protocol")]
@@ -61,8 +62,27 @@ pub struct TProxyListener {
     max_udp_socket: usize,
     #[serde(default)]
     udp_full_cone: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TProxyListener {
+    #[serde(flatten)]
+    config: TProxyListenerConfig,
     #[serde(skip)]
     inner: Option<Arc<Internals>>,
+}
+
+impl Deref for TProxyListener {
+    type Target = TProxyListenerConfig;
+    fn deref(&self) -> &Self::Target {
+        &self.config
+    }
+}
+
+impl DerefMut for TProxyListener {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.config
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -86,7 +106,12 @@ fn default_max_udp_socket() -> usize {
 }
 
 pub fn from_value(value: &Value) -> Result<Box<dyn Listener>> {
-    let ret: TProxyListener = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+    let config: TProxyListenerConfig =
+        serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+    let ret = TProxyListener {
+        config,
+        inner: None,
+    };
     Ok(Box::new(ret))
 }
 

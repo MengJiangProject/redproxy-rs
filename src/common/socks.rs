@@ -363,10 +363,13 @@ impl SocksResponse {
         }
     }
     async fn read_v4<IO: RW>(socket: &mut IO) -> Result<Self> {
-        let cmd = socket.read_u8().await.context("read cmd")?;
+        let mut cmd = socket.read_u8().await.context("read cmd")?;
         let dport = socket.read_u16().await.context("read port")?;
         let dst = socket.read_u32().await.context("read dst")?;
         let target = (dst, dport).into();
+        if cmd == 90 {
+            cmd = 0;
+        }
         Ok(Self {
             version: 4,
             cmd,

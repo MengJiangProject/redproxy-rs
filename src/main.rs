@@ -58,7 +58,9 @@ impl GlobalState {
 }
 #[tokio::main]
 async fn main() -> Result<()> {
-    rustls::crypto::ring::default_provider().install_default().expect("failed to init rustls");
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to init rustls");
     let args = clap::Command::new(env!("CARGO_BIN_NAME"))
         .version(VERSION)
         .arg(

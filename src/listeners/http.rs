@@ -3,34 +3,65 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Sender;
 use tracing::{error, info, warn};
 
 use crate::common::h11c::h11c_handshake;
-use crate::common::set_keepalive;
+use crate::common::socket_ops::{AppTcpListener, RealSocketOps, SocketOps};
 use crate::common::tls::TlsServerConfig;
 use crate::config::Timeouts;
 use crate::context::ContextManager;
 use crate::context::{ContextRef, make_buffered_stream};
 use crate::listeners::Listener;
+use std::ops::{Deref, DerefMut};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct HttpListener {
+pub struct HttpListenerConfig {
     name: String,
     bind: SocketAddr,
     tls: Option<TlsServerConfig>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct HttpListener<S = RealSocketOps>
+where
+    S: SocketOps,
+{
+    #[serde(flatten)]
+    config: HttpListenerConfig,
+    #[serde(skip)]
+    socket_ops: Arc<S>,
+}
+
+impl<S: SocketOps> Deref for HttpListener<S> {
+    type Target = HttpListenerConfig;
+    fn deref(&self) -> &Self::Target {
+        &self.config
+    }
+}
+
+impl<S: SocketOps> DerefMut for HttpListener<S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.config
+    }
+}
+
+impl<S: SocketOps> HttpListener<S> {
+    pub fn new(config: HttpListenerConfig, socket_ops: Arc<S>) -> Self {
+        Self { config, socket_ops }
+    }
+}
+
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>> {
-    let ret: HttpListener =
+    let config: HttpListenerConfig =
         serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
+    let ret = HttpListener::new(config, Arc::new(RealSocketOps));
     Ok(Box::new(ret))
 }
 
 #[async_trait]
-impl Listener for HttpListener {
+impl<S: SocketOps + Send + Sync + 'static> Listener for HttpListener<S> {
     fn name(&self) -> &str {
         &self.name
     }
@@ -43,88 +74,83 @@ impl Listener for HttpListener {
     async fn listen(
         self: Arc<Self>,
         contexts: Arc<ContextManager>,
-        timeouts: Timeouts,
+        _timeouts: Timeouts,
         queue: Sender<ContextRef>,
     ) -> Result<()> {
         info!("{} listening on {}", self.name, self.bind);
-        let listener = TcpListener::bind(&self.bind)
-            .await
-            .with_context(|| "bind")?;
+        let listener = self.socket_ops.tcp_listen(self.bind).await?;
+
         let this = self.clone();
-        tokio::spawn(this.accept(listener, contexts, timeouts, queue));
+        tokio::spawn(this.accept(listener, contexts, queue));
         Ok(())
     }
 }
-impl HttpListener {
+
+impl<S: SocketOps + Send + Sync + 'static> HttpListener<S> {
     async fn accept(
         self: Arc<Self>,
-        listener: TcpListener,
+        listener: Box<dyn AppTcpListener>,
         contexts: Arc<ContextManager>,
-        _timeouts: Timeouts,
         queue: Sender<ContextRef>,
     ) {
         loop {
             match listener.accept().await.with_context(|| "accept") {
-                Ok((socket, source)) => {
+                Ok((stream, source)) => {
                     // we spawn a new thread here to avoid handshake to block accept thread
                     let this = self.clone();
                     let queue = queue.clone();
                     let contexts = contexts.clone();
                     let source = crate::common::try_map_v4_addr(source);
                     tokio::spawn(async move {
-                        let res = match this.create_context(contexts, source, socket).await {
-                            Ok(ctx) => {
-                                h11c_handshake(ctx, queue, |_, _| async { bail!("not supported") })
-                                    .await
+                        let stream = if let Some(tls_config) = &this.tls {
+                            match this
+                                .socket_ops
+                                .tls_handshake_server(stream, tls_config)
+                                .await
+                            {
+                                Ok(stream) => stream,
+                                Err(e) => {
+                                    warn!("tls handshake failed: {}", e);
+                                    return;
+                                }
                             }
-                            Err(e) => Err(e),
+                        } else {
+                            stream
                         };
+
+                        let ctx = contexts.create_context(this.name.to_owned(), source).await;
+                        this.socket_ops
+                            .set_keepalive(stream.as_ref(), true)
+                            .await
+                            .unwrap_or_else(|e| warn!("set_keepalive failed: {}", e));
+                        ctx.write()
+                            .await
+                            .set_client_stream(make_buffered_stream(stream));
+                        let res =
+                            h11c_handshake(ctx, queue, |_, _| async { bail!("not supported") })
+                                .await;
                         if let Err(e) = res {
                             warn!(
-                                "{}: handshake failed: {}\ncause: {:?}",
+                                "{}: handshake failed: {}
+cause: {:?}",
                                 this.name,
                                 e,
-                                e.source()
+                                e.source(),
                             );
                         }
                     });
                 }
                 Err(e) => {
                     error!(
-                        "{} accept error: {} \ncause: {:?}",
+                        "{} accept error: {} 
+cause: {:?}",
                         self.name,
                         e,
-                        e.source()
+                        e.source(),
                     );
                     return;
                 }
             }
         }
-    }
-    async fn create_context(
-        &self,
-        contexts: Arc<ContextManager>,
-        source: SocketAddr,
-        socket: TcpStream,
-    ) -> Result<ContextRef> {
-        set_keepalive(&socket)?;
-        let tls_acceptor = self
-            .tls
-            .as_ref()
-            .map(|options| options.acceptor())
-            .transpose()
-            .with_context(|| "TLS acceptor initialization failed")?;
-        let stream = if let Some(acceptor) = tls_acceptor {
-            acceptor
-                .accept(socket)
-                .await
-                .with_context(|| "tls accept error")
-                .map(make_buffered_stream)?
-        } else {
-            make_buffered_stream(socket)
-        };
-        let ctx = contexts.create_context(self.name.to_owned(), source).await;
-        ctx.write().await.set_client_stream(stream);
-        Ok(ctx)
     }
 }
