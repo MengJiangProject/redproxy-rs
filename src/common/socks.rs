@@ -217,32 +217,6 @@ impl<T> SocksRequest<T> {
     }
 }
 
-pub struct NoAuth;
-#[async_trait]
-impl SocksAuthServer<()> for NoAuth {
-    fn select_method(&self, method: &[u8]) -> Option<u8> {
-        if method.contains(&0) { Some(0) } else { None }
-    }
-    async fn auth_v4(&self, _client_id: String) -> Result<()> {
-        Ok(())
-    }
-    async fn auth_v5<IO: RW>(&self, _method: u8, _socket: &mut IO) -> Result<()> {
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl SocksAuthClient<()> for NoAuth {
-    fn supported_methods(&self, _: &()) -> &[u8] {
-        &[SOCKS_AUTH_NONE]
-    }
-    async fn auth_v4(&self, _: &()) -> Result<String> {
-        Ok("NoAuth".into())
-    }
-    async fn auth_v5<IO: RW>(&self, _data: &(), _method: u8, _socket: &mut IO) -> Result<()> {
-        Ok(())
-    }
-}
 pub struct PasswordAuth {
     pub required: bool,
 }
