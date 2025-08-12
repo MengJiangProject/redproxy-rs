@@ -1,4 +1,4 @@
-use crate::{GlobalState, VERSION, rules::Rule};
+use crate::{ProxyServer, VERSION, rules::Rule};
 use anyhow::{Error, Result, ensure};
 use axum::{
     Json, Router,
@@ -76,7 +76,7 @@ impl MetricsServer {
         Ok(())
     }
 
-    pub async fn listen(self: Arc<Self>, state: Arc<GlobalState>) -> Result<()> {
+    pub async fn listen(self: Arc<Self>, state: Arc<ProxyServer>) -> Result<()> {
         let api = Router::new()
             .route("/status", get(get_status))
             .route("/live", get(get_alive))
@@ -183,7 +183,7 @@ macro_rules! handler {
     };
 }
 
-handler!(get_status(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
+handler!(get_status(state: Extension<Arc<ProxyServer>>) -> impl IntoResponse {
     #[derive(Serialize)]
     struct Status {
         version: String,
@@ -199,7 +199,7 @@ handler!(get_status(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
     )
 });
 
-handler!(get_alive(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
+handler!(get_alive(state: Extension<Arc<ProxyServer>>) -> impl IntoResponse {
     Json(
         futures::stream::iter(
             state
@@ -216,7 +216,7 @@ handler!(get_alive(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
     )
 });
 
-handler!(get_history(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
+handler!(get_history(state: Extension<Arc<ProxyServer>>) -> impl IntoResponse {
     Json(
         state
             .contexts
@@ -229,16 +229,16 @@ handler!(get_history(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
     )
 });
 
-handler!(get_rules(state: Extension<Arc<GlobalState>>) -> impl IntoResponse {
-    Json(state.rules().await.clone())
+handler!(get_rules(state: Extension<Arc<ProxyServer>>) -> impl IntoResponse {
+    Json(state.rules_manager.rules().await.clone())
 });
 
 handler!(post_rules(
-    state: Extension<Arc<GlobalState>>,
+    state: Extension<Arc<ProxyServer>>,
     rules: Json<Vec<Arc<Rule>>>
 ) -> Result<impl IntoResponse, MyError> {
-    state.set_rules(rules.0).await.map_err(MyError)?;
-    Ok(Json(state.rules().await.clone()))
+    state.rules_manager.set_rules(rules.0, &state.connectors).await.map_err(MyError)?;
+    Ok(Json(state.rules_manager.rules().await.clone()))
 });
 
 handler!(get_metrics() -> impl IntoResponse {
@@ -258,7 +258,7 @@ handler!(get_metrics() -> impl IntoResponse {
         .unwrap_or_else(|_| Response::new(Body::empty()))
 });
 
-handler!(post_logrotate(state: Extension<Arc<GlobalState>>) -> Result<(), MyError> {
+handler!(post_logrotate(state: Extension<Arc<ProxyServer>>) -> Result<(), MyError> {
     if let Some(log) = &state.contexts.access_log {
         log.reopen().await.map_err(MyError)
     } else {

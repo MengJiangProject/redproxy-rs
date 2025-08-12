@@ -22,7 +22,7 @@ pub struct Config {
     pub io_params: IoParams,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct IoParams {
     pub buffer_size: usize,

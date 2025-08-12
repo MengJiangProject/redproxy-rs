@@ -15,7 +15,7 @@ const ATYP_IPV4: u8 = 1u8;
 const ATYP_IPV6: u8 = 2u8;
 const ATYP_HOST: u8 = 3u8;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Frame {
     pub addr: Option<TargetAddress>,
     pub session_id: u32,
