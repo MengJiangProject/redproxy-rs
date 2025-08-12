@@ -16,7 +16,7 @@
           inherit (fenix.packages.${system}.minimal) cargo rustc;
         }).buildRustPackage {
           pname = "redproxy-rs";
-          version = "0.9.0";
+          version = "0.10.0";
           src = ./.;
           #cargoSha256 = "sha256-zvG0eT5xH/uk6jrxIDXV37i9nB24kVovwCsKrsBxFsk=";
           cargoLock = {
