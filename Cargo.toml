@@ -28,7 +28,6 @@ async-trait = "0.1"
 anyhow = {version = "1.0", features = ["backtrace"]}
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-yaml-rust = "0.4"
 serde = { version = "1.0", features = ["derive","rc"] }
 serde_yaml_ng = "0.10"
 serde_json = "1.0"
