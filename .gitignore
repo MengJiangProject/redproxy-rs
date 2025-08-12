@@ -7,3 +7,4 @@ history.txt
 *.yaml
 *.log
 /result
+.direnv

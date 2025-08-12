@@ -12,6 +12,16 @@
     flake-utils.lib.eachDefaultSystem (system:
       let pkgs = nixpkgs.legacyPackages.${system}; in
       {
+        devShells.default = pkgs.mkShell {
+          buildInputs = with fenix.packages.${system}.complete; [
+            cargo
+            rustc
+            clippy
+            rustfmt
+            rust-src
+          ];
+        };
+
         defaultPackage = (pkgs.makeRustPlatform {
           inherit (fenix.packages.${system}.minimal) cargo rustc;
         }).buildRustPackage {
