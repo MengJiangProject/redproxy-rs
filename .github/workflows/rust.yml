@@ -1,56 +1,76 @@
-name: Rust Build and Test
+name: CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - master
+    branches: [master, main]
   pull_request:
-  workflow_dispatch:
+    branches: [master, main]
   release:
-    types: [created, edited]
+    types: [published]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  CICD_INTERMEDIATES_DIR: "intermediates"
+  RUST_BACKTRACE: 1
 
 jobs:
-  #run build first to populate caches
-  build-dev:
-    name: Build
+  # Security and code quality checks
+  security:
+    name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-v2
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          components: rustfmt,clippy
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      
+      - name: Security audit
+        run: cargo audit
 
-      #- name: Rustfmt Check
-      #  uses: actions-rust-lang/rustfmt@v1
-      #- run: cargo check --workspace
-      #- uses: clechasseur/rs-clippy-check@main
-      #  with:
-      #    args: --all-features
-      - run: cargo test --workspace --all-features
-      - run: cargo build --workspace --all-targets --all-features
+  # Code quality and testing
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: "Artifact upload"
-        uses: actions/upload-artifact@master
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          name: redproxy-rs_debug_${{github.sha}}
+          components: rustfmt, clippy
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy check
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace --all-features --verbose
+
+      - name: Build debug
+        run: cargo build --workspace --all-targets --all-features
+
+      - name: Upload debug artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: redproxy-rs-debug-${{ github.sha }}
           path: target/debug/redproxy-rs
+          retention-days: 7
 
-
-  build-corss:
-    needs: build-dev
+  # Cross-platform release builds
+  build-cross:
+    needs: [security, test]
     name: ${{ matrix.job.os }} (${{ matrix.job.target }})
     runs-on: ${{ matrix.job.os }}
     strategy:
@@ -62,150 +82,124 @@ jobs:
           - { os: macos-latest, target: x86_64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     steps:
-      - name: Checkout source code
-        uses: actions/checkout@v2
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/cache@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-${{ matrix.job.target }}-${{ hashFiles('**/Cargo.lock') }}
+          targets: ${{ matrix.job.target }}
 
-      - name: Install prerequisites
-        shell: bash
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.job.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cross-compilation tools
+        if: matrix.job.use-cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Install system dependencies
+        if: matrix.job.os == 'ubuntu-latest' && !matrix.job.use-cross
         run: |
           case ${{ matrix.job.target }} in
-            arm-unknown-linux-*) sudo apt-get -y update ; sudo apt-get -y install gcc-arm-linux-gnueabihf ;;
-            aarch64-unknown-linux-gnu) sudo apt-get -y update ; sudo apt-get -y install gcc-aarch64-linux-gnu ;;
+            aarch64-unknown-linux-gnu)
+              sudo apt-get update
+              sudo apt-get install -y gcc-aarch64-linux-gnu
+              ;;
           esac
 
-      - name: Extract crate information
-        shell: bash
+      - name: Extract project metadata
+        id: metadata
         run: |
-          echo "PROJECT_NAME=$(sed -n 's/^name = "\(.*\)"/\1/p' Cargo.toml | head -n1)" >> $GITHUB_ENV
-          echo "PROJECT_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)" >> $GITHUB_ENV
-          echo "PROJECT_MAINTAINER=$(sed -n 's/^authors = \["\(.*\)"\]/\1/p' Cargo.toml)" >> $GITHUB_ENV
-          echo "PROJECT_HOMEPAGE=$(sed -n 's/^homepage = "\(.*\)"/\1/p' Cargo.toml)" >> $GITHUB_ENV
+          echo "name=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].name')" >> $GITHUB_OUTPUT
+          echo "version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')" >> $GITHUB_OUTPUT
 
-      - name: Install target
-        run: rustup target add ${{ matrix.job.target }}
-
-      - name: Install cross
-        if: ${{ matrix.job.use-cross }}
-        shell: bash
-        run: cargo install cross --force
-
-      - name: Show version information (Rust, cargo, GCC)
-        shell: bash
+      - name: Build release binary
         run: |
-          gcc --version || true
-          rustup -V
-          rustup toolchain list
-          rustup default
-          cargo -V
-          rustc -V
-
-      - if: ${{ ! matrix.job.use-cross }}
-        run: cargo build --locked --release --target=${{ matrix.job.target }} --workspace  --all-features
-
-      - if: ${{ matrix.job.use-cross }}
-        run: cross build --locked --release --target=${{ matrix.job.target }} --workspace  --all-features
-
-      - name: Strip debug information from executable
-        id: strip
-        shell: bash
-        run: |
-          # Figure out suffix of binary
-          EXE_suffix=""
-          case ${{ matrix.job.target }} in
-            *-pc-windows-*) EXE_suffix=".exe" ;;
-          esac;
-          # Figure out what strip tool to use if any
-          STRIP="strip"
-          case ${{ matrix.job.target }} in
-            arm-unknown-linux-*) STRIP="arm-linux-gnueabihf-strip" ;;
-            aarch64-unknown-linux-gnu) STRIP="aarch64-linux-gnu-strip" ;;
-            *-pc-windows-msvc) STRIP="" ;;
-          esac;
-          # Setup paths
-          BIN_DIR="${{ env.CICD_INTERMEDIATES_DIR }}/stripped-release-bin/"
-          mkdir -p "${BIN_DIR}"
-          BIN_NAME="${PROJECT_NAME}${EXE_suffix}"
-          BIN_PATH="${BIN_DIR}/${BIN_NAME}"
-          # Copy the release build binary to the result location
-          cp "target/${{ matrix.job.target }}/release/${BIN_NAME}" "${BIN_DIR}"
-          # Also strip if possible
-          if [ -n "${STRIP}" ]; then
-            "${STRIP}" "${BIN_PATH}"
+          if [ "${{ matrix.job.use-cross }}" = "true" ]; then
+            cross build --locked --release --target=${{ matrix.job.target }} --workspace --all-features
+          else
+            cargo build --locked --release --target=${{ matrix.job.target }} --workspace --all-features
           fi
-          # Let subsequent steps know where to find the (stripped) bin
-          echo ::set-output name=BIN_PATH::${BIN_PATH}
-          echo ::set-output name=BIN_NAME::${BIN_NAME}
 
-      - name: Create tarball
-        id: package
-        shell: bash
+      - name: Prepare release artifacts
+        id: artifact
         run: |
-          PKG_suffix=".tar.gz" ; case ${{ matrix.job.target }} in *-pc-windows-*) PKG_suffix=".zip" ;; esac;
-          PKG_BASENAME=${PROJECT_NAME}-v${PROJECT_VERSION}-${{ matrix.job.target }}
-          PKG_NAME=${PKG_BASENAME}${PKG_suffix}
-          echo ::set-output name=PKG_NAME::${PKG_NAME}
-          PKG_STAGING="${{ env.CICD_INTERMEDIATES_DIR }}/package"
-          ARCHIVE_DIR="${PKG_STAGING}/${PKG_BASENAME}/"
-          mkdir -p "${ARCHIVE_DIR}"
-          # Binary
-          cp "${{ steps.strip.outputs.BIN_PATH }}" "$ARCHIVE_DIR"
-          # base compressed package
-          pushd "${PKG_STAGING}/" >/dev/null
-          case ${{ matrix.job.target }} in
-            *-pc-windows-*) 7z -y a "${PKG_NAME}" "${PKG_BASENAME}"/* | tail -2 ;;
-            *) tar czf "${PKG_NAME}" -C "${PKG_BASENAME}" "${{ steps.strip.outputs.BIN_NAME }}" ;;
-          esac;
-          popd >/dev/null
-          # Let subsequent steps know where to find the compressed package
-          echo ::set-output name=PKG_PATH::"${PKG_STAGING}/${PKG_NAME}"
+          # Determine file extension
+          if [[ "${{ matrix.job.target }}" == *"windows"* ]]; then
+            EXT=".exe"
+            ARCHIVE_EXT=".zip"
+          else
+            EXT=""
+            ARCHIVE_EXT=".tar.gz"
+          fi
+          
+          BIN_NAME="${{ steps.metadata.outputs.name }}${EXT}"
+          PKG_NAME="${{ steps.metadata.outputs.name }}-v${{ steps.metadata.outputs.version }}-${{ matrix.job.target }}${ARCHIVE_EXT}"
+          
+          # Copy and optionally strip binary
+          mkdir -p artifacts
+          cp "target/${{ matrix.job.target }}/release/${BIN_NAME}" "artifacts/"
+          
+          # Strip debug symbols on Unix systems
+          if [[ "${{ matrix.job.target }}" != *"windows"* ]]; then
+            case "${{ matrix.job.target }}" in
+              aarch64-unknown-linux-gnu) 
+                if command -v aarch64-linux-gnu-strip >/dev/null 2>&1; then
+                  aarch64-linux-gnu-strip "artifacts/${BIN_NAME}"
+                fi
+                ;;
+              *)
+                strip "artifacts/${BIN_NAME}" 2>/dev/null || true
+                ;;
+            esac
+          fi
+          
+          # Create archive
+          cd artifacts
+          if [[ "${{ matrix.job.target }}" == *"windows"* ]]; then
+            7z a "../${PKG_NAME}" "${BIN_NAME}"
+          else
+            tar czf "../${PKG_NAME}" "${BIN_NAME}"
+          fi
+          cd ..
+          
+          echo "pkg_name=${PKG_NAME}" >> $GITHUB_OUTPUT
+          echo "pkg_path=${PKG_NAME}" >> $GITHUB_OUTPUT
 
-      - name: "Artifact upload: tarball"
-        uses: actions/upload-artifact@master
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.package.outputs.PKG_NAME }}
-          path: ${{ steps.package.outputs.PKG_PATH }}
+          name: ${{ steps.artifact.outputs.pkg_name }}
+          path: ${{ steps.artifact.outputs.pkg_path }}
+          retention-days: 30
 
-      - name: Check for release
-        id: is-release
-        shell: bash
-        run: |
-          unset IS_RELEASE ; if [[ $GITHUB_REF =~ ^refs/tags/v[0-9].* ]]; then IS_RELEASE='true' ; fi
-          echo ::set-output name=IS_RELEASE::${IS_RELEASE}
-
-      - name: Publish archives and packages
-        uses: softprops/action-gh-release@v1
-        if: steps.is-release.outputs.IS_RELEASE
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
         with:
-          files: |
-            ${{ steps.package.outputs.PKG_PATH }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: ${{ steps.artifact.outputs.pkg_path }}
 
+  # Auto-merge dependabot PRs
   dependabot:
-    needs: [build-corss] # <-- important!
+    needs: [build-cross]
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
       contents: write
-    if: ${{ github.actor == 'dependabot[bot]' && github.event_name == 'pull_request'}}
+    if: github.actor == 'dependabot[bot]' && github.event_name == 'pull_request'
     steps:
-      - id: metadata
+      - name: Fetch dependabot metadata
+        id: metadata
         uses: dependabot/fetch-metadata@v2
         with:
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
-      - run: |
-          gh pr review --approve "$PR_URL"
-          gh pr merge --squash --auto "$PR_URL"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Auto-approve and merge updates
         env:
-          PR_URL: ${{github.event.pull_request.html_url}}
-          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr review --approve "$PR_URL"
+          gh pr merge --auto --squash "$PR_URL"
