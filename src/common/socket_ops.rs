@@ -170,10 +170,10 @@ impl SocketOps for RealSocketOps {
     }
 
     async fn set_keepalive(&self, stream: &dyn Stream, enable: bool) -> Result<()> {
-        if let Some(tcp_stream) = stream.as_any().downcast_ref::<tokio::net::TcpStream>() {
-            if enable {
-                set_keepalive(tcp_stream)?;
-            }
+        if let Some(tcp_stream) = stream.as_any().downcast_ref::<tokio::net::TcpStream>()
+            && enable
+        {
+            set_keepalive(tcp_stream)?;
         }
         Ok(())
     }

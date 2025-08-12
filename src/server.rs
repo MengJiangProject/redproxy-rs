@@ -133,14 +133,14 @@ impl ProxyServer {
 
     #[cfg(feature = "metrics")]
     fn init_metrics(&mut self) -> Result<()> {
-        if let Some(metrics) = &self.metrics {
-            if let Ok(mut metrics_mut) = Arc::try_unwrap(metrics.clone()) {
-                metrics_mut.init()?;
-                if let Some(ctx_mut) = Arc::get_mut(&mut self.contexts) {
-                    ctx_mut.history_size = metrics_mut.history_size;
-                }
-                self.metrics = Some(Arc::new(metrics_mut));
+        if let Some(metrics) = &self.metrics
+            && let Ok(mut metrics_mut) = Arc::try_unwrap(metrics.clone())
+        {
+            metrics_mut.init()?;
+            if let Some(ctx_mut) = Arc::get_mut(&mut self.contexts) {
+                ctx_mut.history_size = metrics_mut.history_size;
             }
+            self.metrics = Some(Arc::new(metrics_mut));
         }
         Ok(())
     }

@@ -396,10 +396,10 @@ impl Callable for Scope {
         let mut temp_body_unresolved_ids = HashSet::new();
         let_body_expr.unresovled_ids(&mut temp_body_unresolved_ids);
         for id_val_from_body in temp_body_unresolved_ids {
-            if let Value::Identifier(name_str_from_body) = id_val_from_body {
-                if !let_defined_names.contains(name_str_from_body) {
-                    main_output_ids.insert(id_val_from_body);
-                }
+            if let Value::Identifier(name_str_from_body) = id_val_from_body
+                && !let_defined_names.contains(name_str_from_body)
+            {
+                main_output_ids.insert(id_val_from_body);
             }
         }
     }

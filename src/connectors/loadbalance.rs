@@ -100,17 +100,16 @@ impl Connector for LoadBalanceConnector {
                 ensure!(registry.contains_key(n), "connector not defined: {}", n);
 
                 // Disallow LoadBalance connectors as targets to prevent recursion
-                if let Some(target_connector) = registry.get(n) {
-                    if (target_connector.as_ref() as &dyn std::any::Any)
+                if let Some(target_connector) = registry.get(n)
+                    && (target_connector.as_ref() as &dyn std::any::Any)
                         .downcast_ref::<LoadBalanceConnector>()
                         .is_some()
-                    {
-                        bail!(
-                            "LoadBalance connector '{}' cannot use another LoadBalance connector '{}' as target",
-                            self.name,
-                            n
-                        );
-                    }
+                {
+                    bail!(
+                        "LoadBalance connector '{}' cannot use another LoadBalance connector '{}' as target",
+                        self.name,
+                        n
+                    );
                 }
             }
         }

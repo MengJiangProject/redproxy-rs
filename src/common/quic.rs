@@ -234,13 +234,12 @@ pub async fn quic_frames_thread(name: String, sessions: QuicFrameSessions, input
                 }
                 let frame = frame.unwrap();
                 let sid = frame.session_id;
-                if let Some(session) = sessions.get(&sid).await {
-                    if session.is_closed() || session.send(frame).await.is_err() {
+                if let Some(session) = sessions.get(&sid).await
+                    && (session.is_closed() || session.send(frame).await.is_err()) {
                         drop(session);
                         sessions.remove(&sid).await;
                         tracing::trace!("quic recv error: sid={}", sid);
                     }
-                }
             },
             else => break,
         }
