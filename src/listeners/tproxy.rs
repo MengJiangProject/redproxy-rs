@@ -1,4 +1,4 @@
-use anyhow::{Context, Error, Result};
+use anyhow::{Context as _, Error, Result};
 use async_trait::async_trait;
 use bytes::BytesMut;
 use chashmap_async::CHashMap;
@@ -37,7 +37,9 @@ use tracing::{debug, error, info, trace};
 use crate::{
     common::{
         frames::{Frame, FrameReader, FrameWriter},
-        into_unspecified, set_keepalive, try_map_v4_addr,
+        into_unspecified,
+        socket_ops::set_keepalive,
+        try_map_v4_addr,
         udp::{setup_udp_session, udp_socket},
     },
     config::Timeouts,
@@ -92,6 +94,7 @@ pub enum Protocol {
     Udp,
 }
 
+#[derive(Debug)]
 struct Internals {
     sessions: CHashMap<(SocketAddr, SocketAddr), Session>,
     sockets: Mutex<LruCache<SocketAddr, UdpSocket>>,
@@ -149,7 +152,12 @@ impl Listener for TProxyListener {
                             .tcp_accept(&listener, &contexts, &timeouts, &queue)
                             .await
                             .map_err(|e| {
-                                error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
+                                error!(
+                                    "{}: accept error: {} \ncause: {:?}",
+                                    self.name,
+                                    e,
+                                    e.source()
+                                )
                             })
                             .unwrap_or(());
                     }
@@ -163,7 +171,12 @@ impl Listener for TProxyListener {
                             .udp_accept(&listener, &contexts, &timeouts, &queue)
                             .await
                             .map_err(|e| {
-                                error!("{}: accept error: {} \ncause: {:?}", self.name, e, e.cause)
+                                error!(
+                                    "{}: accept error: {} \ncause: {:?}",
+                                    self.name,
+                                    e,
+                                    e.source()
+                                )
                             })
                             .unwrap_or(());
                     }
@@ -183,7 +196,7 @@ impl TProxyListener {
         self: Arc<Self>,
         listener: &TcpListener,
         contexts: &Arc<ContextManager>,
-        timeouts: &Timeouts,
+        _timeouts: &Timeouts,
         queue: &Sender<ContextRef>,
     ) -> Result<()> {
         let (socket, source) = listener.accept().await.context("accept")?;
@@ -247,10 +260,7 @@ impl TProxyListener {
                 .await
                 .context("setup session failed")?;
         } else {
-            let ctx = state
-                .contexts
-                .create_context(self.name.to_owned(), src)
-                .await;
+            let ctx = contexts.create_context(self.name.to_owned(), src).await;
             let (tx, rx) = channel(100);
             let mut session = Session::new(src, tx);
             session
@@ -356,7 +366,7 @@ impl TproxyUdpSocket {
                     .map_err(|errno| std::io::Error::from_raw_os_error(errno as i32))
             }) {
                 Ok(result) => {
-                    return result.map(|ret| {
+                    return result.and_then(|ret| {
                         let src: SockaddrStorage = ret.address.unwrap();
                         let src = match src.family() {
                             Some(AddressFamily::Inet) => {
@@ -411,7 +421,7 @@ impl TproxyUdpSocket {
                             }
                         };
 
-                        (ret.bytes, src, dst)
+                        Ok((ret.bytes, src, dst))
                     });
                 }
                 Err(_would_block) => continue,
@@ -420,6 +430,7 @@ impl TproxyUdpSocket {
     }
 }
 
+#[derive(Debug)]
 struct Session {
     source: SocketAddr,
     queue: Sender<Frame>,
