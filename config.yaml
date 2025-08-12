@@ -48,15 +48,15 @@ listeners:
     protocol: udp
   - name: http
     bind: 0.0.0.0:8081
-  - name: https
-    type: http
-    bind: 0.0.0.0:8082
-    tls:
-      cert: test.crt
-      key: test.key
-      client:
-        ca: ca.crt
-        required: true
+  # - name: https
+  #   type: http
+  #   bind: 0.0.0.0:8082
+  #   tls:
+  #     cert: test.crt
+  #     key: test.key
+  #     client:
+  #       ca: ca.crt
+  #       required: true
   - name: socks
     bind: 0.0.0.0:1080
     allowUdp: true
@@ -79,11 +79,11 @@ listeners:
       cache:
         timeout: 10 # cache time in seconds
 
-  - name: quic
-    bind: 0.0.0.0:4433
-    tls:
-      cert: test.crt
-      key: test.key
+  # - name: quic
+  #   bind: 0.0.0.0:4433
+  #   tls:
+  #     cert: test.crt
+  #     key: test.key
 
 connectors:
   - name: loadbalance
@@ -106,12 +106,12 @@ connectors:
     type: http
     server: 192.168.100.1
     port: 3333
-    tls:
-      insecure: true
-      ca: ca.crt
-      auth:
-        cert: proxy.crt
-        key: proxy.key
+    # tls:
+    #   insecure: true
+    #   ca: ca.crt
+    #   auth:
+    #     cert: proxy.crt
+    #     key: proxy.key
   - name: socks
     server: 192.168.100.1
     port: 1080

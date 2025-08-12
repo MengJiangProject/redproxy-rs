@@ -58,6 +58,7 @@ impl GlobalState {
 }
 #[tokio::main]
 async fn main() -> Result<()> {
+    rustls::crypto::ring::default_provider().install_default().expect("failed to init rustls");
     let args = clap::Command::new(env!("CARGO_BIN_NAME"))
         .version(VERSION)
         .arg(
@@ -138,7 +139,7 @@ async fn main() -> Result<()> {
 
     // Initialize connectors (original approach from git history)
     for c in connectors.values_mut() {
-        if let Some(connector_mut) = Arc::get_mut(&mut c.clone()) {
+        if let Some(connector_mut) = Arc::get_mut(c) {
             connector_mut.init().await.context(format!(
                 "Failed to initialize connector {}",
                 connector_mut.name()

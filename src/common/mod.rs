@@ -6,9 +6,13 @@ pub mod fragment;
 pub mod frames;
 pub mod h11c;
 pub mod http;
+pub mod socket_ops;
 pub mod socks;
 pub mod tls;
 pub mod udp;
+
+// Re-export socket operations for backward compatibility
+pub use socket_ops::set_keepalive;
 
 #[cfg(feature = "quic")]
 pub mod quic;
@@ -32,19 +36,6 @@ pub fn try_map_v4_addr(addr: SocketAddr) -> SocketAddr {
     }
 }
 
-#[cfg(not(windows))]
-pub fn set_keepalive(stream: &tokio::net::TcpStream) -> anyhow::Result<()> {
-    use anyhow::Context;
-    use nix::sys::socket::{setsockopt, sockopt::KeepAlive};
-    setsockopt(stream, KeepAlive, &true).context("setsockopt")
-}
-
-#[cfg(windows)]
-pub fn set_keepalive(stream: &tokio::net::TcpStream) -> anyhow::Result<()> {
-    use anyhow::Context;
-    use std::os::windows::prelude::AsRawSocket;
-    windows::set_keepalive(stream.as_raw_socket() as _, true).context("setsockopt")
-}
 
 pub fn into_unspecified(source: SocketAddr) -> SocketAddr {
     if source.is_ipv4() {

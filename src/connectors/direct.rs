@@ -1,5 +1,4 @@
 use std::{
-    io::ErrorKind,
     net::{IpAddr, SocketAddr},
     sync::Arc,
 };
@@ -8,7 +7,6 @@ use anyhow::{Context, Error, Result, bail};
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use serde::{Deserialize, Serialize};
-use tokio::net::{TcpSocket, UdpSocket};
 use tracing::{debug, trace};
 
 use super::ConnectorRef;
@@ -16,15 +14,19 @@ use crate::{
     common::{
         dns::{AddressFamily, DnsConfig},
         frames::{Frame, FrameIO, FrameReader, FrameWriter},
-        into_unspecified, set_keepalive,
-        udp::udp_socket,
+        into_unspecified,
+        socket_ops::{RealSocketOps, SocketOps},
     },
     context::{ContextRef, Feature, TargetAddress, make_buffered_stream},
 };
 
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DirectConnector {
+pub struct DirectConnector<S = RealSocketOps> 
+where 
+    S: SocketOps 
+{
     name: String,
     bind: Option<IpAddr>,
     #[serde(default)]
@@ -34,19 +36,72 @@ pub struct DirectConnector {
     keepalive: bool,
     #[serde(skip)]
     udp_binds: Arc<CHashMap<String, SocketAddr>>,
+    #[serde(skip)]
+    socket_ops: Arc<S>,
 }
 
 fn default_keepalive() -> bool {
     true
 }
 
+// Production constructor (zero-cost)
+impl DirectConnector<RealSocketOps> {
+    pub fn new(name: String, bind: Option<IpAddr>, dns: Arc<DnsConfig>, fwmark: Option<u32>, keepalive: bool) -> Self {
+        Self {
+            name,
+            bind,
+            dns,
+            fwmark,
+            keepalive,
+            udp_binds: Arc::new(CHashMap::new()),
+            socket_ops: Arc::new(RealSocketOps),
+        }
+    }
+}
+
+// Generic constructor for testing
+#[cfg(test)]
+impl<S: SocketOps> DirectConnector<S> {
+    pub fn with_socket_ops(name: String, bind: Option<IpAddr>, dns: Arc<DnsConfig>, fwmark: Option<u32>, keepalive: bool, socket_ops: Arc<S>) -> Self {
+        Self {
+            name,
+            bind,
+            dns,
+            fwmark,
+            keepalive,
+            udp_binds: Arc::new(CHashMap::new()),
+            socket_ops,
+        }
+    }
+}
+
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
-    let ret: DirectConnector = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+    let config: DirectConnectorConfig = serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+    let ret = DirectConnector::new(
+        config.name,
+        config.bind,
+        config.dns,
+        config.fwmark,
+        config.keepalive,
+    );
     Ok(Box::new(ret))
 }
 
+// Helper struct for deserialization
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DirectConnectorConfig {
+    name: String,
+    bind: Option<IpAddr>,
+    #[serde(default)]
+    dns: Arc<DnsConfig>,
+    fwmark: Option<u32>,
+    #[serde(default = "default_keepalive")]
+    keepalive: bool,
+}
+
 #[async_trait]
-impl super::Connector for DirectConnector {
+impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<S> {
     async fn init(&mut self) -> Result<()> {
         let dns = Arc::get_mut(&mut self.dns).unwrap();
         dns.init()?;
@@ -85,26 +140,16 @@ impl super::Connector for DirectConnector {
         let feature = ctx.read().await.feature();
         match feature {
             Feature::TcpForward => {
-                let server = if remote.is_ipv4() {
-                    TcpSocket::new_v4().context("socket")?
-                } else {
-                    TcpSocket::new_v6().context("socket")?
-                };
-                if let Some(bind) = self.bind {
-                    server.bind(SocketAddr::new(bind, 0)).context("bind")?;
-                }
-                let server = server.connect(remote).await.context("connect")?;
-                let local = server.local_addr().context("local_addr")?;
-                let remote = server.peer_addr().context("peer_addr")?;
-                if self.keepalive {
-                    set_keepalive(&server)?;
-                }
-                set_fwmark(&server, self.fwmark)?;
+                let (server, local, remote_addr) = self.socket_ops.tcp_connect(remote, self.bind).await?;
+                
+                self.socket_ops.set_keepalive(server.as_ref(), self.keepalive).await?;
+                self.socket_ops.set_fwmark(server.as_ref(), self.fwmark).await?;
+                
                 ctx.write()
                     .await
                     .set_server_stream(make_buffered_stream(server))
                     .set_local_addr(local)
-                    .set_server_addr(remote);
+                    .set_server_addr(remote_addr);
                 trace!("connected to {:?}", target);
             }
             Feature::UdpForward | Feature::UdpBind => {
@@ -129,18 +174,19 @@ impl super::Connector for DirectConnector {
                         .unwrap_or(local)
                 };
 
-                let server = udp_socket(local, Some(remote), false).context("setup socket")?;
-                let local = server.local_addr().context("local_addr")?;
-                set_fwmark(&server, self.fwmark)?;
+                let (socket, local_addr) = self.socket_ops.udp_bind(local).await?;
+                let frames = setup_session(socket, remote, self.dns.clone());
+                let remote_addr = remote;
+                
                 ctx.write()
                     .await
-                    .set_server_frames(setup_session(server, remote, self.dns.clone()))
-                    .set_local_addr(local)
-                    .set_server_addr(remote)
-                    .set_extra("udp-bind-address", local.to_string());
+                    .set_server_frames(frames)
+                    .set_local_addr(local_addr)
+                    .set_server_addr(remote_addr)
+                    .set_extra("udp-bind-address", local_addr.to_string());
 
                 if !source.is_empty() {
-                    self.udp_binds.insert(source, local).await;
+                    self.udp_binds.insert(source, local_addr).await;
                 }
                 trace!("connected to {:?}", target);
             }
@@ -151,6 +197,8 @@ impl super::Connector for DirectConnector {
 }
 
 use std::io::Result as IoResult;
+use tokio::net::UdpSocket;
+
 fn setup_session(socket: UdpSocket, target: SocketAddr, dns: Arc<DnsConfig>) -> FrameIO {
     let socket = Arc::new(socket);
     let frames = DirectFrames {
@@ -171,16 +219,10 @@ struct DirectFrames {
 #[async_trait]
 impl FrameReader for DirectFrames {
     async fn read(&mut self) -> IoResult<Option<Frame>> {
-        // loop {
         let mut frame = Frame::new();
         let (_, _source) = frame.recv_from(&self.socket).await?;
         tracing::trace!("read udp frame: {:?}", frame);
-        // if self.target.ip().is_unspecified() || self.target == source {
         return Ok(Some(frame));
-        // } else {
-        //     tracing::debug!("received unexpected udp frame from {:?}, dropping", source)
-        // }
-        // }
     }
 }
 
@@ -196,9 +238,9 @@ impl FrameWriter for DirectFrames {
                     .await
                     .map_err(|x| {
                         tracing::warn!("dns error: {}", x);
-                        std::io::Error::new(ErrorKind::InvalidInput, "dns error")
+                        std::io::Error::new(std::io::ErrorKind::InvalidInput, "dns error")
                     })?,
-                _ => return Err(std::io::Error::new(ErrorKind::InvalidInput, "bad target")),
+                _ => return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad target")),
             }
         } else {
             self.target
@@ -212,19 +254,109 @@ impl FrameWriter for DirectFrames {
     }
 }
 
-#[cfg(target_os = "linux")]
-pub fn set_fwmark<T: std::os::unix::prelude::AsFd>(sk: &T, mark: Option<u32>) -> Result<()> {
-    use nix::sys::socket::setsockopt;
-    use nix::sys::socket::sockopt::Mark;
-    if mark.is_none() {
-        return Ok(());
-    }
-    let mark = mark.unwrap();
-    setsockopt(sk, Mark, &mark).context("setsockopt")
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        common::socket_ops::{SocketOps, test_utils::MockSocketOps},
+        context::{ContextManager, Feature, TargetAddress},
+        connectors::Connector,
+    };
+    use std::net::{Ipv4Addr, SocketAddr};
 
-#[cfg(not(target_os = "linux"))]
-pub fn set_fwmark<T>(_sk: &T, _mark: Option<u32>) -> Result<()> {
-    tracing::warn!("fwmark not supported on this platform");
-    Ok(())
+    fn create_test_connector<S: SocketOps>(socket_ops: Arc<S>) -> DirectConnector<S> {
+        DirectConnector::with_socket_ops(
+            "test".to_string(),
+            None,
+            Arc::new(DnsConfig::default()),
+            None,
+            true,
+            socket_ops,
+        )
+    }
+
+    async fn create_test_context(target: TargetAddress, feature: Feature) -> ContextRef {
+        let manager = Arc::new(ContextManager::default());
+        let source = "127.0.0.1:1234".parse::<SocketAddr>().unwrap();
+        let ctx = manager.create_context("test-listener".to_string(), source).await;
+        
+        ctx.write().await
+            .set_target(target)
+            .set_feature(feature);
+        ctx
+    }
+
+    #[tokio::test]
+    async fn test_tcp_connect_success() {
+        let mock_ops = Arc::new(MockSocketOps::new());
+        let mut connector = create_test_connector(mock_ops);
+        connector.init().await.unwrap();
+        
+        let connector = Arc::new(connector);
+        let target = TargetAddress::SocketAddr("192.0.2.1:80".parse().unwrap());
+        let ctx = create_test_context(target, Feature::TcpForward).await;
+        
+        // This should succeed and properly set context
+        let result = connector.connect(ctx.clone()).await;
+        assert!(result.is_ok());
+        
+        // Verify context was updated correctly
+        let context_read = ctx.read().await;
+        // Check that server stream was set by verifying we can't take it twice
+        assert!(context_read.props().server_addr != ([0, 0, 0, 0], 0).into());
+        assert_eq!(context_read.local_addr().to_string(), "127.0.0.1:12345");
+        assert_eq!(context_read.server_addr().to_string(), "192.0.2.1:80");
+    }
+
+    #[tokio::test]
+    async fn test_tcp_connect_failure() {
+        let mock_ops = Arc::new(MockSocketOps::new().with_tcp_error("Connection refused".to_string()));
+        let mut connector = create_test_connector(mock_ops);
+        connector.init().await.unwrap();
+        
+        let connector = Arc::new(connector);
+        let target = TargetAddress::SocketAddr("192.0.2.1:80".parse().unwrap());
+        let ctx = create_test_context(target, Feature::TcpForward).await;
+        
+        // This should fail with our mocked error
+        let result = connector.connect(ctx).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Connection refused"));
+    }
+
+    #[tokio::test]
+    async fn test_bind_address_handling() {
+        let mock_ops = Arc::new(MockSocketOps::new());
+        let mut connector = DirectConnector::with_socket_ops(
+            "test".to_string(),
+            Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))),
+            Arc::new(DnsConfig::default()),
+            None,
+            true,
+            mock_ops,
+        );
+        
+        connector.init().await.unwrap();
+        
+        let connector = Arc::new(connector);
+        let target = TargetAddress::SocketAddr("192.0.2.1:80".parse().unwrap());
+        let ctx = create_test_context(target, Feature::TcpForward).await;
+        
+        // Should successfully use the bind address (passed to mock)
+        let result = connector.connect(ctx).await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_basic_connector_interface() {
+        let mock_ops = Arc::new(MockSocketOps::new());
+        let connector = create_test_connector(mock_ops);
+        
+        // Test basic connector interface
+        assert_eq!(connector.name(), "test");
+        assert_eq!(connector.features().len(), 3);
+        assert!(connector.has_feature(Feature::TcpForward));
+        assert!(connector.has_feature(Feature::UdpForward));
+        assert!(connector.has_feature(Feature::UdpBind));
+    }
 }

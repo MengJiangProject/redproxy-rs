@@ -150,6 +150,7 @@ impl std::fmt::Debug for LoadBalanceConnector {
     }
 }
 
+
 impl LoadBalanceConnector {
     fn random(self: &Arc<Self>, registry: &ConnectorRegistry) -> Result<Arc<dyn Connector>> {
         let next = self
@@ -218,5 +219,257 @@ impl LoadBalanceConnector {
             .get(next)
             .cloned()
             .ok_or_else(|| anyhow!("Connector '{}' not found in registry", next))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{TargetAddress, ContextManager};
+    use std::collections::HashMap;
+    use std::net::SocketAddr;
+
+    // Mock connector for testing
+    #[derive(Debug)]
+    struct MockConnector {
+        name: String,
+        connect_count: Arc<AtomicUsize>,
+    }
+
+    impl MockConnector {
+        fn new(name: &str) -> Arc<Self> {
+            Arc::new(Self {
+                name: name.to_string(),
+                connect_count: Arc::new(AtomicUsize::new(0)),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl Connector for MockConnector {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn connect(self: Arc<Self>, _ctx: ContextRef) -> Result<()> {
+            self.connect_count.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    fn create_test_registry() -> ConnectorRegistry {
+        let mut registry = HashMap::new();
+        registry.insert("conn1".to_string(), MockConnector::new("conn1") as Arc<dyn Connector>);
+        registry.insert("conn2".to_string(), MockConnector::new("conn2") as Arc<dyn Connector>);
+        registry.insert("conn3".to_string(), MockConnector::new("conn3") as Arc<dyn Connector>);
+        registry
+    }
+
+    async fn create_test_context() -> ContextRef {
+        let manager = Arc::new(ContextManager::default());
+        let source = "127.0.0.1:1234".parse::<SocketAddr>().unwrap();
+        let ctx = manager.create_context("test-listener".to_string(), source).await;
+        
+        // Set target for testing
+        ctx.write().await.set_target(TargetAddress::DomainPort("example.com".to_string(), 80));
+        ctx
+    }
+
+    #[tokio::test]
+    async fn test_round_robin_selection() {
+        let lb = LoadBalanceConnector {
+            name: "test-lb".to_string(),
+            connectors: vec!["conn1".to_string(), "conn2".to_string(), "conn3".to_string()],
+            algorithm: Algorithm::RoundRobin,
+            ..Default::default()
+        };
+
+        let registry = create_test_registry();
+        lb.registry.set(registry.clone()).map_err(|_| "Already set").unwrap();
+
+        let lb = Arc::new(lb);
+
+        // Test round robin order
+        let selected1 = lb.round_robin(&registry).unwrap();
+        assert_eq!(selected1.name(), "conn1");
+
+        let selected2 = lb.round_robin(&registry).unwrap();
+        assert_eq!(selected2.name(), "conn2");
+
+        let selected3 = lb.round_robin(&registry).unwrap();
+        assert_eq!(selected3.name(), "conn3");
+
+        // Should wrap around
+        let selected4 = lb.round_robin(&registry).unwrap();
+        assert_eq!(selected4.name(), "conn1");
+    }
+
+    #[tokio::test]
+    async fn test_random_selection() {
+        let lb = LoadBalanceConnector {
+            name: "test-lb".to_string(),
+            connectors: vec!["conn1".to_string(), "conn2".to_string(), "conn3".to_string()],
+            algorithm: Algorithm::Random,
+            ..Default::default()
+        };
+
+        let registry = create_test_registry();
+        lb.registry.set(registry.clone()).map_err(|_| "Already set").unwrap();
+
+        let lb = Arc::new(lb);
+
+        // Test multiple random selections to ensure they're from our connector list
+        for _ in 0..10 {
+            let selected = lb.random(&registry).unwrap();
+            let name = selected.name();
+            assert!(name == "conn1" || name == "conn2" || name == "conn3");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_hash_by_selection() {
+        let lb = LoadBalanceConnector {
+            name: "test-lb".to_string(),
+            connectors: vec!["conn1".to_string(), "conn2".to_string(), "conn3".to_string()],
+            algorithm: Algorithm::HashBy("request.target.host".to_string()),
+            ..Default::default()
+        };
+
+        let registry = create_test_registry();
+        lb.registry.set(registry.clone()).map_err(|_| "Already set").unwrap();
+
+        let lb = Arc::new(lb);
+        let ctx = create_test_context().await;
+
+        // Same context should always select the same connector
+        let selected1 = lb.hash_by(&registry, &ctx).await.unwrap();
+        let selected2 = lb.hash_by(&registry, &ctx).await.unwrap();
+        assert_eq!(selected1.name(), selected2.name());
+    }
+
+    #[tokio::test]
+    async fn test_verify_empty_connectors() {
+        let lb = LoadBalanceConnector {
+            name: "test-lb".to_string(),
+            connectors: vec![],
+            ..Default::default()
+        };
+
+        let result = lb.verify().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("connectors must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_unknown_connector() {
+        let lb = LoadBalanceConnector {
+            name: "test-lb".to_string(),
+            connectors: vec!["unknown".to_string()],
+            ..Default::default()
+        };
+
+        let registry = create_test_registry();
+        lb.registry.set(registry).map_err(|_| "Already set").unwrap();
+
+        let result = lb.verify().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("connector not defined: unknown"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_recursion_prevention() {
+        let mut registry = HashMap::new();
+        
+        // Create a LoadBalance connector
+        let inner_lb = Arc::new(LoadBalanceConnector {
+            name: "inner-lb".to_string(),
+            connectors: vec!["conn1".to_string()],
+            ..Default::default()
+        }) as Arc<dyn Connector>;
+        
+        registry.insert("inner-lb".to_string(), inner_lb);
+        registry.insert("conn1".to_string(), MockConnector::new("conn1") as Arc<dyn Connector>);
+
+        let outer_lb = LoadBalanceConnector {
+            name: "outer-lb".to_string(),
+            connectors: vec!["inner-lb".to_string()],
+            ..Default::default()
+        };
+
+        outer_lb.registry.set(registry).map_err(|_| "Already set").unwrap();
+
+        let result = outer_lb.verify().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot use another LoadBalance connector"));
+    }
+
+    #[tokio::test]
+    async fn test_connect_integration() {
+        let lb = LoadBalanceConnector {
+            name: "test-lb".to_string(),
+            connectors: vec!["conn1".to_string(), "conn2".to_string()],
+            algorithm: Algorithm::RoundRobin,
+            ..Default::default()
+        };
+
+        let registry = create_test_registry();
+        lb.registry.set(registry).map_err(|_| "Already set").unwrap();
+
+        let lb = Arc::new(lb);
+        let ctx = create_test_context().await;
+
+        // Test successful connection
+        let result = lb.connect(ctx.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify context was updated with connector name
+        let context_read = ctx.read().await;
+        assert!(context_read.props().connector.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_connect_uninitialized_registry() {
+        let lb = Arc::new(LoadBalanceConnector {
+            name: "test-lb".to_string(),
+            connectors: vec!["conn1".to_string()],
+            algorithm: Algorithm::RoundRobin,
+            ..Default::default()
+        });
+
+        let ctx = create_test_context().await;
+        let result = lb.connect(ctx).await;
+        
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Connector registry not initialized"));
+    }
+
+    #[tokio::test]
+    async fn test_empty_connectors_error_handling() {
+        let lb = LoadBalanceConnector {
+            name: "test-lb".to_string(),
+            connectors: vec![],
+            algorithm: Algorithm::RoundRobin,
+            ..Default::default()
+        };
+
+        let registry = create_test_registry();
+        lb.registry.set(registry.clone()).map_err(|_| "Already set").unwrap();
+        let lb = Arc::new(lb);
+
+        // Test round robin with empty connectors
+        let result = lb.round_robin(&registry);
+        assert!(result.is_err());
+        match result {
+            Ok(_) => panic!("Expected error but got success"),
+            Err(e) => assert!(e.to_string().contains("No connectors available")),
+        }
+
+        // Test random with empty connectors  
+        let result = lb.random(&registry);
+        assert!(result.is_err());
+        match result {
+            Ok(_) => panic!("Expected error but got success"),
+            Err(e) => assert!(e.to_string().contains("No connectors available")),
+        }
     }
 }
