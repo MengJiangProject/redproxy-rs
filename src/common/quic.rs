@@ -24,7 +24,7 @@ use super::{
     tls::{TlsClientConfig, TlsServerConfig},
 };
 
-pub const ALPN_QUIC_HTTP11C: &[&[u8]] = &[b"h11c"]; //this is not regular HTTP3 connection, it uses HTTP1.1 CONNECT instead.
+pub const ALPN_QUIC_HTTP1: &[&[u8]] = &[b"http"]; //this is not regular HTTP3 connection, it uses HTTP1.1 CONNECT instead.
 
 pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig> {
     let (certs, key) = tls.certs()?;
@@ -32,7 +32,7 @@ pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig> {
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .context("load certificate")?;
-    server_crypto.alpn_protocols = ALPN_QUIC_HTTP11C.iter().map(|&x| x.into()).collect();
+    server_crypto.alpn_protocols = ALPN_QUIC_HTTP1.iter().map(|&x| x.into()).collect();
 
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.max_concurrent_uni_streams(0u8.into());
@@ -59,7 +59,7 @@ pub fn create_quic_client(tls: &TlsClientConfig, enable_bbr: bool) -> Result<Cli
         builder.with_no_client_auth()
     };
 
-    client_crypto.alpn_protocols = ALPN_QUIC_HTTP11C.iter().map(|&x| x.into()).collect();
+    client_crypto.alpn_protocols = ALPN_QUIC_HTTP1.iter().map(|&x| x.into()).collect();
 
     if tls.insecure {
         client_crypto

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, info, warn};
 
-use crate::common::h11c::h11c_handshake;
+use crate::common::http_proxy::http_proxy_handshake;
 use crate::common::quic::{QuicStream, create_quic_frames, create_quic_server, quic_frames_thread};
 use crate::common::tls::TlsServerConfig;
 use crate::config::Timeouts;
@@ -122,12 +122,12 @@ impl QuicListener {
             let conn = conn.clone();
             let sessions = sessions.clone();
             tokio::spawn(
-                h11c_handshake(ctx, queue.clone(), |_ch, id| async move {
+                http_proxy_handshake(ctx, queue.clone(), |_ch, id| async move {
                     Ok(create_quic_frames(conn, id, sessions).await)
                 })
                 .unwrap_or_else(move |e| {
                     warn!(
-                        "{}: h11c handshake error: {}: {:?}",
+                        "{}: http_proxy handshake error: {}: {:?}",
                         this.name,
                         e,
                         e.source()

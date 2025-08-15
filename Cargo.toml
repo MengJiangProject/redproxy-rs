@@ -39,6 +39,7 @@ libc = "0.2"
 hickory-resolver = "0.25"
 chashmap-async = "0.1.0"
 lru = "0.16"
+url = "2.5.4"
 
 # features quic
 quinn = { version = "0.11", optional = true}

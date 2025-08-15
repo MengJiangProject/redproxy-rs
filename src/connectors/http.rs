@@ -8,7 +8,7 @@ use tracing::{error, trace};
 
 use crate::{
     common::{
-        h11c::h11c_connect,
+        http_proxy::http_proxy_connect,
         socket_ops::{RealSocketOps, SocketOps},
         tls::TlsClientConfig,
     },
@@ -123,7 +123,7 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for HttpConnector<S>
             .await?;
         let server = make_buffered_stream(server_stream);
 
-        h11c_connect(server, ctx, local, remote, "inline", |_| async {
+        http_proxy_connect(server, ctx, local, remote, "inline", |_| async {
             // This should never be called when channel="inline"
             error!("HTTP connector frame callback called unexpectedly - this indicates a bug");
             // Return a dummy FrameIO that will fail immediately

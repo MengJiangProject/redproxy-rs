@@ -11,6 +11,7 @@ use crate::{
 };
 
 mod http;
+pub mod http_forward_tests;
 mod reverse;
 mod socks;
 
