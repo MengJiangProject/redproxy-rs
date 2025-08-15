@@ -19,7 +19,38 @@ use crate::{
 
 use super::frames::{FrameIO, frames_from_stream};
 
-pub async fn http_proxy_connect<T1, T2>(
+// Helper function to send error response to client
+async fn send_error_response(
+    client_stream: &mut IOBufStream,
+    status_code: u16,
+    status_text: &str,
+    error_message: &str,
+) -> Result<()> {
+    let response = HttpResponse::new(status_code, status_text)
+        .with_header("Content-Type", "text/plain")
+        .with_header("Connection", "close")
+        .with_header("Content-Length", error_message.len().to_string());
+
+    response
+        .write_with_body(client_stream, error_message.as_bytes())
+        .await
+        .context("Failed to send error response to client")
+}
+
+// Helper function to send simple error response without body
+async fn send_simple_error_response(
+    client_stream: &mut IOBufStream,
+    status_code: u16,
+    status_text: &str,
+) -> Result<()> {
+    HttpResponse::new(status_code, status_text)
+        .with_header("Connection", "close")
+        .write_to(client_stream)
+        .await
+        .context("Failed to send simple error response to client")
+}
+
+pub async fn http_forward_proxy_connect<T1, T2>(
     mut server: IOBufStream,
     ctx: ContextRef,
     local: SocketAddr,
@@ -31,7 +62,7 @@ where
     T1: FnOnce(u32) -> T2 + Sync,
     T2: Future<Output = FrameIO>,
 {
-    tracing::trace!("http_proxy_connect: channel={}", frame_channel);
+    tracing::trace!("http_forward_proxy_connect: channel={}", frame_channel);
     let target = ctx.read().await.target();
     let feature = ctx.read().await.feature();
     match feature {
@@ -106,7 +137,7 @@ static SESSION_ID: AtomicU32 = AtomicU32::new(0);
 
 // HTTP 1.1 proxy protocol handlers
 // used by http and quic listeners and connectors
-pub async fn http_proxy_handshake<FrameFn, T2>(
+pub async fn http_forward_proxy_handshake<FrameFn, T2>(
     ctx: ContextRef,
     queue: Sender<ContextRef>,
     create_frames: FrameFn,
@@ -155,9 +186,9 @@ where
                 );
             }
         } else {
-            HttpResponse::new(400, "Bad Request")
-                .write_to(socket)
-                .await?;
+            if let Err(e) = send_simple_error_response(socket, 400, "Bad Request").await {
+                warn!("Failed to send bad request response: {}", e);
+            }
             bail!("Invalid request protocol: {}", protocol);
         }
     } else if matches!(
@@ -194,9 +225,9 @@ where
             .set_http_request(request)
             .set_callback(HttpForwardCallback);
     } else {
-        HttpResponse::new(400, "Bad Request")
-            .write_to(socket)
-            .await?;
+        if let Err(e) = send_simple_error_response(socket, 400, "Bad Request").await {
+            warn!("Failed to send bad request response: {}", e);
+        }
         bail!("Invalid request method: {}", request.method);
     }
 
@@ -219,18 +250,13 @@ impl ContextCallback for HttpConnectCallback {
         }
     }
     async fn on_error(&self, ctx: &mut Context, error: Error) {
-        let socket = ctx.borrow_client_stream();
-        if socket.is_none() {
-            return;
-        }
-        let buf = format!("Error: {} Cause: {:?}", error, error.source());
-        if let Err(e) = HttpResponse::new(503, "Service unavailable")
-            .with_header("Content-Type", "text/plain")
-            .with_header("Content-Length", buf.len())
-            .write_with_body(socket.unwrap(), buf.as_bytes())
-            .await
-        {
-            warn!("failed to send response: {}", e)
+        if let Some(socket) = ctx.borrow_client_stream() {
+            let error_message = format!("Error: {} Cause: {:?}", error, error.source());
+            if let Err(e) =
+                send_error_response(socket, 503, "Service unavailable", &error_message).await
+            {
+                warn!("failed to send response: {}", e);
+            }
         }
     }
 }
@@ -239,24 +265,28 @@ struct HttpForwardCallback;
 #[async_trait]
 impl ContextCallback for HttpForwardCallback {
     async fn on_connect(&self, ctx: &mut Context) {
-        let client_stream = ctx.take_client_stream();
+        let client_stream = match ctx.take_client_stream() {
+            Ok(stream) => stream,
+            Err(e) => {
+                warn!(
+                    "HttpForwardCallback::on_connect: failed to take client stream: {}",
+                    e
+                );
+                return;
+            }
+        };
         let server_stream = ctx.take_server_stream();
         let request = ctx.http_request();
 
-        if client_stream.is_none() || server_stream.is_none() || request.is_none() {
-            warn!(
-                "HttpForwardCallback::on_connect: missing client_stream, server_stream, or http_request"
-            );
-            if let Some(mut client_stream) = client_stream {
-                let _ = HttpResponse::new(500, "Internal Server Error")
-                    .with_header("Connection", "close")
-                    .write_to(&mut client_stream)
-                    .await;
-            }
+        if server_stream.is_none() || request.is_none() {
+            warn!("HttpForwardCallback::on_connect: missing server_stream or http_request");
+            let mut client_stream = client_stream;
+            let _ =
+                send_simple_error_response(&mut client_stream, 500, "Internal Server Error").await;
             return;
         }
 
-        let mut client_stream = client_stream.unwrap();
+        let mut client_stream = client_stream;
         let mut server_stream = server_stream.unwrap();
         let mut request = request.unwrap().as_ref().clone();
 
@@ -276,20 +306,16 @@ impl ContextCallback for HttpForwardCallback {
 
         if let Err(e) = request.write_to(&mut server_stream).await {
             warn!("Failed to write request to server: {}", e);
-            let _ = HttpResponse::new(503, "Service Unavailable")
-                .with_header("Connection", "close")
-                .write_to(&mut client_stream)
-                .await;
+            let _ =
+                send_simple_error_response(&mut client_stream, 503, "Service Unavailable").await;
             return;
         }
 
         // Flush the server stream to ensure request is sent
         if let Err(e) = server_stream.flush().await {
             warn!("Failed to flush server stream after writing request: {}", e);
-            let _ = HttpResponse::new(503, "Service Unavailable")
-                .with_header("Connection", "close")
-                .write_to(&mut client_stream)
-                .await;
+            let _ =
+                send_simple_error_response(&mut client_stream, 503, "Service Unavailable").await;
             return;
         }
 
@@ -300,18 +326,22 @@ impl ContextCallback for HttpForwardCallback {
 
     async fn on_error(&self, ctx: &mut Context, error: Error) {
         warn!("HttpForwardCallback::on_error: {}", error);
-        if let Some(mut socket) = ctx.take_client_stream() {
-            let response = HttpResponse::new(503, "Service Unavailable")
-                .with_header("Content-Type", "text/plain")
-                .with_header("Connection", "close");
-            let body = format!("Error: {}\r\nCause: {:?}", error, error.source());
-            let response = response.with_header("Content-Length", body.len().to_string());
-
-            if let Err(e) = response.write_with_body(&mut socket, body.as_bytes()).await {
-                warn!("Failed to send error response to client: {}", e);
+        match ctx.take_client_stream() {
+            Ok(mut socket) => {
+                let error_message = format!("Error: {}\r\nCause: {:?}", error, error.source());
+                if let Err(e) =
+                    send_error_response(&mut socket, 503, "Service Unavailable", &error_message)
+                        .await
+                {
+                    warn!("Failed to send error response to client: {}", e);
+                }
             }
-        } else {
-            warn!("HttpForwardCallback::on_error: No client stream to send error response.");
+            Err(e) => {
+                warn!(
+                    "HttpForwardCallback::on_error: Failed to take client stream: {}",
+                    e
+                );
+            }
         }
     }
 }
@@ -325,12 +355,16 @@ struct FrameChannelCallback {
 impl ContextCallback for FrameChannelCallback {
     async fn on_connect(&self, ctx: &mut Context) {
         tracing::trace!("on_connect callback: id={} ctx={}", self.session_id, ctx);
-        let stream_opt = ctx.take_client_stream();
-        if stream_opt.is_none() {
-            warn!("FrameChannelCallback::on_connect: client stream is None, cannot proceed.");
-            return;
-        }
-        let mut stream = stream_opt.unwrap();
+        let mut stream = match ctx.take_client_stream() {
+            Ok(stream) => stream,
+            Err(e) => {
+                warn!(
+                    "FrameChannelCallback::on_connect: failed to take client stream: {}",
+                    e
+                );
+                return;
+            }
+        };
 
         if let Err(e) = HttpResponse::new(200, "Connection established")
             .with_header("Session-Id", self.session_id.to_string())
@@ -351,18 +385,13 @@ impl ContextCallback for FrameChannelCallback {
     }
 
     async fn on_error(&self, ctx: &mut Context, error: Error) {
-        let socket = ctx.borrow_client_stream();
-        if socket.is_none() {
-            return;
-        }
-        let buf = format!("Error: {} Cause: {:?}", error, error.source());
-        if let Err(e) = HttpResponse::new(503, "Service unavailable")
-            .with_header("Content-Type", "text/plain")
-            .with_header("Content-Length", buf.len())
-            .write_with_body(socket.unwrap(), buf.as_bytes())
-            .await
-        {
-            warn!("failed to send response: {}", e)
+        if let Some(socket) = ctx.borrow_client_stream() {
+            let error_message = format!("Error: {} Cause: {:?}", error, error.source());
+            if let Err(e) =
+                send_error_response(socket, 503, "Service unavailable", &error_message).await
+            {
+                warn!("failed to send response: {}", e);
+            }
         }
     }
 }

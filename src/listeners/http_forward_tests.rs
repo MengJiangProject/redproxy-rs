@@ -154,7 +154,7 @@ mod tests {
 
                     // Send error response directly since connection failed
                     let mut ctx_write_guard = ctx_ref.write().await;
-                    if let Some(mut client_stream) = ctx_write_guard.take_client_stream() {
+                    if let Ok(mut client_stream) = ctx_write_guard.take_client_stream() {
                         let response = HttpResponse::new(503, "Service Unavailable")
                             .with_header("Content-Type", "text/plain")
                             .with_header("Connection", "close");
@@ -788,5 +788,299 @@ bind: "{}"
             "Response: {}",
             response_str
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_integration_with_real_http_server() {
+        // Start a real HTTP server using tokio's hyper
+        use hyper::server::conn::http1;
+        use hyper::service::service_fn;
+        use hyper::{Request, Response};
+        use hyper_util::rt::TokioIo;
+        use std::convert::Infallible;
+        use std::net::SocketAddr;
+        use tokio::net::TcpListener;
+
+        async fn handle_request(
+            _req: Request<hyper::body::Incoming>,
+        ) -> Result<Response<String>, Infallible> {
+            let response_body = "Hello from real HTTP server!";
+            Ok(Response::builder()
+                .status(200)
+                .header("Content-Type", "text/plain")
+                .header("X-Test-Server", "Real-Hyper-Server")
+                .body(response_body.to_string())
+                .unwrap())
+        }
+
+        // Start the real HTTP server
+        let http_server_port = get_next_mock_port();
+        let http_server_addr: SocketAddr = ([127, 0, 0, 1], http_server_port).into();
+        let listener = TcpListener::bind(http_server_addr).await.unwrap();
+        let http_server_addr = listener.local_addr().unwrap();
+
+        // Start the server in the background
+        let server_handle = tokio::spawn(async move {
+            loop {
+                let (stream, _) = match listener.accept().await {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        eprintln!("Accept error: {}", e);
+                        continue;
+                    }
+                };
+
+                let io = TokioIo::new(stream);
+                tokio::spawn(async move {
+                    if let Err(err) = http1::Builder::new()
+                        .serve_connection(io, service_fn(handle_request))
+                        .await
+                    {
+                        eprintln!("Error serving connection: {:?}", err);
+                    }
+                });
+            }
+        });
+
+        // Give the server time to start
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Set up our proxy
+        let proxy_port = get_next_proxy_port();
+        let proxy_listen_addr = format!("127.0.0.1:{}", proxy_port);
+        let (context_manager, proxy_addr, ctx_receiver) =
+            setup_proxy_server(&proxy_listen_addr).await;
+        tokio::spawn(process_contexts(ctx_receiver, context_manager.clone()));
+
+        // Test various HTTP methods through the proxy
+        let test_cases = vec![
+            ("GET", ""),
+            ("POST", "test body content"),
+            ("PUT", "updated content"),
+            ("DELETE", ""),
+        ];
+
+        for (method, body) in test_cases {
+            let mut client_stream = TcpStream::connect(proxy_addr).await.unwrap();
+
+            let request_str = if body.is_empty() {
+                format!(
+                    "{} http://{}/test HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                    method, http_server_addr, http_server_addr
+                )
+            } else {
+                format!(
+                    "{} http://{}/test HTTP/1.1\r\nHost: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    method,
+                    http_server_addr,
+                    http_server_addr,
+                    body.len(),
+                    body
+                )
+            };
+
+            client_stream
+                .write_all(request_str.as_bytes())
+                .await
+                .unwrap();
+            client_stream.flush().await.unwrap();
+
+            let mut response_buf = Vec::new();
+            match tokio::time::timeout(
+                Duration::from_secs(5),
+                client_stream.read_to_end(&mut response_buf),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {
+                    let response_str = String::from_utf8_lossy(&response_buf);
+                    println!("Response for {} method: {}", method, response_str);
+
+                    // Verify we got a response from the real server
+                    assert!(
+                        response_str.contains("HTTP/1.1 200 OK"),
+                        "Expected 200 OK for {} method, got: {}",
+                        method,
+                        response_str
+                    );
+                    assert!(
+                        response_str.contains("Hello from real HTTP server!"),
+                        "Expected server response body for {} method, got: {}",
+                        method,
+                        response_str
+                    );
+                    assert!(
+                        response_str
+                            .to_lowercase()
+                            .contains("x-test-server: real-hyper-server"),
+                        "Expected custom header for {} method, got: {}",
+                        method,
+                        response_str
+                    );
+                }
+                Ok(Err(e)) => panic!("Failed to read response for {} method: {}", method, e),
+                Err(_) => panic!("Timeout reading response for {} method", method),
+            }
+        }
+
+        // Test WebSocket upgrade request (should be passed through)
+        let mut ws_client_stream = TcpStream::connect(proxy_addr).await.unwrap();
+        let ws_request = format!(
+            "GET http://{}/websocket HTTP/1.1\r\n\
+             Host: {}\r\n\
+             Connection: upgrade\r\n\
+             Upgrade: websocket\r\n\
+             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+             Sec-WebSocket-Version: 13\r\n\r\n",
+            http_server_addr, http_server_addr
+        );
+
+        ws_client_stream
+            .write_all(ws_request.as_bytes())
+            .await
+            .unwrap();
+        ws_client_stream.flush().await.unwrap();
+
+        let mut ws_response_buf = Vec::new();
+        match tokio::time::timeout(
+            Duration::from_secs(3),
+            ws_client_stream.read_to_end(&mut ws_response_buf),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {
+                let ws_response_str = String::from_utf8_lossy(&ws_response_buf);
+                println!("WebSocket upgrade response: {}", ws_response_str);
+
+                // The real HTTP server should respond (even if it doesn't support WebSocket)
+                // The important thing is that our proxy passed through the upgrade headers
+                assert!(
+                    ws_response_str.contains("HTTP/1.1"),
+                    "Expected HTTP response for WebSocket upgrade, got: {}",
+                    ws_response_str
+                );
+            }
+            Ok(Err(e)) => {
+                println!("WebSocket upgrade connection error (expected): {}", e);
+            }
+            Err(_) => {
+                println!("WebSocket upgrade timeout (expected for non-WebSocket server)");
+            }
+        }
+
+        // Clean up
+        server_handle.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_real_server_with_chunked_encoding() {
+        use hyper::server::conn::http1;
+        use hyper::service::service_fn;
+        use hyper::{Request, Response};
+        use hyper_util::rt::TokioIo;
+        use std::convert::Infallible;
+        use std::net::SocketAddr;
+        use tokio::net::TcpListener;
+
+        async fn handle_chunked_request(
+            _req: Request<hyper::body::Incoming>,
+        ) -> Result<Response<String>, Infallible> {
+            // Create a simple response (hyper will handle chunking automatically if needed)
+            let response_body = "Chunk 1\nChunk 2\nFinal chunk\n";
+
+            Ok(Response::builder()
+                .status(200)
+                .header("Content-Type", "text/plain")
+                .header("X-Chunked-Response", "true")
+                .body(response_body.to_string())
+                .unwrap())
+        }
+
+        // Start the real HTTP server with chunked encoding
+        let http_server_port = get_next_mock_port();
+        let http_server_addr: SocketAddr = ([127, 0, 0, 1], http_server_port).into();
+        let listener = TcpListener::bind(http_server_addr).await.unwrap();
+        let http_server_addr = listener.local_addr().unwrap();
+
+        let server_handle = tokio::spawn(async move {
+            loop {
+                let (stream, _) = match listener.accept().await {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        eprintln!("Chunked server accept error: {}", e);
+                        continue;
+                    }
+                };
+
+                let io = TokioIo::new(stream);
+                tokio::spawn(async move {
+                    if let Err(err) = http1::Builder::new()
+                        .serve_connection(io, service_fn(handle_chunked_request))
+                        .await
+                    {
+                        eprintln!("Error serving chunked connection: {:?}", err);
+                    }
+                });
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Set up proxy
+        let proxy_port = get_next_proxy_port();
+        let proxy_listen_addr = format!("127.0.0.1:{}", proxy_port);
+        let (context_manager, proxy_addr, ctx_receiver) =
+            setup_proxy_server(&proxy_listen_addr).await;
+        tokio::spawn(process_contexts(ctx_receiver, context_manager.clone()));
+
+        // Test chunked response through proxy
+        let mut client_stream = TcpStream::connect(proxy_addr).await.unwrap();
+        let request_str = format!(
+            "GET http://{}/chunked HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+            http_server_addr, http_server_addr
+        );
+
+        client_stream
+            .write_all(request_str.as_bytes())
+            .await
+            .unwrap();
+        client_stream.flush().await.unwrap();
+
+        let mut response_buf = Vec::new();
+        match tokio::time::timeout(
+            Duration::from_secs(5),
+            client_stream.read_to_end(&mut response_buf),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {
+                let response_str = String::from_utf8_lossy(&response_buf);
+                println!("Chunked response: {}", response_str);
+
+                assert!(
+                    response_str.contains("HTTP/1.1 200 OK"),
+                    "Expected 200 OK for chunked response, got: {}",
+                    response_str
+                );
+                assert!(
+                    response_str
+                        .to_lowercase()
+                        .contains("x-chunked-response: true"),
+                    "Expected chunked response header, got: {}",
+                    response_str
+                );
+                assert!(
+                    response_str.contains("Chunk 1")
+                        && response_str.contains("Chunk 2")
+                        && response_str.contains("Final chunk"),
+                    "Expected all chunks in response, got: {}",
+                    response_str
+                );
+            }
+            Ok(Err(e)) => panic!("Failed to read chunked response: {}", e),
+            Err(_) => panic!("Timeout reading chunked response"),
+        }
+
+        server_handle.abort();
     }
 }

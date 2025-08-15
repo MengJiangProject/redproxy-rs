@@ -592,8 +592,10 @@ impl Context {
         self.client_stream.as_mut()
     }
 
-    pub fn take_client_stream(&mut self) -> Option<IOBufStream> {
-        self.client_stream.take()
+    pub fn take_client_stream(&mut self) -> Result<IOBufStream, anyhow::Error> {
+        self.client_stream
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Client stream already taken or not available"))
     }
 
     pub fn take_server_stream(&mut self) -> Option<IOBufStream> {

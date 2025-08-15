@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tracing::{error, info, warn};
 
-use crate::common::http_proxy::http_proxy_handshake;
+use crate::common::http_proxy::http_forward_proxy_handshake;
 use crate::common::socket_ops::{AppTcpListener, RealSocketOps, SocketOps};
 use crate::common::tls::TlsServerConfig;
 use crate::config::Timeouts;
@@ -126,7 +126,7 @@ impl<S: SocketOps + Send + Sync + 'static> HttpListener<S> {
                         ctx.write()
                             .await
                             .set_client_stream(make_buffered_stream(stream));
-                        let res = http_proxy_handshake(ctx, queue, |_, _| async {
+                        let res = http_forward_proxy_handshake(ctx, queue, |_, _| async {
                             bail!("not supported")
                         })
                         .await;
