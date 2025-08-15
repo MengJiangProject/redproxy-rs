@@ -367,6 +367,11 @@ The `http` connector forwards traffic to an upstream HTTP or HTTPS proxy.
     -   *Example*: `"192.168.100.1"`
 -   `port` (integer): The port number of the upstream proxy server.
     -   *Example*: `7081` (for HTTP) or `3333` (for HTTPS in the example)
+-   `forceConnect` (boolean, optional): Forces all requests to use HTTP CONNECT tunneling instead of HTTP forward proxy.
+    -   *Default value*: `false`.
+    -   When `false`, GET/POST/PUT/DELETE requests are forwarded directly as HTTP requests.
+    -   When `true`, all requests (including GET/POST/PUT/DELETE) are tunneled through HTTP CONNECT.
+    -   This option is useful for compatibility with upstream proxies that only support CONNECT method.
 -   `tls` (object, optional): If present, this section configures TLS for connecting to an HTTPS proxy.
     -   `insecure` (boolean):
         -   *Default value*: `false`.
@@ -386,12 +391,14 @@ connectors:
   - name: http
     server: 192.168.100.1
     port: 7081
+    # forceConnect: false # Default: use HTTP forward proxy when possible
 
-  # HTTPS Connector
+  # HTTPS Connector with CONNECT-only mode
   - name: https # 'type: http' is inferred
     type: http # Can be explicitly set
     server: 192.168.100.1
     port: 3333
+    forceConnect: true # Force all requests to use CONNECT tunneling
     tls:
       insecure: true # Example allows self-signed certs for the upstream proxy
       ca: ca.crt # Optional custom CA for upstream proxy

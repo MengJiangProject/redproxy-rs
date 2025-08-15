@@ -57,12 +57,17 @@ pub async fn http_forward_proxy_connect<T1, T2>(
     remote: SocketAddr,
     frame_channel: &str,
     frame_fn: T1,
+    force_connect: bool,
 ) -> Result<()>
 where
     T1: FnOnce(u32) -> T2 + Sync,
     T2: Future<Output = FrameIO>,
 {
-    tracing::trace!("http_forward_proxy_connect: channel={}", frame_channel);
+    tracing::trace!(
+        "http_forward_proxy_connect: channel={}, force_connect={}",
+        frame_channel,
+        force_connect
+    );
     let target = ctx.read().await.target();
     let feature = ctx.read().await.feature();
     match feature {
@@ -70,7 +75,7 @@ where
             // Check if we have a stored HTTP request (GET, POST, etc.)
             let has_http_request = ctx.read().await.http_request().is_some();
 
-            if has_http_request {
+            if has_http_request && !force_connect {
                 // HTTP forwarding - no CONNECT handshake needed
                 // The server stream is already connected to the target origin server
                 // HttpForwardCallback will handle writing the request and reading the response
@@ -80,7 +85,7 @@ where
                     .set_local_addr(local)
                     .set_server_addr(remote);
             } else {
-                // Traditional CONNECT tunneling
+                // Traditional CONNECT tunneling (either forced or no HTTP request)
                 HttpRequest::new("CONNECT", &target)
                     .with_header("Host", &target)
                     .write_to(&mut server)

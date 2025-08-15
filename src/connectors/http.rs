@@ -24,6 +24,8 @@ pub struct HttpConnectorConfig {
     server: String,
     port: u16,
     tls: Option<TlsClientConfig>,
+    #[serde(default)]
+    force_connect: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -123,14 +125,22 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for HttpConnector<S>
             .await?;
         let server = make_buffered_stream(server_stream);
 
-        http_forward_proxy_connect(server, ctx, local, remote, "inline", |_| async {
-            // This should never be called when channel="inline"
-            error!("HTTP connector frame callback called unexpectedly - this indicates a bug");
-            // Return a dummy FrameIO that will fail immediately
-            use crate::common::frames::frames_from_stream;
-            let dummy_stream = tokio::io::duplex(1).0;
-            frames_from_stream(0, dummy_stream)
-        })
+        http_forward_proxy_connect(
+            server,
+            ctx,
+            local,
+            remote,
+            "inline",
+            |_| async {
+                // This should never be called when channel="inline"
+                error!("HTTP connector frame callback called unexpectedly - this indicates a bug");
+                // Return a dummy FrameIO that will fail immediately
+                use crate::common::frames::frames_from_stream;
+                let dummy_stream = tokio::io::duplex(1).0;
+                frames_from_stream(0, dummy_stream)
+            },
+            self.force_connect,
+        )
         .await?;
         Ok(())
     }
@@ -168,6 +178,7 @@ mod tests {
         server: String,
         port: u16,
         tls: Option<TlsClientConfig>,
+        force_connect: bool,
         socket_ops: Arc<S>,
     ) -> HttpConnector<S> {
         HttpConnector::with_socket_ops(
@@ -176,6 +187,7 @@ mod tests {
                 server,
                 port,
                 tls,
+                force_connect,
             },
             socket_ops,
         )
@@ -195,7 +207,8 @@ mod tests {
         let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
             http_connect_stream("httpbin.org", 80)
         }));
-        let connector = create_test_connector("192.0.2.12".to_string(), 8080, None, mock_ops);
+        let connector =
+            create_test_connector("192.0.2.12".to_string(), 8080, None, false, mock_ops);
 
         // Test basic interface
         assert_eq!(connector.name(), "test_http");
@@ -219,6 +232,7 @@ mod tests {
             "192.0.2.10".to_string(), // Use IP address instead of domain
             8080,
             None,
+            false,
             mock_ops,
         ));
 
@@ -245,6 +259,7 @@ mod tests {
             "192.0.2.11".to_string(), // Use IP address instead of domain
             8080,
             None,
+            false,
             mock_ops,
         ));
 
@@ -267,12 +282,82 @@ mod tests {
         let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
             http_connect_stream("httpbin.org", 80)
         }));
-        let connector = create_test_connector("192.0.2.13".to_string(), 8080, None, mock_ops);
+        let connector =
+            create_test_connector("192.0.2.13".to_string(), 8080, None, false, mock_ops);
 
         // Test supported features
         let features = connector.features();
         assert!(features.contains(&Feature::TcpForward));
         assert!(features.contains(&Feature::UdpForward));
         assert!(features.contains(&Feature::UdpBind));
+    }
+
+    #[tokio::test]
+    async fn test_http_connector_force_connect() {
+        // Test force_connect = true forces CONNECT tunneling even for HTTP forward proxy requests
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            http_connect_stream("httpbin.org", 80)
+        }));
+        let connector = Arc::new(create_test_connector(
+            "192.0.2.14".to_string(),
+            8080,
+            None,
+            true, // force_connect = true
+            mock_ops,
+        ));
+
+        // Create context with HTTP request (which normally would use forward proxy)
+        let target = TargetAddress::DomainPort("httpbin.org".to_string(), 80);
+        let ctx = create_test_context(target, Feature::TcpForward).await;
+
+        // Add an HTTP request to the context (simulating HTTP forward proxy scenario)
+        {
+            let mut ctx_lock = ctx.write().await;
+            let http_request = crate::common::http::HttpRequest::new("GET", "/")
+                .with_header("Host", "httpbin.org");
+            ctx_lock.set_http_request(http_request);
+        }
+
+        // Connect should still use CONNECT tunneling because force_connect = true
+        let result = connector.connect(ctx.clone()).await;
+        assert!(
+            result.is_ok(),
+            "Connection should succeed with force_connect"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_http_connector_no_force_connect() {
+        // Test force_connect = false (default) allows HTTP forward proxy for HTTP requests
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            // No CONNECT expected, just plain TCP connection
+            StreamScript::new().build()
+        }));
+        let connector = Arc::new(create_test_connector(
+            "192.0.2.15".to_string(),
+            8080,
+            None,
+            false, // force_connect = false (default)
+            mock_ops,
+        ));
+
+        // Create context with HTTP request
+        let target = TargetAddress::DomainPort("httpbin.org".to_string(), 80);
+        let ctx = create_test_context(target, Feature::TcpForward).await;
+
+        // Add an HTTP request to the context
+        {
+            let mut ctx_lock = ctx.write().await;
+            let http_request = crate::common::http::HttpRequest::new("GET", "/")
+                .with_header("Host", "httpbin.org");
+            ctx_lock.set_http_request(http_request);
+        }
+
+        // Connect should use HTTP forward proxy (no CONNECT tunneling)
+        let result = connector.connect(ctx.clone()).await;
+        assert!(
+            result.is_ok(),
+            "Connection should succeed without force_connect"
+        );
     }
 }
