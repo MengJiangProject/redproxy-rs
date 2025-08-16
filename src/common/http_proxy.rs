@@ -19,6 +19,20 @@ use crate::{
 
 use super::frames::{FrameIO, frames_from_stream};
 
+// Helper function to check if a request is a WebSocket upgrade
+fn is_websocket_upgrade(request: &HttpRequest) -> bool {
+    let connection = request.header("Connection", "").to_lowercase();
+    let upgrade = request.header("Upgrade", "").to_lowercase();
+
+    // Check if Connection header contains "upgrade" as a separate token
+    let has_upgrade_connection = connection.split(',').any(|token| token.trim() == "upgrade");
+
+    // Check if Upgrade header is exactly "websocket"
+    let has_websocket_upgrade = upgrade == "websocket";
+
+    has_upgrade_connection && has_websocket_upgrade
+}
+
 // Helper function to send error response to client
 async fn send_error_response(
     client_stream: &mut IOBufStream,
@@ -296,14 +310,7 @@ impl ContextCallback for HttpForwardCallback {
         let mut request = request.unwrap().as_ref().clone();
 
         // Only add Connection: close for regular HTTP requests, not WebSocket upgrades
-        let is_websocket_upgrade = request
-            .header("Connection", "")
-            .to_lowercase()
-            .contains("upgrade")
-            && request
-                .header("Upgrade", "")
-                .to_lowercase()
-                .contains("websocket");
+        let is_websocket_upgrade = is_websocket_upgrade(&request);
 
         if !is_websocket_upgrade {
             request = request.with_header("Connection", "close");
@@ -398,5 +405,55 @@ impl ContextCallback for FrameChannelCallback {
                 warn!("failed to send response: {}", e);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_websocket_detection() {
+        // Valid WebSocket upgrade request
+        let ws_request = HttpRequest::new("GET", "/")
+            .with_header("Connection", "upgrade")
+            .with_header("Upgrade", "websocket");
+        assert!(is_websocket_upgrade(&ws_request));
+
+        // Valid WebSocket upgrade with multiple Connection header values
+        let ws_request_multi = HttpRequest::new("GET", "/")
+            .with_header("Connection", "keep-alive, upgrade")
+            .with_header("Upgrade", "websocket");
+        assert!(is_websocket_upgrade(&ws_request_multi));
+
+        // Valid WebSocket upgrade with different casing
+        let ws_request_case = HttpRequest::new("GET", "/")
+            .with_header("Connection", "Upgrade")
+            .with_header("Upgrade", "WebSocket");
+        assert!(is_websocket_upgrade(&ws_request_case));
+
+        // Invalid: contains "upgrade" but not as separate token
+        let invalid_contains = HttpRequest::new("GET", "/")
+            .with_header("Connection", "keep-alive-upgrade")
+            .with_header("Upgrade", "websocket");
+        assert!(!is_websocket_upgrade(&invalid_contains));
+
+        // Invalid: Upgrade header contains websocket but not exactly
+        let invalid_upgrade = HttpRequest::new("GET", "/")
+            .with_header("Connection", "upgrade")
+            .with_header("Upgrade", "websocket-custom");
+        assert!(!is_websocket_upgrade(&invalid_upgrade));
+
+        // Invalid: Regular HTTP request
+        let http_request = HttpRequest::new("GET", "/").with_header("Connection", "keep-alive");
+        assert!(!is_websocket_upgrade(&http_request));
+
+        // Invalid: Missing Connection header
+        let no_connection = HttpRequest::new("GET", "/").with_header("Upgrade", "websocket");
+        assert!(!is_websocket_upgrade(&no_connection));
+
+        // Invalid: Missing Upgrade header
+        let no_upgrade = HttpRequest::new("GET", "/").with_header("Connection", "upgrade");
+        assert!(!is_websocket_upgrade(&no_upgrade));
     }
 }
