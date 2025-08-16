@@ -154,7 +154,7 @@ impl QuicConnector {
             "quic-datagrams"
         };
         let frames = |id| create_quic_frames(conn, id, sessions);
-        http_forward_proxy_connect(server, ctx, local, remote, channel, frames, false).await?;
+        http_forward_proxy_connect(server, ctx, local, remote, channel, frames, false, None).await?;
         Ok(())
     }
 
