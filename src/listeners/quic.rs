@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, info, warn};
 
+use crate::common::auth::AuthData;
 use crate::common::http_proxy::http_forward_proxy_handshake;
 use crate::common::quic::{QuicStream, create_quic_frames, create_quic_server, quic_frames_thread};
 use crate::common::tls::TlsServerConfig;
@@ -25,6 +26,8 @@ pub struct QuicListener {
     tls: TlsServerConfig,
     #[serde(default = "default_bbr")]
     bbr: bool,
+    #[serde(default)]
+    auth: AuthData,
 }
 
 fn default_bbr() -> bool {
@@ -44,6 +47,7 @@ impl Listener for QuicListener {
     }
     async fn init(&mut self) -> Result<()> {
         self.tls.init()?;
+        self.auth.init().await?;
         Ok(())
     }
     async fn listen(
@@ -122,9 +126,12 @@ impl QuicListener {
             let conn = conn.clone();
             let sessions = sessions.clone();
             tokio::spawn(
-                http_forward_proxy_handshake(ctx, queue.clone(), |_ch, id| async move {
-                    Ok(create_quic_frames(conn, id, sessions).await)
-                })
+                {
+                    let auth_data = if this.auth.required { Some(this.auth.clone()) } else { None };
+                    http_forward_proxy_handshake(ctx, queue.clone(), |_ch, id| async move {
+                        Ok(create_quic_frames(conn, id, sessions).await)
+                    }, auth_data)
+                }
                 .unwrap_or_else(move |e| {
                     warn!(
                         "{}: http_proxy handshake error: {}: {:?}",

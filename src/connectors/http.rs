@@ -19,6 +19,13 @@ use super::ConnectorRef;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct HttpAuthData {
+    username: String,
+    password: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct HttpConnectorConfig {
     name: String,
     server: String,
@@ -26,6 +33,7 @@ pub struct HttpConnectorConfig {
     tls: Option<TlsClientConfig>,
     #[serde(default)]
     force_connect: bool,
+    auth: Option<HttpAuthData>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,6 +133,8 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for HttpConnector<S>
             .await?;
         let server = make_buffered_stream(server_stream);
 
+        let auth = self.auth.as_ref().map(|a| (a.username.clone(), a.password.clone()));
+        
         http_forward_proxy_connect(
             server,
             ctx,
@@ -140,6 +150,7 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for HttpConnector<S>
                 frames_from_stream(0, dummy_stream)
             },
             self.force_connect,
+            auth,
         )
         .await?;
         Ok(())
@@ -188,6 +199,7 @@ mod tests {
                 port,
                 tls,
                 force_connect,
+                auth: None,
             },
             socket_ops,
         )
@@ -324,6 +336,49 @@ mod tests {
             result.is_ok(),
             "Connection should succeed with force_connect"
         );
+    }
+
+    #[tokio::test]
+    async fn test_http_connector_with_auth() {
+        // Test that HTTP connector includes Proxy-Authorization header when auth is configured
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            StreamScript::new()
+                .write(
+                    "CONNECT httpbin.org:80 HTTP/1.1\r\nHost: httpbin.org:80\r\nProxy-Authorization: Basic dGVzdHVzZXI6dGVzdHBhc3M=\r\n\r\n"
+                        .as_bytes(),
+                )
+                .read(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                .build()
+        }));
+        
+        let auth = HttpAuthData {
+            username: "testuser".to_string(),
+            password: "testpass".to_string(),
+        };
+        
+        let connector = Arc::new(HttpConnector::with_socket_ops(
+            HttpConnectorConfig {
+                name: "test_http_auth".to_string(),
+                server: "192.0.2.16".to_string(),
+                port: 8080,
+                tls: None,
+                force_connect: false,
+                auth: Some(auth),
+            },
+            mock_ops,
+        ));
+
+        let target = TargetAddress::DomainPort("httpbin.org".to_string(), 80);
+        let ctx = create_test_context(target, Feature::TcpForward).await;
+
+        // This should succeed and include the Proxy-Authorization header
+        let result = connector.connect(ctx.clone()).await;
+        assert!(result.is_ok(), "Connection with auth should succeed");
+
+        // Verify context was updated correctly
+        let context_read = ctx.read().await;
+        assert_eq!(context_read.local_addr().to_string(), "127.0.0.1:12345");
+        assert_eq!(context_read.server_addr().to_string(), "192.0.2.1:80");
     }
 
     #[tokio::test]
