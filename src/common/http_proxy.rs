@@ -276,39 +276,24 @@ where
             }
             bail!("Invalid request protocol: {}", protocol);
         }
+    } else if request.method.eq_ignore_ascii_case("GET") {
+        // Check for RFC 9298 UDP-over-HTTP upgrade
+        let connection = request.header("Connection", "");
+        let upgrade = request.header("Upgrade", "");
+        
+        if connection.to_lowercase().contains("upgrade") && upgrade.eq_ignore_ascii_case("connect-udp") {
+            // RFC 9298 HTTP/1.1 UDP proxy upgrade
+            drop(ctx_lock);
+            return handle_rfc9298_upgrade(ctx, queue, request, create_frames).await;
+        }
+        
+        // Fall through to regular HTTP forward proxy handling
+        handle_http_forward_request(&mut ctx_lock, request)?;
     } else if matches!(
         request.method.to_uppercase().as_str(),
-        "GET" | "POST" | "PUT" | "DELETE" | "HEAD" | "OPTIONS" | "PATCH"
+        "POST" | "PUT" | "DELETE" | "HEAD" | "OPTIONS" | "PATCH"
     ) {
-        let target_addr = if request.resource.starts_with("http://")
-            || request.resource.starts_with("https://")
-        {
-            // Absolute URI
-            let url = Url::parse(&request.resource)
-                .map_err(|e| anyhow!("Failed to parse resource URI: {}", e))?;
-            let host = url
-                .host_str()
-                .ok_or_else(|| anyhow!("Missing host in resource URI"))?;
-            let port = url
-                .port_or_known_default()
-                .ok_or_else(|| anyhow!("Missing port in resource URI"))?;
-            TargetAddress::DomainPort(host.to_string(), port)
-        } else {
-            // Relative path, use Host header
-            let host_header = request.header("Host", "");
-            if host_header.is_empty() {
-                bail!("Missing Host header for relative resource path");
-            }
-            host_header
-                .parse()
-                .with_context(|| format!("failed to parse Host header: {}", host_header))?
-        };
-
-        ctx_lock
-            .set_target(target_addr)
-            .set_feature(Feature::TcpForward)
-            .set_http_request(request)
-            .set_callback(HttpForwardCallback);
+        handle_http_forward_request(&mut ctx_lock, request)?;
     } else {
         if let Err(e) = send_simple_error_response(socket, 400, "Bad Request").await {
             warn!("Failed to send bad request response: {}", e);
@@ -320,6 +305,176 @@ where
     drop(ctx_lock);
     ctx.enqueue(&queue).await?;
     Ok(())
+}
+
+// Helper function for common HTTP forward proxy request handling
+fn handle_http_forward_request(ctx_lock: &mut Context, request: HttpRequest) -> Result<()> {
+    let target_addr = if request.resource.starts_with("http://")
+        || request.resource.starts_with("https://")
+    {
+        // Absolute URI
+        let url = Url::parse(&request.resource)
+            .map_err(|e| anyhow!("Failed to parse resource URI: {}", e))?;
+        let host = url
+            .host_str()
+            .ok_or_else(|| anyhow!("Missing host in resource URI"))?;
+        let port = url
+            .port_or_known_default()
+            .ok_or_else(|| anyhow!("Missing port in resource URI"))?;
+        TargetAddress::DomainPort(host.to_string(), port)
+    } else {
+        // Relative path, use Host header
+        let host_header = request.header("Host", "");
+        if host_header.is_empty() {
+            bail!("Missing Host header for relative resource path");
+        }
+        host_header
+            .parse()
+            .with_context(|| format!("failed to parse Host header: {}", host_header))?
+    };
+
+    ctx_lock
+        .set_target(target_addr)
+        .set_feature(Feature::TcpForward)
+        .set_http_request(request)
+        .set_callback(HttpForwardCallback);
+    
+    Ok(())
+}
+
+// RFC 9298 HTTP/1.1 UDP proxy upgrade handler
+async fn handle_rfc9298_upgrade<FrameFn, T2>(
+    ctx: ContextRef,
+    queue: Sender<ContextRef>,
+    request: HttpRequest,
+    _create_frames: FrameFn,
+) -> Result<()>
+where
+    FrameFn: FnOnce(&str, u32) -> T2 + Sync,
+    T2: Future<Output = Result<FrameIO>>,
+{
+    // Parse URI template to extract target_host and target_port
+    let target = parse_rfc9298_uri_template(&request.resource)?;
+    
+    let mut ctx_lock = ctx.write().await;
+    let socket = ctx_lock.borrow_client_stream().unwrap();
+    
+    // Send 101 Switching Protocols response
+    if let Err(e) = HttpResponse::new(101, "Switching Protocols")
+        .with_header("Connection", "Upgrade")
+        .with_header("Upgrade", "connect-udp")
+        .write_to(socket)
+        .await
+    {
+        warn!("Failed to send upgrade response: {}", e);
+        bail!("Failed to send upgrade response");
+    }
+
+    // Set up UDP proxying context with RFC 9298 callback
+    let session_id = SESSION_ID.fetch_add(1, Ordering::Relaxed);
+    ctx_lock
+        .set_target(target)
+        .set_feature(Feature::UdpForward)
+        .set_callback(Rfc9298Callback { session_id });
+
+    // Set up capsule protocol frames
+    ctx_lock.set_client_frames(
+        create_rfc9298_frames(session_id)
+            .await
+            .context("create RFC 9298 frames")?,
+    );
+
+    drop(ctx_lock);
+    ctx.enqueue(&queue).await?;
+    Ok(())
+}
+
+// Parse RFC 9298 URI template to extract target address
+fn parse_rfc9298_uri_template(uri: &str) -> Result<TargetAddress> {
+    // RFC 9298 requires URI template with {target_host} and {target_port} variables
+    // Examples:
+    // - /.well-known/masque/udp/{target_host}/{target_port}/
+    // - /udp-proxy/{target_host}/{target_port}
+    // - /proxy?host={target_host}&port={target_port}
+    
+    // For now, implement a simple parser that handles common URI template patterns
+    // This should be enhanced to use a proper RFC 6570 URI template library
+    
+    // Check for query parameter style: ?host={target_host}&port={target_port}
+    if uri.contains('?') {
+        let (_, query) = uri.split_once('?').unwrap();
+        let mut host: Option<&str> = None;
+        let mut port: Option<&str> = None;
+        
+        for param in query.split('&') {
+            if let Some((key, value)) = param.split_once('=') {
+                match key {
+                    "host" | "target_host" => {
+                        host = Some(value.trim_matches('{').trim_matches('}'));
+                    }
+                    "port" | "target_port" => {
+                        port = Some(value.trim_matches('{').trim_matches('}'));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        
+        if let (Some(h), Some(p)) = (host, port) {
+            if let Ok(port_num) = p.parse::<u16>() {
+                return Ok(TargetAddress::DomainPort(h.to_string(), port_num));
+            }
+        }
+    }
+    
+    // Check for path-based style: /path/{target_host}/{target_port}
+    let path_parts: Vec<&str> = uri.split('/').collect();
+    for i in 0..path_parts.len().saturating_sub(1) {
+        let current = path_parts[i];
+        let next = path_parts.get(i + 1);
+        
+        // Look for {target_host} and {target_port} patterns
+        if (current == "{target_host}" || current.contains("target_host"))
+            && next.is_some()
+            && (next.unwrap().contains("target_port") || next.unwrap().starts_with('{'))
+        {
+            // Extract actual values - for now assume they are literal values
+            // In a real implementation, this would be resolved from the actual request
+            if i >= 2 && path_parts.len() > i + 2 {
+                let host_val = path_parts[i - 1];
+                let port_val = path_parts[i + 1];
+                
+                if !host_val.is_empty() && !port_val.starts_with('{') {
+                    if let Ok(port_num) = port_val.parse::<u16>() {
+                        return Ok(TargetAddress::DomainPort(host_val.to_string(), port_num));
+                    }
+                }
+            }
+        }
+    }
+    
+    // Fallback: Try to extract from the last two non-empty path segments
+    let non_empty_parts: Vec<&str> = path_parts.iter().filter(|s| !s.is_empty()).copied().collect();
+    if non_empty_parts.len() >= 2 {
+        let host = non_empty_parts[non_empty_parts.len() - 2];
+        let port_str = non_empty_parts[non_empty_parts.len() - 1];
+        
+        // Skip template variables
+        if !host.starts_with('{') && !port_str.starts_with('{') {
+            if let Ok(port) = port_str.parse::<u16>() {
+                return Ok(TargetAddress::DomainPort(host.to_string(), port));
+            }
+        }
+    }
+    
+    bail!("Invalid or unresolvable RFC 9298 URI template: {}. Expected template with target_host and target_port variables.", uri);
+}
+
+// Create RFC 9298 capsule protocol frames
+async fn create_rfc9298_frames(_session_id: u32) -> Result<FrameIO> {
+    // TODO: Implement proper RFC 9298 capsule protocol framing
+    // For now, use a placeholder that will be implemented next
+    bail!("RFC 9298 frames not yet implemented");
 }
 
 struct HttpConnectCallback;
@@ -474,9 +629,56 @@ impl ContextCallback for FrameChannelCallback {
     }
 }
 
+struct Rfc9298Callback {
+    session_id: u32,
+}
+
+#[async_trait]
+impl ContextCallback for Rfc9298Callback {
+    async fn on_connect(&self, ctx: &mut Context) {
+        tracing::trace!("RFC 9298 on_connect callback: id={} ctx={}", self.session_id, ctx);
+        
+        // For RFC 9298, the upgrade response was already sent during handshake
+        // Here we just need to set up the capsule protocol frames if not already done
+        
+        // TODO: Implement proper RFC 9298 capsule protocol setup
+        tracing::info!("RFC 9298 UDP proxy connection established for session {}", self.session_id);
+    }
+
+    async fn on_error(&self, _ctx: &mut Context, error: Error) {
+        tracing::error!("RFC 9298 connection error for session {}: {}", self.session_id, error);
+        
+        // For RFC 9298, we should send appropriate capsule frames to signal errors
+        // TODO: Implement RFC 9298 error handling via capsule protocol
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_rfc9298_uri_template_parsing() {
+        // Test path-based URI template
+        let result = parse_rfc9298_uri_template("/proxy/example.com/8080");
+        assert!(result.is_ok());
+        if let Ok(TargetAddress::DomainPort(host, port)) = result {
+            assert_eq!(host, "example.com");
+            assert_eq!(port, 8080);
+        }
+
+        // Test query parameter style
+        let result = parse_rfc9298_uri_template("/proxy?host=test.com&port=9090");
+        assert!(result.is_ok());
+        if let Ok(TargetAddress::DomainPort(host, port)) = result {
+            assert_eq!(host, "test.com");
+            assert_eq!(port, 9090);
+        }
+
+        // Test invalid URI
+        let result = parse_rfc9298_uri_template("/invalid");
+        assert!(result.is_err());
+    }
 
     #[test]
     fn test_websocket_detection() {
