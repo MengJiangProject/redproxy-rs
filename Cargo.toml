@@ -39,6 +39,7 @@ libc = "0.2"
 hickory-resolver = "0.25"
 chashmap-async = "0.1.0"
 lru = "0.16"
+url = "2.5.4"
 
 # features quic
 quinn = { version = "0.11", optional = true}
@@ -64,6 +65,8 @@ winapi = {version = "0.3.9", features = ["winsock2","in6addr","inaddr","ws2def",
 tokio-test = "0.4.2"
 test-log = { version = "0.2.18", default-features = false, features = ["trace"] }
 tempfile = "3.8"
+hyper = { version = "1.0", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
 
 [build-dependencies]
 mime_guess = "2.0.4"

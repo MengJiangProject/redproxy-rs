@@ -5,6 +5,7 @@ Proxy routing tool. It can translate from one protocol to another, or select des
 
 Protocol supported:
 - HTTP CONNECT with mTLS
+- HTTP Forward Proxy (GET, POST, PUT, DELETE, etc.) with WebSocket upgrade support
 - HTTP CONNECT over QUIC
 - SOCKS v4,v4a,v5 with mTLS (TCP CONNECT ONLY)
 - TPROXY on linux, used with iptables REDIRECT, that is where the name comes from: RED(irect)PROXY

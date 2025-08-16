@@ -1,5 +1,5 @@
 use crate::{access_log::AccessLog, common::frames::FrameIO};
-use anyhow::{Context as AnyhowContext, Error, Result, anyhow};
+use anyhow::{Context as AnyhowContext, Error, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize, de::Visitor, ser::SerializeStruct};
 use std::{
@@ -488,6 +488,7 @@ impl ContextManager {
             server_frames: None,
             callback: None,
             state: self.clone(),
+            http_request: None,
         }));
         self.alive.lock().await.insert(id, Arc::downgrade(&ret));
         ret
@@ -545,6 +546,7 @@ pub struct Context {
     server_frames: Option<FrameIO>,
     callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
     state: Arc<ContextManager>,
+    http_request: Option<Arc<crate::common::http::HttpRequest>>,
 }
 
 pub type ContextRef = Arc<RwLock<Context>>;
@@ -593,7 +595,11 @@ impl Context {
     pub fn take_client_stream(&mut self) -> Result<IOBufStream, anyhow::Error> {
         self.client_stream
             .take()
-            .ok_or_else(|| anyhow!("Client stream already taken or not available"))
+            .ok_or_else(|| anyhow::anyhow!("Client stream already taken or not available"))
+    }
+
+    pub fn take_server_stream(&mut self) -> Option<IOBufStream> {
+        self.server_stream.take()
     }
 
     pub fn take_streams(&mut self) -> Option<(IOBufStream, IOBufStream)> {
@@ -726,6 +732,15 @@ impl Context {
     pub fn set_idle_timeout(&mut self, timeout: u64) -> &mut Self {
         Arc::make_mut(&mut self.props).idle_timeout = timeout;
         self
+    }
+
+    pub fn set_http_request(&mut self, request: crate::common::http::HttpRequest) -> &mut Self {
+        self.http_request = Some(Arc::new(request));
+        self
+    }
+
+    pub fn http_request(&self) -> Option<Arc<crate::common::http::HttpRequest>> {
+        self.http_request.clone()
     }
 }
 

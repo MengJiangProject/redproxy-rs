@@ -52,8 +52,9 @@ The embedded Milu DSL enables:
 - Located in `milu/` workspace member with full parser and standard library
 
 ### Protocol Support Matrix
-- **Listeners**: HTTP/HTTPS (with mTLS), SOCKS v4/v4a/v5, QUIC, TPROXY (Linux), Reverse Proxy
-- **Connectors**: Direct TCP, HTTP CONNECT, SOCKS5, QUIC, Load Balancing
+- **Listeners**: HTTP/HTTPS (with mTLS), HTTP Forward Proxy, SOCKS v4/v4a/v5, QUIC, TPROXY (Linux), Reverse Proxy
+- **Connectors**: Direct TCP, HTTP CONNECT, HTTP Forward Proxy, SOCKS5, QUIC, Load Balancing
+- **HTTP Features**: Traditional CONNECT tunneling, HTTP Forward Proxy (GET/POST/PUT/DELETE/etc.), WebSocket upgrade support
 - **Security**: mTLS support across HTTP/SOCKS with certificate validation
 - **Performance**: Linux splice() syscall support, BBR congestion control for QUIC
 

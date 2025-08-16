@@ -5,7 +5,7 @@ use tracing::trace;
 type Reader<'a> = &'a mut (dyn AsyncBufRead + Send + Unpin);
 type Writer<'a> = &'a mut (dyn AsyncWrite + Send + Unpin);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct HttpRequest {
     pub method: String,
     pub resource: String,
