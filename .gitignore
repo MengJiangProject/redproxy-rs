@@ -8,3 +8,5 @@ history.txt
 *.log
 /result
 .direnv
+.claude
+.serena
