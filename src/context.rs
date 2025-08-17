@@ -694,6 +694,7 @@ impl Context {
         self.props.extra.get(key).map(|v| v.as_str())
     }
 
+
     // Get state of the context.
     pub fn state(&self) -> ContextState {
         self.props.state.last().map(|s| s.state).unwrap_or_default()

@@ -8,7 +8,7 @@ use tracing::{error, trace};
 
 use crate::{
     common::{
-        http_proxy::http_forward_proxy_connect,
+        http_proxy::{http_forward_proxy_connect, HttpProxyContextExt},
         socket_ops::{RealSocketOps, SocketOps},
         tls::TlsClientConfig,
     },
@@ -17,8 +17,51 @@ use crate::{
 
 use super::ConnectorRef;
 
-fn default_udp_protocol() -> String {
+fn default_rfc9298_uri_template() -> String {
+    "/.well-known/masque/udp/{host}/{port}/".to_string()
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct UdpProtocolConfig {
+    #[serde(default = "default_udp_protocol_name", rename = "udpProtocol")]
+    protocol: String,
+    #[serde(default = "default_rfc9298_uri_template", rename = "rfc9298UriTemplate")]
+    rfc9298_uri_template: String,
+}
+
+fn default_udp_protocol_name() -> String {
     "custom".to_string()
+}
+
+impl Default for UdpProtocolConfig {
+    fn default() -> Self {
+        UdpProtocolConfig {
+            protocol: default_udp_protocol_name(),
+            rfc9298_uri_template: default_rfc9298_uri_template(),
+        }
+    }
+}
+
+impl UdpProtocolConfig {
+    pub fn protocol_name(&self) -> &str {
+        &self.protocol
+    }
+
+    pub fn rfc9298_uri_template(&self) -> Option<&str> {
+        if self.protocol == "rfc9298" {
+            Some(&self.rfc9298_uri_template)
+        } else {
+            None
+        }
+    }
+
+    /// Validate that the protocol configuration is valid
+    pub fn validate(&self) -> Result<(), String> {
+        match self.protocol.as_str() {
+            "custom" | "rfc9298" => Ok(()),
+            other => Err(format!("Invalid UDP protocol: '{}'. Must be 'custom' or 'rfc9298'", other)),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -38,8 +81,8 @@ pub struct HttpConnectorConfig {
     #[serde(default)]
     force_connect: bool,
     auth: Option<HttpAuthData>,
-    #[serde(default = "default_udp_protocol")]
-    udp_protocol: String,
+    #[serde(flatten, default)]
+    udp_protocol_config: UdpProtocolConfig,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -139,14 +182,30 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for HttpConnector<S>
             .await?;
         let server = make_buffered_stream(server_stream);
 
-        let auth = self.auth.as_ref().map(|a| (a.username.clone(), a.password.clone()));
-        
+        // Set proxy configuration in context
+        {
+            let mut ctx_write = ctx.write().await;
+            ctx_write
+                .set_local_addr(local)
+                .set_server_addr(remote)
+                .set_proxy_frame_channel("inline")
+                .set_proxy_force_connect(self.force_connect)
+                .set_proxy_udp_protocol(self.udp_protocol_config.protocol_name());
+            
+            if let Some(template) = self.udp_protocol_config.rfc9298_uri_template() {
+                ctx_write.set_proxy_rfc9298_uri_template(template);
+            }
+            
+            // Set auth in context if available
+            if let Some(auth_data) = &self.auth {
+                ctx_write
+                    .set_extra("proxy_auth_username", &auth_data.username)
+                    .set_extra("proxy_auth_password", &auth_data.password);
+            }
+        }
         http_forward_proxy_connect(
             server,
             ctx,
-            local,
-            remote,
-            "inline",
             |_| async {
                 // This should never be called when channel="inline"
                 error!("HTTP connector frame callback called unexpectedly - this indicates a bug");
@@ -155,9 +214,6 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for HttpConnector<S>
                 let dummy_stream = tokio::io::duplex(1).0;
                 frames_from_stream(0, dummy_stream)
             },
-            self.force_connect,
-            auth,
-            Some(&self.udp_protocol),
         )
         .await?;
         Ok(())
@@ -207,7 +263,7 @@ mod tests {
                 tls,
                 force_connect,
                 auth: None,
-                udp_protocol: default_udp_protocol(),
+                udp_protocol_config: UdpProtocolConfig::default(),
             },
             socket_ops,
         )
@@ -344,6 +400,36 @@ mod tests {
             result.is_ok(),
             "Connection should succeed with force_connect"
         );
+    }
+
+    #[test]
+    fn test_udp_protocol_config_validation() {
+        // Test valid protocols
+        let custom_config = UdpProtocolConfig {
+            protocol: "custom".to_string(),
+            rfc9298_uri_template: default_rfc9298_uri_template(),
+        };
+        assert!(custom_config.validate().is_ok());
+
+        let rfc9298_config = UdpProtocolConfig {
+            protocol: "rfc9298".to_string(),
+            rfc9298_uri_template: "/custom/{host}/{port}".to_string(),
+        };
+        assert!(rfc9298_config.validate().is_ok());
+
+        // Test invalid protocol
+        let invalid_config = UdpProtocolConfig {
+            protocol: "invalid".to_string(),
+            rfc9298_uri_template: default_rfc9298_uri_template(),
+        };
+        assert!(invalid_config.validate().is_err());
+
+        // Test template access
+        assert_eq!(custom_config.protocol_name(), "custom");
+        assert_eq!(custom_config.rfc9298_uri_template(), None);
+        
+        assert_eq!(rfc9298_config.protocol_name(), "rfc9298");
+        assert_eq!(rfc9298_config.rfc9298_uri_template(), Some("/custom/{host}/{port}"));
     }
 
     #[tokio::test]

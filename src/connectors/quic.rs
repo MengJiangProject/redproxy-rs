@@ -14,7 +14,7 @@ use tracing::debug;
 use super::ConnectorRef;
 use crate::{
     common::{
-        http_proxy::http_forward_proxy_connect,
+        http_proxy::{http_forward_proxy_connect, HttpProxyContextExt},
         quic::{
             QuicFrameSessions, QuicStream, create_quic_client, create_quic_frames,
             quic_frames_thread,
@@ -153,9 +153,21 @@ impl QuicConnector {
         } else {
             "quic-datagrams"
         };
+        
+        // Set proxy configuration in context
+        {
+            let mut ctx_write = ctx.write().await;
+            ctx_write
+                .set_local_addr(local)
+                .set_server_addr(remote)
+                .set_proxy_frame_channel(channel)
+                .set_proxy_force_connect(false)
+                .set_proxy_udp_protocol("custom"); // QUIC always uses custom protocol
+        }
+        
         let frames = |id| create_quic_frames(conn, id, sessions);
         //TODO: Implement authentication for QUIC connectors
-        http_forward_proxy_connect(server, ctx, local, remote, channel, frames, false, None, None).await?;
+        http_forward_proxy_connect(server, ctx, frames).await?;
         Ok(())
     }
 
