@@ -17,6 +17,10 @@ use crate::{
 
 use super::ConnectorRef;
 
+fn default_udp_protocol() -> String {
+    "custom".to_string()
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct HttpAuthData {
@@ -34,6 +38,8 @@ pub struct HttpConnectorConfig {
     #[serde(default)]
     force_connect: bool,
     auth: Option<HttpAuthData>,
+    #[serde(default = "default_udp_protocol")]
+    udp_protocol: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -151,6 +157,7 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for HttpConnector<S>
             },
             self.force_connect,
             auth,
+            Some(&self.udp_protocol),
         )
         .await?;
         Ok(())
@@ -200,6 +207,7 @@ mod tests {
                 tls,
                 force_connect,
                 auth: None,
+                udp_protocol: default_udp_protocol(),
             },
             socket_ops,
         )

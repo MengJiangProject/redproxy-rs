@@ -101,6 +101,7 @@ pub async fn http_forward_proxy_connect<T1, T2>(
     frame_fn: T1,
     force_connect: bool,
     auth: Option<(String, String)>,
+    udp_protocol: Option<&str>,
 ) -> Result<()>
 where
     T1: FnOnce(u32) -> T2 + Sync,
@@ -151,42 +152,88 @@ where
             }
         }
         Feature::UdpForward | Feature::UdpBind => {
-            let mut request = HttpRequest::new("CONNECT", &target)
-                .with_header("Host", &target)
-                .with_header("Proxy-Protocol", "udp")
-                .with_header("Proxy-Channel", frame_channel);
-            
-            // Add Proxy-Authorization header if auth is provided
-            if let Some((username, password)) = &auth {
-                let encoded = encode_basic_auth(username, password);
-                request = request.with_header("Proxy-Authorization", format!("Basic {}", encoded));
-            }
-            if feature == Feature::UdpBind {
-                let bind_src = ctx
-                    .read()
-                    .await
-                    .extra("udp-bind-source")
-                    .unwrap()
-                    .to_owned();
-                request = request.with_header("Udp-Bind-Source", bind_src);
-            }
+            // Check if using RFC 9298 or custom protocol
+            if udp_protocol == Some("rfc9298") {
+                // RFC 9298 HTTP/1.1 upgrade approach
+                let uri_template = generate_rfc9298_uri_template(&target);
+                let mut request = HttpRequest::new("GET", &uri_template)
+                    .with_header("Host", &format!("{}:{}", 
+                        match &target {
+                            TargetAddress::DomainPort(host, _) => host.clone(),
+                            TargetAddress::SocketAddr(addr) => addr.ip().to_string(),
+                            TargetAddress::Unknown => "unknown".to_string(),
+                        },
+                        remote.port()
+                    ))
+                    .with_header("Connection", "Upgrade")
+                    .with_header("Upgrade", "connect-udp");
+                
+                // Add Proxy-Authorization header if auth is provided
+                if let Some((username, password)) = &auth {
+                    let encoded = encode_basic_auth(username, password);
+                    request = request.with_header("Proxy-Authorization", format!("Basic {}", encoded));
+                }
 
-            request.write_to(&mut server).await?;
-            let resp = HttpResponse::read_from(&mut server).await?;
-            tracing::trace!("response: {:?}", resp);
-            if resp.code != 200 {
-                bail!("upstream server failure: {:?}", resp);
+                request.write_to(&mut server).await?;
+                let resp = HttpResponse::read_from(&mut server).await?;
+                tracing::trace!("RFC 9298 response: {:?}", resp);
+                
+                if resp.code != 101 {
+                    bail!("RFC 9298 upgrade failed - expected 101 Switching Protocols, got {}: {:?}", resp.code, resp);
+                }
+
+                // Verify upgrade headers
+                if !resp.header("Connection", "").to_lowercase().contains("upgrade") 
+                    || !resp.header("Upgrade", "").eq_ignore_ascii_case("connect-udp") {
+                    bail!("RFC 9298 upgrade response missing proper headers");
+                }
+
+                let session_id = SESSION_ID.fetch_add(1, Ordering::Relaxed);
+                ctx.write()
+                    .await
+                    .set_server_frames(super::frames::rfc9298_frames_from_stream(session_id, server))
+                    .set_local_addr(local)
+                    .set_server_addr(remote);
+            } else {
+                // Custom protocol (existing behavior)
+                let mut request = HttpRequest::new("CONNECT", &target)
+                    .with_header("Host", &target)
+                    .with_header("Proxy-Protocol", "udp")
+                    .with_header("Proxy-Channel", frame_channel);
+                
+                // Add Proxy-Authorization header if auth is provided
+                if let Some((username, password)) = &auth {
+                    let encoded = encode_basic_auth(username, password);
+                    request = request.with_header("Proxy-Authorization", format!("Basic {}", encoded));
+                }
+                
+                if feature == Feature::UdpBind {
+                    let bind_src = ctx
+                        .read()
+                        .await
+                        .extra("udp-bind-source")
+                        .unwrap()
+                        .to_owned();
+                    request = request.with_header("Udp-Bind-Source", bind_src);
+                }
+
+                request.write_to(&mut server).await?;
+                let resp = HttpResponse::read_from(&mut server).await?;
+                tracing::trace!("Custom protocol response: {:?}", resp);
+                if resp.code != 200 {
+                    bail!("upstream server failure: {:?}", resp);
+                }
+                let session_id = resp.header("Session-Id", "0").parse().unwrap();
+                ctx.write()
+                    .await
+                    .set_server_frames(if frame_channel.eq_ignore_ascii_case("inline") {
+                        frames_from_stream(session_id, server)
+                    } else {
+                        frame_fn(session_id).await
+                    })
+                    .set_local_addr(local)
+                    .set_server_addr(remote);
             }
-            let session_id = resp.header("Session-Id", "0").parse().unwrap();
-            ctx.write()
-                .await
-                .set_server_frames(if frame_channel.eq_ignore_ascii_case("inline") {
-                    frames_from_stream(session_id, server)
-                } else {
-                    frame_fn(session_id).await
-                })
-                .set_local_addr(local)
-                .set_server_addr(remote);
         }
         x => bail!("not supported feature {:?}", x),
     };
@@ -480,6 +527,24 @@ fn parse_rfc9298_uri_template(uri: &str) -> Result<TargetAddress> {
     );
 }
 
+// Generate RFC 9298 URI template for connecting to a target
+fn generate_rfc9298_uri_template(target: &TargetAddress) -> String {
+    // RFC 9298 standard well-known URI template
+    // Use the target address to create the request URI
+    match target {
+        TargetAddress::DomainPort(host, port) => {
+            format!("/.well-known/masque/udp/{}/{}/", host, port)
+        }
+        TargetAddress::SocketAddr(addr) => {
+            format!("/.well-known/masque/udp/{}/{}/", addr.ip(), addr.port())
+        }
+        TargetAddress::Unknown => {
+            // Fallback for unknown addresses
+            "/.well-known/masque/udp/unknown/0/".to_string()
+        }
+    }
+}
+
 // Create RFC 9298 capsule protocol frames
 async fn create_rfc9298_frames(session_id: u32) -> Result<FrameIO> {
     // Create a duplex stream for RFC 9298 capsule protocol
@@ -708,6 +773,29 @@ mod tests {
         // Test invalid URI
         let result = parse_rfc9298_uri_template("/invalid");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_generate_rfc9298_uri_template() {
+        // Test domain port
+        let target = TargetAddress::DomainPort("example.com".to_string(), 8080);
+        let uri = generate_rfc9298_uri_template(&target);
+        assert_eq!(uri, "/.well-known/masque/udp/example.com/8080/");
+
+        // Test socket address IPv4
+        let target = TargetAddress::SocketAddr("127.0.0.1:9090".parse().unwrap());
+        let uri = generate_rfc9298_uri_template(&target);
+        assert_eq!(uri, "/.well-known/masque/udp/127.0.0.1/9090/");
+
+        // Test socket address IPv6
+        let target = TargetAddress::SocketAddr("[::1]:8080".parse().unwrap());
+        let uri = generate_rfc9298_uri_template(&target);
+        assert_eq!(uri, "/.well-known/masque/udp/::1/8080/");
+
+        // Test unknown address
+        let target = TargetAddress::Unknown;
+        let uri = generate_rfc9298_uri_template(&target);
+        assert_eq!(uri, "/.well-known/masque/udp/unknown/0/");
     }
 
     #[test]
