@@ -1,23 +1,5 @@
 use anyhow::Result;
-
-mod access_log;
-mod cli;
-mod common;
-mod config;
-mod connectors;
-mod context;
-mod copy;
-mod listeners;
-mod rules;
-mod server;
-
-#[cfg(feature = "metrics")]
-mod metrics;
-
-use cli::parse_args;
-use server::ProxyServer;
-
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+use redproxy_rs::{cli::parse_args, server::ProxyServer};
 
 #[tokio::main]
 async fn main() -> Result<()> {

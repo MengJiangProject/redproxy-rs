@@ -48,6 +48,10 @@ impl Frame {
         self.body.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.body.is_empty()
+    }
+
     // Read from UDP socket, set addr to source
     pub async fn recv_from(&mut self, socket: &UdpSocket) -> IoResult<(usize, SocketAddr)> {
         let mut buf = BytesMut::zeroed(65536);

@@ -216,7 +216,7 @@ pub mod test_utils {
         Read(Vec<u8>),
     }
 
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Debug, Default)]
     pub struct StreamScript {
         pub interactions: Vec<StreamInteraction>,
     }
@@ -299,6 +299,12 @@ pub mod test_utils {
         // Default constructor uses plain TCP streams (backward compatibility)
         pub fn new() -> Self {
             Self::new_with_builder(default_tcp_stream)
+        }
+    }
+
+    impl Default for MockSocketOps {
+        fn default() -> Self {
+            Self::new()
         }
     }
 

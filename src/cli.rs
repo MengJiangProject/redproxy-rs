@@ -11,7 +11,7 @@ pub struct AppArgs {
 }
 
 pub fn parse_args() -> Result<AppArgs> {
-    let args = clap::Command::new(env!("CARGO_BIN_NAME"))
+    let args = clap::Command::new("redproxy-rs")
         .version(crate::VERSION)
         .arg(
             clap::Arg::new("config")

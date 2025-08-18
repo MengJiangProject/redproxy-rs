@@ -20,11 +20,13 @@ fn decode_basic_auth(auth_header: &str) -> Option<(String, String)> {
     if !auth_header.starts_with("Basic ") {
         return None;
     }
-    
+
     let encoded = &auth_header[6..]; // Skip "Basic "
-    let decoded = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()?;
     let credentials = String::from_utf8(decoded).ok()?;
-    
+
     if let Some((username, password)) = credentials.split_once(':') {
         Some((username.to_string(), password.to_string()))
     } else {
@@ -50,17 +52,17 @@ pub trait HttpProxyContextExt {
     fn set_proxy_frame_channel(&mut self, channel: &str) -> &mut Self;
     /// Get the frame channel for proxy connections
     fn proxy_frame_channel(&self) -> Option<&str>;
-    
+
     /// Set whether to force CONNECT tunneling for HTTP requests
     fn set_proxy_force_connect(&mut self, force_connect: bool) -> &mut Self;
     /// Get whether to force CONNECT tunneling for HTTP requests
     fn proxy_force_connect(&self) -> bool;
-    
+
     /// Set the UDP protocol to use ("custom" or "rfc9298")
     fn set_proxy_udp_protocol(&mut self, protocol: &str) -> &mut Self;
     /// Get the UDP protocol to use
     fn proxy_udp_protocol(&self) -> Option<&str>;
-    
+
     /// Set the RFC 9298 URI template for custom servers
     fn set_proxy_rfc9298_uri_template(&mut self, template: &str) -> &mut Self;
     /// Get the RFC 9298 URI template
@@ -104,7 +106,7 @@ impl HttpProxyContextExt for Context {
 }
 
 // Helper function to check if a request is a WebSocket upgrade
-fn is_websocket_upgrade(request: &HttpRequest) -> bool {
+pub fn is_websocket_upgrade(request: &HttpRequest) -> bool {
     let connection = request.header("Connection", "").to_lowercase();
     let upgrade = request.header("Upgrade", "").to_lowercase();
 
@@ -118,7 +120,7 @@ fn is_websocket_upgrade(request: &HttpRequest) -> bool {
 }
 
 // Helper function to send error response to client
-async fn send_error_response(
+pub async fn send_error_response(
     client_stream: &mut IOBufStream,
     status_code: u16,
     status_text: &str,
@@ -136,7 +138,7 @@ async fn send_error_response(
 }
 
 // Helper function to send simple error response without body
-async fn send_simple_error_response(
+pub async fn send_simple_error_response(
     client_stream: &mut IOBufStream,
     status_code: u16,
     status_text: &str,
@@ -157,19 +159,32 @@ where
     T1: FnOnce(u32) -> T2 + Sync,
     T2: Future<Output = FrameIO>,
 {
-    let (target, feature, local, remote, frame_channel, force_connect, udp_protocol, rfc9298_uri_template, auth) = {
+    let (
+        target,
+        feature,
+        local,
+        remote,
+        frame_channel,
+        force_connect,
+        udp_protocol,
+        rfc9298_uri_template,
+        auth,
+    ) = {
         let ctx_read = ctx.read().await;
-        let auth = ctx_read.extra("proxy_auth_username")
-            .and_then(|username| {
-                ctx_read.extra("proxy_auth_password")
-                    .map(|password| (username.to_string(), password.to_string()))
-            });
+        let auth = ctx_read.extra("proxy_auth_username").and_then(|username| {
+            ctx_read
+                .extra("proxy_auth_password")
+                .map(|password| (username.to_string(), password.to_string()))
+        });
         (
             ctx_read.target(),
             ctx_read.feature(),
             ctx_read.local_addr(),
             ctx_read.server_addr(),
-            ctx_read.proxy_frame_channel().unwrap_or("inline").to_string(),
+            ctx_read
+                .proxy_frame_channel()
+                .unwrap_or("inline")
+                .to_string(),
             ctx_read.proxy_force_connect(),
             ctx_read.proxy_udp_protocol().map(|s| s.to_string()),
             ctx_read.proxy_rfc9298_uri_template().map(|s| s.to_string()),
@@ -198,15 +213,15 @@ where
                     .set_server_addr(remote);
             } else {
                 // Traditional CONNECT tunneling (either forced or no HTTP request)
-                let mut request = HttpRequest::new("CONNECT", &target)
-                    .with_header("Host", &target);
-                
+                let mut request = HttpRequest::new("CONNECT", &target).with_header("Host", &target);
+
                 // Add Proxy-Authorization header if auth is provided
                 if let Some((username, password)) = &auth {
                     let encoded = encode_basic_auth(username, password);
-                    request = request.with_header("Proxy-Authorization", format!("Basic {}", encoded));
+                    request =
+                        request.with_header("Proxy-Authorization", format!("Basic {}", encoded));
                 }
-                
+
                 request.write_to(&mut server).await?;
                 let resp = HttpResponse::read_from(&mut server).await?;
                 if resp.code != 200 {
@@ -223,43 +238,61 @@ where
             // Check if using RFC 9298 or custom protocol
             if udp_protocol.as_deref() == Some("rfc9298") {
                 // RFC 9298 HTTP/1.1 upgrade approach
-                let uri_template = generate_rfc9298_uri_from_template(&target, rfc9298_uri_template.as_deref());
+                let uri_template =
+                    generate_rfc9298_uri_from_template(&target, rfc9298_uri_template.as_deref());
                 let mut request = HttpRequest::new("GET", &uri_template)
-                    .with_header("Host", &format!("{}:{}", 
-                        match &target {
-                            TargetAddress::DomainPort(host, _) => host.clone(),
-                            TargetAddress::SocketAddr(addr) => addr.ip().to_string(),
-                            TargetAddress::Unknown => "unknown".to_string(),
-                        },
-                        remote.port()
-                    ))
+                    .with_header(
+                        "Host",
+                        format!(
+                            "{}:{}",
+                            match &target {
+                                TargetAddress::DomainPort(host, _) => host.clone(),
+                                TargetAddress::SocketAddr(addr) => addr.ip().to_string(),
+                                TargetAddress::Unknown => "unknown".to_string(),
+                            },
+                            remote.port()
+                        ),
+                    )
                     .with_header("Connection", "Upgrade")
                     .with_header("Upgrade", "connect-udp");
-                
+
                 // Add Proxy-Authorization header if auth is provided
                 if let Some((username, password)) = &auth {
                     let encoded = encode_basic_auth(username, password);
-                    request = request.with_header("Proxy-Authorization", format!("Basic {}", encoded));
+                    request =
+                        request.with_header("Proxy-Authorization", format!("Basic {}", encoded));
                 }
 
                 request.write_to(&mut server).await?;
                 let resp = HttpResponse::read_from(&mut server).await?;
                 tracing::trace!("RFC 9298 response: {:?}", resp);
-                
+
                 if resp.code != 101 {
-                    bail!("RFC 9298 upgrade failed - expected 101 Switching Protocols, got {}: {:?}", resp.code, resp);
+                    bail!(
+                        "RFC 9298 upgrade failed - expected 101 Switching Protocols, got {}: {:?}",
+                        resp.code,
+                        resp
+                    );
                 }
 
                 // Verify upgrade headers
-                if !resp.header("Connection", "").to_lowercase().contains("upgrade") 
-                    || !resp.header("Upgrade", "").eq_ignore_ascii_case("connect-udp") {
+                if !resp
+                    .header("Connection", "")
+                    .to_lowercase()
+                    .contains("upgrade")
+                    || !resp
+                        .header("Upgrade", "")
+                        .eq_ignore_ascii_case("connect-udp")
+                {
                     bail!("RFC 9298 upgrade response missing proper headers");
                 }
 
                 let session_id = SESSION_ID.fetch_add(1, Ordering::Relaxed);
                 ctx.write()
                     .await
-                    .set_server_frames(super::frames::rfc9298_frames_from_stream(session_id, server))
+                    .set_server_frames(super::frames::rfc9298_frames_from_stream(
+                        session_id, server,
+                    ))
                     .set_local_addr(local)
                     .set_server_addr(remote);
             } else {
@@ -268,13 +301,14 @@ where
                     .with_header("Host", &target)
                     .with_header("Proxy-Protocol", "udp")
                     .with_header("Proxy-Channel", &frame_channel);
-                
+
                 // Add Proxy-Authorization header if auth is provided
                 if let Some((username, password)) = &auth {
                     let encoded = encode_basic_auth(username, password);
-                    request = request.with_header("Proxy-Authorization", format!("Basic {}", encoded));
+                    request =
+                        request.with_header("Proxy-Authorization", format!("Basic {}", encoded));
                 }
-                
+
                 if feature == Feature::UdpBind {
                     let bind_src = ctx
                         .read()
@@ -326,7 +360,7 @@ where
     let socket = ctx_lock.borrow_client_stream().unwrap();
     let request = HttpRequest::read_from(socket).await?;
     tracing::trace!("request={:?}", request);
-    
+
     // Check authentication if required
     if let Some(ref auth_data) = auth {
         // Look for Proxy-Authorization or Authorization header
@@ -336,15 +370,17 @@ where
         } else {
             auth_header
         };
-        
+
         let user_credentials = if !auth_header.is_empty() {
             decode_basic_auth(auth_header)
         } else {
             None
         };
-        
+
         if !auth_data.check(&user_credentials).await {
-            if let Err(e) = send_simple_error_response(socket, 407, "Proxy Authentication Required").await {
+            if let Err(e) =
+                send_simple_error_response(socket, 407, "Proxy Authentication Required").await
+            {
                 warn!("Failed to send authentication required response: {}", e);
             }
             bail!("Client authentication failed");
@@ -473,7 +509,7 @@ where
     let target = parse_rfc9298_uri_template(&request.resource)?;
 
     let mut ctx_lock = ctx.write().await;
-    
+
     // Don't send the upgrade response yet - wait until downstream connection succeeds
     // The response will be sent in Rfc9298Callback::on_connect
 
@@ -492,7 +528,7 @@ where
 }
 
 // Parse RFC 9298 URI template to extract target address
-fn parse_rfc9298_uri_template(uri: &str) -> Result<TargetAddress> {
+pub fn parse_rfc9298_uri_template(uri: &str) -> Result<TargetAddress> {
     // RFC 9298 requires URI template with {target_host} and {target_port} variables
     // Examples:
     // - /.well-known/masque/udp/{target_host}/{target_port}/
@@ -510,44 +546,84 @@ fn parse_rfc9298_uri_template(uri: &str) -> Result<TargetAddress> {
         uri.to_string()
     };
 
-    let url = Url::parse(&full_url)
-        .with_context(|| format!("Failed to parse URI: {}", uri))?;
+    let url = Url::parse(&full_url).with_context(|| format!("Failed to parse URI: {}", uri))?;
+
+    // Helper function to decode percent-encoded strings
+    let decode_percent = |s: &str| -> Result<String> {
+        let bytes = s.as_bytes();
+        let mut decoded = Vec::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'%' && i + 2 < bytes.len() {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3])
+                    .with_context(|| "Invalid percent-encoding")?;
+                let byte = u8::from_str_radix(hex, 16)
+                    .with_context(|| "Invalid hex in percent-encoding")?;
+                decoded.push(byte);
+                i += 3;
+            } else {
+                decoded.push(bytes[i]);
+                i += 1;
+            }
+        }
+        String::from_utf8(decoded).with_context(|| "Invalid UTF-8 in percent-decoded string")
+    };
 
     // Check for query parameter style: ?host=example.com&port=8080
     if let Some(query) = url.query() {
-        let params: std::collections::HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes())
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
+        let params: std::collections::HashMap<String, String> =
+            url::form_urlencoded::parse(query.as_bytes())
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
 
         if let (Some(host), Some(port_str)) = (
             params.get("host").or_else(|| params.get("target_host")),
-            params.get("port").or_else(|| params.get("target_port"))
+            params.get("port").or_else(|| params.get("target_port")),
         ) {
             // Skip template variables
-            if !host.starts_with('{') && !port_str.starts_with('{') {
-                if let Ok(port) = port_str.parse::<u16>() {
-                    return Ok(TargetAddress::DomainPort(host.clone(), port));
+            if !host.starts_with('{')
+                && !port_str.starts_with('{')
+                && let Ok(port) = port_str.parse::<u16>()
+            {
+                // Try to parse as IP address first
+                if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+                    return Ok(TargetAddress::SocketAddr(std::net::SocketAddr::new(
+                        ip, port,
+                    )));
                 }
+                return Ok(TargetAddress::DomainPort(host.clone(), port));
             }
         }
     }
 
     // Check for path-based style: /path/host/port
-    let path_segments: Vec<&str> = url.path_segments()
+    let path_segments: Vec<&str> = url
+        .path_segments()
         .ok_or_else(|| anyhow!("Invalid URI path: {}", uri))?
         .filter(|s| !s.is_empty())
         .collect();
 
     // Try to extract from the last two non-empty path segments
     if path_segments.len() >= 2 {
-        let host = path_segments[path_segments.len() - 2];
+        let host_encoded = path_segments[path_segments.len() - 2];
         let port_str = path_segments[path_segments.len() - 1];
 
+        // Decode the host from percent-encoding for consistency
+        let host = decode_percent(host_encoded)?;
+
         // Skip template variables and trailing slashes
-        if !host.starts_with('{') && !port_str.starts_with('{') && !port_str.is_empty() {
-            if let Ok(port) = port_str.parse::<u16>() {
-                return Ok(TargetAddress::DomainPort(host.to_string(), port));
+        if !host.starts_with('{')
+            && !port_str.starts_with('{')
+            && !port_str.is_empty()
+            && let Ok(port) = port_str.parse::<u16>()
+        {
+            // Try to parse as IP address first
+            if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+                return Ok(TargetAddress::SocketAddr(std::net::SocketAddr::new(
+                    ip, port,
+                )));
             }
+            return Ok(TargetAddress::DomainPort(host, port));
         }
     }
 
@@ -558,9 +634,12 @@ fn parse_rfc9298_uri_template(uri: &str) -> Result<TargetAddress> {
 }
 
 // Generate RFC 9298 URI from a configurable template for connecting to a target
-fn generate_rfc9298_uri_from_template(target: &TargetAddress, template: Option<&str>) -> String {
+pub fn generate_rfc9298_uri_from_template(
+    target: &TargetAddress,
+    template: Option<&str>,
+) -> String {
     let template = template.unwrap_or("/.well-known/masque/udp/{host}/{port}/");
-    
+
     let (host, port) = match target {
         TargetAddress::DomainPort(host, port) => (host.clone(), *port),
         TargetAddress::SocketAddr(addr) => (addr.ip().to_string(), addr.port()),
@@ -571,11 +650,9 @@ fn generate_rfc9298_uri_from_template(target: &TargetAddress, template: Option<&
     template
         .replace("{host}", &host)
         .replace("{port}", &port.to_string())
-        .replace("{target_host}", &host)  // Support both naming conventions
+        .replace("{target_host}", &host) // Support both naming conventions
         .replace("{target_port}", &port.to_string())
 }
-
-
 
 struct HttpConnectCallback;
 #[async_trait]
@@ -729,8 +806,8 @@ impl ContextCallback for FrameChannelCallback {
     }
 }
 
-struct Rfc9298Callback {
-    session_id: u32,
+pub struct Rfc9298Callback {
+    pub session_id: u32,
 }
 
 #[async_trait]
@@ -766,10 +843,11 @@ impl ContextCallback for Rfc9298Callback {
         }
 
         // Set up RFC 9298 capsule protocol frames using the upgraded stream
-        ctx.set_client_frames(
-            super::frames::rfc9298_frames_from_stream(self.session_id, stream)
-        );
-        
+        ctx.set_client_frames(super::frames::rfc9298_frames_from_stream(
+            self.session_id,
+            stream,
+        ));
+
         tracing::info!(
             "RFC 9298 UDP proxy connection established for session {}",
             self.session_id
@@ -892,10 +970,10 @@ mod tests {
         // Create a test context
         let manager = Arc::new(ContextManager::default());
         let source = "127.0.0.1:1234".parse().unwrap();
-        
+
         tokio_test::block_on(async {
             let ctx = manager.create_context("test".to_string(), source).await;
-            
+
             // Test the extension trait methods
             {
                 let mut ctx_write = ctx.write().await;
@@ -905,14 +983,17 @@ mod tests {
                     .set_proxy_udp_protocol("rfc9298")
                     .set_proxy_rfc9298_uri_template("/custom/{host}/{port}");
             }
-            
+
             // Verify the values are stored correctly
             {
                 let ctx_read = ctx.read().await;
                 assert_eq!(ctx_read.proxy_frame_channel(), Some("test-channel"));
-                assert_eq!(ctx_read.proxy_force_connect(), true);
+                assert!(ctx_read.proxy_force_connect());
                 assert_eq!(ctx_read.proxy_udp_protocol(), Some("rfc9298"));
-                assert_eq!(ctx_read.proxy_rfc9298_uri_template(), Some("/custom/{host}/{port}"));
+                assert_eq!(
+                    ctx_read.proxy_rfc9298_uri_template(),
+                    Some("/custom/{host}/{port}")
+                );
             }
         });
     }
@@ -961,25 +1042,28 @@ mod tests {
         let no_upgrade = HttpRequest::new("GET", "/").with_header("Connection", "upgrade");
         assert!(!is_websocket_upgrade(&no_upgrade));
     }
-    
+
     #[test]
     fn test_basic_auth_encoding_decoding() {
         // Test encoding
         let encoded = encode_basic_auth("testuser", "testpass");
         assert_eq!(encoded, "dGVzdHVzZXI6dGVzdHBhc3M=");
-        
+
         // Test decoding
         let decoded = decode_basic_auth("Basic dGVzdHVzZXI6dGVzdHBhc3M=");
-        assert_eq!(decoded, Some(("testuser".to_string(), "testpass".to_string())));
-        
+        assert_eq!(
+            decoded,
+            Some(("testuser".to_string(), "testpass".to_string()))
+        );
+
         // Test invalid auth header
         let invalid = decode_basic_auth("Bearer token123");
         assert_eq!(invalid, None);
-        
+
         // Test malformed base64
         let malformed = decode_basic_auth("Basic invalid!!!");
         assert_eq!(malformed, None);
-        
+
         // Test credentials without colon
         let no_colon = decode_basic_auth("Basic dGVzdA=="); // "test" in base64
         assert_eq!(no_colon, None);

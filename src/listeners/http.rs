@@ -130,10 +130,17 @@ impl<S: SocketOps + Send + Sync + 'static> HttpListener<S> {
                         ctx.write()
                             .await
                             .set_client_stream(make_buffered_stream(stream));
-                        let auth_data = if this.auth.required { Some(this.auth.clone()) } else { None };
-                        let res = http_forward_proxy_handshake(ctx, queue, |_, _| async {
-                            bail!("not supported")
-                        }, auth_data)
+                        let auth_data = if this.auth.required {
+                            Some(this.auth.clone())
+                        } else {
+                            None
+                        };
+                        let res = http_forward_proxy_handshake(
+                            ctx,
+                            queue,
+                            |_, _| async { bail!("not supported") },
+                            auth_data,
+                        )
                         .await;
                         if let Err(e) = res {
                             warn!(
