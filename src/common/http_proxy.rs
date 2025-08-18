@@ -10,8 +10,36 @@ use tokio::sync::mpsc::Sender;
 use tracing::{trace, warn};
 use url::Url;
 
+// Helper function to encode credentials in base64
+fn encode_basic_auth(username: &str, password: &str) -> String {
+    use base64::Engine;
+    let credentials = format!("{}:{}", username, password);
+    base64::engine::general_purpose::STANDARD.encode(credentials.as_bytes())
+}
+
+// Helper function to decode and validate basic auth credentials
+fn decode_basic_auth(auth_header: &str) -> Option<(String, String)> {
+    use base64::Engine;
+    if !auth_header.starts_with("Basic ") {
+        return None;
+    }
+    
+    let encoded = &auth_header[6..]; // Skip "Basic "
+    let decoded = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
+    let credentials = String::from_utf8(decoded).ok()?;
+    
+    if let Some((username, password)) = credentials.split_once(':') {
+        Some((username.to_string(), password.to_string()))
+    } else {
+        None
+    }
+}
+
 use crate::{
-    common::http::{HttpRequest, HttpResponse},
+    common::{
+        auth::AuthData,
+        http::{HttpRequest, HttpResponse},
+    },
     context::{
         Context, ContextCallback, ContextRef, ContextRefOps, Feature, IOBufStream, TargetAddress,
     },
@@ -72,6 +100,7 @@ pub async fn http_forward_proxy_connect<T1, T2>(
     frame_channel: &str,
     frame_fn: T1,
     force_connect: bool,
+    auth: Option<(String, String)>,
 ) -> Result<()>
 where
     T1: FnOnce(u32) -> T2 + Sync,
@@ -100,10 +129,16 @@ where
                     .set_server_addr(remote);
             } else {
                 // Traditional CONNECT tunneling (either forced or no HTTP request)
-                HttpRequest::new("CONNECT", &target)
-                    .with_header("Host", &target)
-                    .write_to(&mut server)
-                    .await?;
+                let mut request = HttpRequest::new("CONNECT", &target)
+                    .with_header("Host", &target);
+                
+                // Add Proxy-Authorization header if auth is provided
+                if let Some((username, password)) = &auth {
+                    let encoded = encode_basic_auth(username, password);
+                    request = request.with_header("Proxy-Authorization", format!("Basic {}", encoded));
+                }
+                
+                request.write_to(&mut server).await?;
                 let resp = HttpResponse::read_from(&mut server).await?;
                 if resp.code != 200 {
                     bail!("upstream server failure: {:?}", resp);
@@ -120,6 +155,12 @@ where
                 .with_header("Host", &target)
                 .with_header("Proxy-Protocol", "udp")
                 .with_header("Proxy-Channel", frame_channel);
+            
+            // Add Proxy-Authorization header if auth is provided
+            if let Some((username, password)) = &auth {
+                let encoded = encode_basic_auth(username, password);
+                request = request.with_header("Proxy-Authorization", format!("Basic {}", encoded));
+            }
             if feature == Feature::UdpBind {
                 let bind_src = ctx
                     .read()
@@ -160,6 +201,7 @@ pub async fn http_forward_proxy_handshake<FrameFn, T2>(
     ctx: ContextRef,
     queue: Sender<ContextRef>,
     create_frames: FrameFn,
+    auth: Option<AuthData>,
 ) -> Result<()>
 where
     FrameFn: FnOnce(&str, u32) -> T2 + Sync,
@@ -169,6 +211,30 @@ where
     let socket = ctx_lock.borrow_client_stream().unwrap();
     let request = HttpRequest::read_from(socket).await?;
     tracing::trace!("request={:?}", request);
+    
+    // Check authentication if required
+    if let Some(ref auth_data) = auth {
+        // Look for Proxy-Authorization or Authorization header
+        let auth_header = request.header("Proxy-Authorization", "");
+        let auth_header = if auth_header.is_empty() {
+            request.header("Authorization", "")
+        } else {
+            auth_header
+        };
+        
+        let user_credentials = if !auth_header.is_empty() {
+            decode_basic_auth(auth_header)
+        } else {
+            None
+        };
+        
+        if !auth_data.check(&user_credentials).await {
+            if let Err(e) = send_simple_error_response(socket, 407, "Proxy Authentication Required").await {
+                warn!("Failed to send authentication required response: {}", e);
+            }
+            bail!("Client authentication failed");
+        }
+    }
 
     if request.method.eq_ignore_ascii_case("CONNECT") {
         let protocol = request.header("Proxy-Protocol", "tcp");
@@ -455,5 +521,28 @@ mod tests {
         // Invalid: Missing Upgrade header
         let no_upgrade = HttpRequest::new("GET", "/").with_header("Connection", "upgrade");
         assert!(!is_websocket_upgrade(&no_upgrade));
+    }
+    
+    #[test]
+    fn test_basic_auth_encoding_decoding() {
+        // Test encoding
+        let encoded = encode_basic_auth("testuser", "testpass");
+        assert_eq!(encoded, "dGVzdHVzZXI6dGVzdHBhc3M=");
+        
+        // Test decoding
+        let decoded = decode_basic_auth("Basic dGVzdHVzZXI6dGVzdHBhc3M=");
+        assert_eq!(decoded, Some(("testuser".to_string(), "testpass".to_string())));
+        
+        // Test invalid auth header
+        let invalid = decode_basic_auth("Bearer token123");
+        assert_eq!(invalid, None);
+        
+        // Test malformed base64
+        let malformed = decode_basic_auth("Basic invalid!!!");
+        assert_eq!(malformed, None);
+        
+        // Test credentials without colon
+        let no_colon = decode_basic_auth("Basic dGVzdA=="); // "test" in base64
+        assert_eq!(no_colon, None);
     }
 }

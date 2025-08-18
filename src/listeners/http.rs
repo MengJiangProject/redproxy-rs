@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 use tracing::{error, info, warn};
 
+use crate::common::auth::AuthData;
 use crate::common::http_proxy::http_forward_proxy_handshake;
 use crate::common::socket_ops::{AppTcpListener, RealSocketOps, SocketOps};
 use crate::common::tls::TlsServerConfig;
@@ -21,6 +22,8 @@ pub struct HttpListenerConfig {
     name: String,
     bind: SocketAddr,
     tls: Option<TlsServerConfig>,
+    #[serde(default)]
+    auth: AuthData,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,6 +72,7 @@ impl<S: SocketOps + Send + Sync + 'static> Listener for HttpListener<S> {
         if let Some(Err(e)) = self.tls.as_mut().map(TlsServerConfig::init) {
             return Err(e);
         }
+        self.auth.init().await?;
         Ok(())
     }
     async fn listen(
@@ -126,9 +130,10 @@ impl<S: SocketOps + Send + Sync + 'static> HttpListener<S> {
                         ctx.write()
                             .await
                             .set_client_stream(make_buffered_stream(stream));
+                        let auth_data = if this.auth.required { Some(this.auth.clone()) } else { None };
                         let res = http_forward_proxy_handshake(ctx, queue, |_, _| async {
                             bail!("not supported")
-                        })
+                        }, auth_data)
                         .await;
                         if let Err(e) = res {
                             warn!(
