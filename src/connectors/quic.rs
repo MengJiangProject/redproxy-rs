@@ -154,6 +154,7 @@ impl QuicConnector {
             "quic-datagrams"
         };
         let frames = |id| create_quic_frames(conn, id, sessions);
+                //TODO: Implement authentication for QUIC connectors
         http_forward_proxy_connect(server, ctx, local, remote, channel, frames, false, None).await?;
         Ok(())
     }
