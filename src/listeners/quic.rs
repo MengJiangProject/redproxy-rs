@@ -127,10 +127,17 @@ impl QuicListener {
             let sessions = sessions.clone();
             tokio::spawn(
                 {
-                    let auth_data = if this.auth.required { Some(this.auth.clone()) } else { None };
-                    http_forward_proxy_handshake(ctx, queue.clone(), |_ch, id| async move {
-                        Ok(create_quic_frames(conn, id, sessions).await)
-                    }, auth_data)
+                    let auth_data = if this.auth.required {
+                        Some(this.auth.clone())
+                    } else {
+                        None
+                    };
+                    http_forward_proxy_handshake(
+                        ctx,
+                        queue.clone(),
+                        |_ch, id| async move { Ok(create_quic_frames(conn, id, sessions).await) },
+                        auth_data,
+                    )
                 }
                 .unwrap_or_else(move |e| {
                     warn!(

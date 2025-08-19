@@ -5,7 +5,7 @@ use serde_yaml_ng::Value;
 use std::{collections::HashMap, sync::Arc};
 
 mod direct;
-mod http;
+pub mod http;
 pub mod loadbalance;
 #[cfg(feature = "quic")]
 mod quic;

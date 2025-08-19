@@ -11,6 +11,9 @@ pub mod socks;
 pub mod tls;
 pub mod udp;
 
+#[cfg(test)]
+mod rfc9298_tests;
+
 #[cfg(feature = "quic")]
 pub mod quic;
 

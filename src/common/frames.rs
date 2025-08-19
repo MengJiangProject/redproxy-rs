@@ -48,6 +48,10 @@ impl Frame {
         self.body.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.body.is_empty()
+    }
+
     // Read from UDP socket, set addr to source
     pub async fn recv_from(&mut self, socket: &UdpSocket) -> IoResult<(usize, SocketAddr)> {
         let mut buf = BytesMut::zeroed(65536);
@@ -176,6 +180,17 @@ where
     let (r, w) = split(stream);
     let r = StreamFrameReader::new(r);
     let w = StreamFrameWriter::new(w, session_id);
+    (Box::new(r), Box::new(w))
+}
+
+// Create RFC 9298-aware frame I/O that handles capsule protocol on the wire
+pub fn rfc9298_frames_from_stream<T>(session_id: u32, stream: T) -> FrameIO
+where
+    T: AsyncRead + AsyncWrite + Sync + Send + 'static,
+{
+    let (r, w) = split(stream);
+    let r = Rfc9298StreamFrameReader::new(r, session_id);
+    let w = Rfc9298StreamFrameWriter::new(w, session_id);
     (Box::new(r), Box::new(w))
 }
 
@@ -330,6 +345,198 @@ fn encode_address(buf: &mut BytesMut, addr: Option<&TargetAddress>) {
     }
 }
 
+// RFC 9298 Stream Frame Reader - implements FrameReader but handles RFC 9298 wire protocol
+struct Rfc9298StreamFrameReader<T> {
+    inner: T,
+    session_id: u32,
+    remaining: Option<BytesMut>,
+}
+
+impl<T> Rfc9298StreamFrameReader<T> {
+    fn new(inner: T, session_id: u32) -> Self {
+        Self {
+            inner,
+            session_id,
+            remaining: None,
+        }
+    }
+}
+
+#[async_trait]
+impl<T> FrameReader for Rfc9298StreamFrameReader<T>
+where
+    T: AsyncRead + Send + Sync + Unpin,
+{
+    async fn read(&mut self) -> IoResult<Option<Frame>> {
+        loop {
+            if let Some(buf) = self.remaining.as_mut() {
+                // Try to read HTTP Datagram length prefix (variable-length integer)
+                if !buf.is_empty() {
+                    // Try to decode varint length
+                    let mut peek_buf = buf.clone();
+                    if let Ok(length) = decode_varint_peek(&mut peek_buf) {
+                        let varint_len = buf.len() - peek_buf.len();
+                        if buf.len() >= varint_len + length as usize {
+                            // We have a complete HTTP Datagram
+                            let _length_bytes = buf.split_to(varint_len); // Skip length prefix
+                            let datagram_data = buf.split_to(length as usize).freeze();
+
+                            // Decode RFC 9298 capsule
+                            if let Ok(rfc9298_frame) = decode_rfc9298_capsule(datagram_data) {
+                                // Convert to internal Frame format
+                                let mut frame = Frame::from_body(rfc9298_frame.payload);
+                                frame.session_id = self.session_id;
+                                // RFC 9298 doesn't encode address in the payload, so addr remains None
+                                return Ok(Some(frame));
+                            }
+                        }
+                    }
+                }
+            } else {
+                self.remaining = Some(BytesMut::with_capacity(65536 * 2));
+            }
+
+            let mut buf = self.remaining.take().unwrap();
+            let mut last = buf.split();
+            buf.reserve(65536);
+            unsafe {
+                buf.set_len(65536);
+            }
+            let len = self.inner.read(&mut buf).await?;
+            if len == 0 {
+                return Ok(None);
+            }
+            buf.truncate(len);
+            last.unsplit(buf);
+            self.remaining = Some(last);
+        }
+    }
+}
+
+// RFC 9298 Stream Frame Writer - implements FrameWriter but outputs RFC 9298 wire protocol
+struct Rfc9298StreamFrameWriter<T> {
+    inner: T,
+    session_id: u32,
+}
+
+impl<T> Rfc9298StreamFrameWriter<T> {
+    fn new(inner: T, session_id: u32) -> Self {
+        Self { inner, session_id }
+    }
+}
+
+#[async_trait]
+impl<T> FrameWriter for Rfc9298StreamFrameWriter<T>
+where
+    T: AsyncWrite + Send + Sync + Unpin,
+{
+    async fn write(&mut self, frame: Frame) -> IoResult<usize> {
+        tracing::trace!(
+            "write RFC 9298 frame: session_id={} len={}",
+            self.session_id,
+            frame.len()
+        );
+
+        // Create RFC 9298 capsule with Context ID 0 (UDP payload)
+        let rfc9298_frame = Rfc9298Frame::udp_payload(frame.body);
+        let encoded_capsule = encode_rfc9298_capsule(&rfc9298_frame);
+
+        // Write HTTP Datagram with variable-length integer length prefix
+        let mut length_buf = BytesMut::new();
+        encode_varint(&mut length_buf, encoded_capsule.len() as u64);
+
+        self.inner.write_all(&length_buf).await?;
+        self.inner.write_all(&encoded_capsule).await?;
+        self.inner.flush().await?;
+
+        Ok(length_buf.len() + encoded_capsule.len())
+    }
+
+    async fn shutdown(&mut self) -> IoResult<()> {
+        self.inner.flush().await?;
+        self.inner.shutdown().await?;
+        Ok(())
+    }
+}
+
+// RFC 9298 Capsule Protocol structures and helpers
+#[derive(Debug, Clone)]
+struct Rfc9298Frame {
+    context_id: u64, // 62-bit Context ID
+    payload: Bytes,
+}
+
+impl Rfc9298Frame {
+    fn udp_payload(payload: Bytes) -> Self {
+        Self {
+            context_id: 0, // Context ID 0 for UDP payloads per RFC 9298
+            payload,
+        }
+    }
+}
+
+// Variable-length integer encoding (QUIC style) for RFC 9298
+fn encode_varint(buf: &mut BytesMut, value: u64) {
+    if value < 64 {
+        buf.put_u8(value as u8);
+    } else if value < 16384 {
+        buf.put_u16((value | 0x4000) as u16);
+    } else if value < 1073741824 {
+        buf.put_u32((value | 0x80000000) as u32);
+    } else {
+        buf.put_u64(value | 0xC000000000000000);
+    }
+}
+
+fn decode_varint_peek(buf: &mut impl Buf) -> IoResult<u64> {
+    if buf.remaining() == 0 {
+        return Err(IoError::new(ErrorKind::UnexpectedEof, "Buffer empty"));
+    }
+
+    let first_byte = buf.chunk()[0];
+    let length = 1 << (first_byte >> 6);
+
+    if buf.remaining() < length {
+        return Err(IoError::new(ErrorKind::UnexpectedEof, "Incomplete varint"));
+    }
+
+    let mut value = (first_byte & 0x3F) as u64;
+    buf.advance(1);
+    for _ in 1..length {
+        value = (value << 8) | (buf.get_u8() as u64);
+    }
+
+    Ok(value)
+}
+
+// Encode RFC 9298 capsule
+fn encode_rfc9298_capsule(frame: &Rfc9298Frame) -> Bytes {
+    let mut buf = BytesMut::new();
+
+    // Encode Context ID as variable-length integer
+    encode_varint(&mut buf, frame.context_id);
+
+    // Add payload
+    buf.extend_from_slice(&frame.payload);
+
+    buf.freeze()
+}
+
+// Decode RFC 9298 capsule
+fn decode_rfc9298_capsule(mut data: Bytes) -> IoResult<Rfc9298Frame> {
+    if data.is_empty() {
+        return Err(IoError::new(ErrorKind::InvalidData, "Empty capsule"));
+    }
+
+    let context_id = decode_varint_peek(&mut data)?;
+    let payload = data;
+
+    Ok(Rfc9298Frame {
+        context_id: context_id & 0x3FFF_FFFF_FFFF_FFFF, // Mask to 62 bits
+        payload,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,5 +571,43 @@ mod tests {
         assert_eq!(pkt.addr, Some("1.2.3.4:1".parse().unwrap()));
         let ret = reader.read().await;
         assert!(ret.is_err() || ret.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_rfc9298_varint_encoding() {
+        // Test small values (1 byte)
+        let mut buf = BytesMut::new();
+        encode_varint(&mut buf, 42);
+        assert_eq!(buf.len(), 1);
+        let mut bytes = buf.freeze();
+        assert_eq!(decode_varint_peek(&mut bytes).unwrap(), 42);
+
+        // Test medium values (2 bytes)
+        let mut buf = BytesMut::new();
+        encode_varint(&mut buf, 1000);
+        assert_eq!(buf.len(), 2);
+        let mut bytes = buf.freeze();
+        assert_eq!(decode_varint_peek(&mut bytes).unwrap(), 1000);
+
+        // Test large values (8 bytes)
+        let mut buf = BytesMut::new();
+        let large_val = 0x3FFF_FFFF_FFFF_FFFF_u64;
+        encode_varint(&mut buf, large_val);
+        assert_eq!(buf.len(), 8);
+        let mut bytes = buf.freeze();
+        assert_eq!(decode_varint_peek(&mut bytes).unwrap(), large_val);
+    }
+
+    #[test]
+    fn test_rfc9298_capsule_encoding() {
+        // Test UDP payload (Context ID 0)
+        let payload = Bytes::from("Hello, RFC 9298!");
+        let frame = Rfc9298Frame::udp_payload(payload.clone());
+        assert_eq!(frame.context_id, 0);
+
+        let encoded = encode_rfc9298_capsule(&frame);
+        let decoded = decode_rfc9298_capsule(encoded).unwrap();
+        assert_eq!(decoded.context_id, 0);
+        assert_eq!(decoded.payload, payload);
     }
 }
