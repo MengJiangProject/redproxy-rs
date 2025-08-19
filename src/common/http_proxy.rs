@@ -707,10 +707,11 @@ impl ContextCallback for HttpForwardCallback {
         let mut server_stream = server_stream.unwrap();
         let mut request = request.unwrap().as_ref().clone();
 
-        // Only add Connection: close for regular HTTP requests, not WebSocket upgrades
-        let is_websocket_upgrade = is_websocket_upgrade(&request);
+        // Only add Connection: close for regular HTTP requests, not HTTP upgrades
+        let connection = request.header("Connection", "").to_lowercase();
+        let has_upgrade = connection.split(',').any(|token| token.trim() == "upgrade");
 
-        if !is_websocket_upgrade {
+        if !has_upgrade {
             request = request.with_header("Connection", "close");
         }
 
