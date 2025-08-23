@@ -10,6 +10,8 @@ pub mod loadbalance;
 #[cfg(feature = "quic")]
 mod quic;
 mod socks;
+#[cfg(feature = "ssh")]
+pub mod ssh;
 
 #[async_trait]
 pub trait Connector: Send + Sync + std::any::Any {
@@ -59,6 +61,8 @@ pub fn from_value(value: &Value) -> Result<ConnectorRef> {
         "loadbalance" => loadbalance::from_value(value),
         #[cfg(feature = "quic")]
         "quic" => quic::from_value(value),
+        #[cfg(feature = "ssh")]
+        "ssh" => ssh::from_value(value),
 
         name => bail!("unknown connector type: {:?}", name),
     }

@@ -18,6 +18,9 @@ mod socks;
 #[cfg(feature = "quic")]
 mod quic;
 
+#[cfg(feature = "ssh")]
+pub mod ssh;
+
 #[cfg(any(target_os = "android", target_os = "linux"))]
 mod tproxy;
 
@@ -63,6 +66,9 @@ pub fn from_value(value: &Value) -> Result<Box<dyn Listener>> {
 
         #[cfg(feature = "quic")]
         "quic" => quic::from_value(value),
+
+        #[cfg(feature = "ssh")]
+        "ssh" => ssh::from_value(value),
 
         #[cfg(any(target_os = "android", target_os = "linux"))]
         "tproxy" => tproxy::from_value(value),

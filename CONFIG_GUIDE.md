@@ -274,6 +274,44 @@ listeners:
       key: test.key
 ```
 
+---
+
+#### 4.6. SSH Listener (`ssh`)
+
+*Availability: This listener type is only available when the proxy is compiled with the `ssh` feature.*
+
+The `ssh` listener accepts SSH connections and forwards tunneled traffic through the proxy chain using SSH's direct-tcpip channel forwarding mechanism.
+
+-   **`type: ssh`**
+-   **Common Parameters**: `bind`.
+-   `hostKeyPath` (string): Path to the SSH server's private host key file (e.g., `/etc/ssh/ssh_host_ed25519_key`).
+-   `authorizedKeysPath` (string, optional): Path to the authorized_keys file for public key authentication (e.g., `/home/user/.ssh/authorized_keys`).
+-   `allowPassword` (boolean, optional): Enables password authentication.
+    -   *Default value*: `false`.
+-   `passwordUsers` (object, optional): Map of username to password for password authentication. Only effective when `allowPassword` is `true`.
+    -   *Example*: `{"alice": "secret123", "bob": "pass456"}`
+-   `inactivityTimeoutSecs` (integer, optional): SSH session inactivity timeout in seconds.
+    -   *Default value*: `300` (5 minutes).
+
+*Note: At least one authentication method (`authorizedKeysPath` or `allowPassword` with `passwordUsers`) must be configured.*
+
+Example:
+```yaml
+listeners:
+  - name: ssh-tunnel
+    type: ssh
+    bind: 0.0.0.0:2222
+    hostKeyPath: /etc/ssh/ssh_host_ed25519_key
+    # Public key authentication
+    authorizedKeysPath: /home/user/.ssh/authorized_keys
+    # Password authentication (optional)
+    allowPassword: true
+    passwordUsers:
+      alice: secret123
+      bob: pass456
+    inactivityTimeoutSecs: 300
+```
+
 With this, the documentation for all listener types in the example `config.yaml` is complete.
 
 ---
@@ -510,6 +548,91 @@ connectors:
     tls:
       insecure: true
       # disableEarlyData: false
+```
+
+---
+
+#### 5.6. SSH Connector (`ssh`)
+
+*Availability: This connector type is only available when the proxy is compiled with the `ssh` feature.*
+
+The `ssh` connector tunnels traffic to upstream servers through an SSH connection using direct-tcpip channel forwarding. Each connection creates a new SSH session to avoid head-of-line blocking issues inherent in SSH's TCP-based transport.
+
+-   **`type: ssh`**
+-   `server` (string): The hostname or IP address of the SSH server.
+    -   *Example*: `"ssh.example.com"`
+-   `port` (integer): The SSH server port.
+    -   *Default value*: `22`.
+-   `username` (string): SSH username for authentication.
+-   `auth` (object): SSH authentication configuration.
+    -   **Password Authentication**:
+        -   `type: password`
+        -   `password` (string): The password for authentication.
+    -   **Private Key Authentication**:
+        -   `type: privateKey`
+        -   `path` (string): Path to the private key file (e.g., `~/.ssh/id_ed25519`).
+        -   `passphrase` (string, optional): Passphrase for encrypted private keys.
+-   `serverKeyVerification` (object): Server key verification configuration.
+    -   **Fingerprint Verification** (recommended for production):
+        -   `type: fingerprint`
+        -   `fingerprint` (string): Expected SHA256 fingerprint of the server's host key (e.g., `"SHA256:xUnNap5CE8FOAAr6+lhzLgkXBgYRoUexlLotEOhDgr4"`).
+    -   **Insecure Mode** (development only):
+        -   `type: insecureAcceptAny`
+        -   ⚠️ **Warning**: This disables host key verification and should ONLY be used in development environments.
+-   `inactivityTimeoutSecs` (integer, optional): SSH session inactivity timeout in seconds.
+    -   *Default value*: `60`.
+
+**Getting SSH Server Fingerprints:**
+
+Use `ssh-keyscan` to get the server's fingerprint:
+```bash
+# Get SHA256 fingerprint
+ssh-keyscan -H example.com 2>/dev/null | ssh-keygen -lf - -E sha256
+# Output: 256 SHA256:xUnNap5CE8FOAAr6+lhzLgkXBgYRoUexlLotEOhDgr4 example.com (ED25519)
+```
+
+Example:
+```yaml
+connectors:
+  # Password authentication
+  - name: ssh-password
+    type: ssh
+    server: ssh.example.com
+    port: 22
+    username: proxyuser
+    auth:
+      type: password
+      password: secretpass123
+    serverKeyVerification:
+      type: fingerprint
+      fingerprint: "SHA256:xUnNap5CE8FOAAr6+lhzLgkXBgYRoUexlLotEOhDgr4"
+    inactivityTimeoutSecs: 60
+
+  # Private key authentication
+  - name: ssh-key
+    type: ssh  
+    server: ssh.example.com
+    port: 22
+    username: proxyuser
+    auth:
+      type: privateKey
+      path: ~/.ssh/id_ed25519
+      # passphrase: optional_passphrase
+    serverKeyVerification:
+      type: fingerprint  
+      fingerprint: "SHA256:xUnNap5CE8FOAAr6+lhzLgkXBgYRoUexlLotEOhDgr4"
+
+  # Development mode (INSECURE - do not use in production!)
+  - name: ssh-dev
+    type: ssh
+    server: test-server.local
+    port: 22
+    username: testuser
+    auth:
+      type: password
+      password: testpass
+    serverKeyVerification:
+      type: insecureAcceptAny  # ⚠️ Development only!
 ```
 
 With this, the documentation for all connector types in the example `config.yaml` is complete.
