@@ -1,0 +1,45 @@
+# Build artifacts
+target/
+**/target/
+
+# Development files
+.git/
+.gitignore
+*.md
+CHANGELOG.md
+CONFIG_GUIDE.md
+MILU_LANG_GUIDE.md
+CLAUDE*.md
+readme.md
+todo.md
+
+# Test files
+tests/
+**/tests/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Nix files
+flake.nix
+flake.lock
+
+# License and documentation
+LICENSE
+README.md
+
+# Config examples (keep only necessary ones)
+config.yaml
+
+# Temporary files
+*.tmp
+*.temp
+.cache/

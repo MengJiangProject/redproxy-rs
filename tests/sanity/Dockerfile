@@ -1,7 +1,7 @@
-FROM rust:1.75-alpine AS builder
+FROM rust:latest AS builder
 
 # Install build dependencies
-RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -11,11 +11,11 @@ COPY . .
 # Build the application
 RUN cargo build --release --features "quic metrics embedded-ui"
 
-# Runtime stage
-FROM alpine:latest
+# Runtime stage - use Debian slim for glibc compatibility
+FROM debian:stable-slim
 
 # Install runtime dependencies
-RUN apk add --no-cache ca-certificates
+RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

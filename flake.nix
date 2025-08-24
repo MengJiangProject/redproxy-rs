@@ -18,6 +18,7 @@
             rustc
             clippy
             rustfmt
+            rust-analyzer
             rust-src
           ] ++ (with pkgs;[
             docker-compose

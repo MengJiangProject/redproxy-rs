@@ -1,0 +1,31 @@
+listeners:
+  - name: http
+    type: http
+    bind: "0.0.0.0:8800"
+  - name: socks
+    type: socks
+    bind: "0.0.0.0:1081"
+
+connectors:
+  - name: direct
+    type: direct
+  - name: upstream-http
+    type: http
+    server: "http-proxy"
+    port: 3128
+  - name: upstream-socks
+    type: socks
+    server: "socks-proxy"
+    port: 1080
+
+rules:
+  - filter: 'request.target.host == "http-echo"'
+    target: direct
+  - filter: 'request.target.host == "target-server"'
+    target: direct
+  - filter: "true"
+    target: direct
+
+accessLog:
+  path: /tmp/access.log
+  format: json

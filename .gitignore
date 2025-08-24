@@ -4,9 +4,15 @@
 *.key
 .vscode
 history.txt
-*.yaml
-*.log
+/*.yaml
+/*.log
 /result
 .direnv
 .claude
 .serena
+
+# Test artifacts
+/tests/*/logs/
+/tests/*/test-results/
+/tests/*/certificates/
+
