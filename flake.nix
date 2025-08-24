@@ -13,17 +13,19 @@
       let pkgs = nixpkgs.legacyPackages.${system}; in
       {
         devShells.default = pkgs.mkShell {
-          buildInputs = with fenix.packages.${system}.complete; [
+          buildInputs = with fenix.packages.${system}.stable; [
             cargo
             rustc
             clippy
             rustfmt
             rust-src
-          ];
+          ] ++ (with pkgs;[
+            docker-compose
+          ]);
         };
 
         defaultPackage = (pkgs.makeRustPlatform {
-          inherit (fenix.packages.${system}.minimal) cargo rustc;
+          inherit (fenix.packages.${system}.stable.minimal) cargo rustc;
         }).buildRustPackage {
           pname = "redproxy-rs";
           version = "0.10.0";
