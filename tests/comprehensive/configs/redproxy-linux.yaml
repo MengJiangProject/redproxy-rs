@@ -1,0 +1,46 @@
+listeners:
+  - name: http-proxy
+    type: http
+    bind: "0.0.0.0:8800"
+    
+  - name: socks-proxy
+    type: socks
+    bind: "0.0.0.0:1081"
+    
+  # TPROXY listener (Linux-specific transparent proxy)
+  - name: tproxy
+    type: tproxy
+    bind: "0.0.0.0:8080"
+
+connectors:
+  - name: direct
+    type: direct
+    
+  - name: upstream-socks
+    type: socks
+    server: "upstream-socks5"
+    port: 1080
+
+rules:
+  # Use upstream SOCKS5 proxy for all traffic to avoid TPROXY infinite loops
+  - filter: "true"
+    target: upstream-socks
+
+# Enable Linux-specific optimizations
+ioParams:
+  bufferSize: 65536
+  useSplice: true
+  
+metrics:
+  bind: "0.0.0.0:8888"
+  api_prefix: "/api"
+  ui: "<embedded>"
+  history_size: 1000
+
+accessLog:
+  path: /logs/access-linux.log
+  format: json
+  
+timeouts:
+  idle: 60
+  udp: 60

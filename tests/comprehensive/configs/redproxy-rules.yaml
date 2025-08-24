@@ -1,0 +1,70 @@
+listeners:
+  - name: "http-proxy"
+    type: http
+    bind: "0.0.0.0:8800"
+    
+  - name: "socks-proxy"
+    type: socks
+    bind: "0.0.0.0:1081"
+
+connectors:
+  - name: "direct"
+    type: direct
+    
+  - name: "upstream-http"
+    type: http
+    server: "upstream-http"
+    port: 3128
+    
+  - name: "upstream-socks"
+    type: socks
+    server: "upstream-socks"
+    port: 1080
+
+rules:
+  # Rule 1: Block access to blocked targets
+  - filter: 'request.target.host == "target-blocked"'
+    target: deny
+    
+  # Rule 2: Block all requests to port 8080 (higher priority than host rules)
+  - filter: "request.target.port == 8080"
+    target: deny
+    
+  # Rule 3: Allow access to nginx (after port blocking)
+  - filter: 'request.target.host == "target-nginx"'
+    target: "direct"
+    
+  # Rule 4: Route .http.test domains through HTTP upstream
+  - filter: 'request.target.host =~ ".*\\.http\\.test"'
+    target: "upstream-http"
+    
+  # Rule 5: Route .socks.test domains through SOCKS upstream  
+  - filter: 'request.target.host =~ ".*\\.socks\\.test"'
+    target: "upstream-socks"
+    
+  # Rule 6: Route based on protocol (HTTPS)
+  - filter: "request.target.port == 443"
+    target: "upstream-http"
+    
+  # Rule 7: Default rule - direct connection
+  - filter: "true"
+    target: "direct"
+
+metrics:
+  bind: "0.0.0.0:8888"
+  api_prefix: "/api"
+  ui: "<embedded>"
+  history_size: 1000
+
+accessLog:
+  path: "/logs/access-rules.log"
+  format:
+    script: "`${request.source} -> ${request.target} via ${request.connector}`"
+  
+timeouts:
+  idle: 60
+  udp: 60
+
+ioParams:
+  bufferSize: 131072
+  useSplice: true

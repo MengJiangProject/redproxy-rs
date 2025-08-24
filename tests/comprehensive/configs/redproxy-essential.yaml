@@ -1,0 +1,54 @@
+listeners:
+  - name: http-proxy
+    type: http
+    bind: "0.0.0.0:8800"
+
+  - name: socks-proxy
+    type: socks
+    bind: "0.0.0.0:1081"
+
+connectors:
+  - name: direct
+    type: direct
+
+  - name: upstream-http
+    type: http
+    server: "upstream-http"
+    port: 3128
+
+  - name: upstream-socks
+    type: socks
+    server: "upstream-socks"
+    port: 1080
+
+rules:
+  # Direct connections to local services
+  - filter: 'request.target.host == "target-server"'
+    target: direct
+  
+  - filter: 'request.target.host == "websocket-server"'
+    target: direct
+
+  # Route through upstream HTTP proxy for .com domains
+  - filter: 'request.target.host =~ ".*\\.com$"'
+    target: upstream-http
+
+  # Route through upstream SOCKS proxy for .org domains  
+  - filter: 'request.target.host =~ ".*\\.org$"'
+    target: upstream-socks
+
+  # Default to direct
+  - filter: "true"
+    target: direct
+
+accessLog:
+  path: /tmp/access-basic.log
+  format: json
+
+timeouts:
+  idle: 30
+  udp: 30
+
+ioParams:
+  bufferSize: 65536
+  useSplice: true

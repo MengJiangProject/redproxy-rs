@@ -1,0 +1,93 @@
+listeners:
+  - name: http-proxy
+    type: http
+    bind: "0.0.0.0:8800"
+
+  - name: socks-proxy
+    type: socks
+    bind: "0.0.0.0:1081"
+
+  # QUIC listener disabled for essential tests (requires certificates)
+  # - name: quic-proxy
+  #   type: quic
+  #   bind: "0.0.0.0:8443"
+  #   tls:
+  #     cert: /etc/certs/server.crt
+  #     key: /etc/certs/server.key
+
+  - name: reverse-proxy
+    type: reverse
+    bind: "0.0.0.0:8090"
+    target: "target-server:80"
+
+connectors:
+  - name: direct
+    type: direct
+
+  - name: upstream-http
+    type: http
+    server: "upstream-http"
+    port: 3128
+
+  - name: upstream-socks
+    type: socks
+    server: "upstream-socks"
+    port: 1080
+
+  # upstream-quic connector removed for essential tests
+
+  - name: load-balancer
+    type: direct
+    loadBalance:
+      - target: "target-server:80"
+        weight: 2
+      - target: "target-server:8080"
+        weight: 1
+    hashMethod: "source_ip"
+
+rules:
+  # Test complex Milu expressions
+  - filter: 'request.target.host == "target-server" && request.target.port == 80'
+    target: direct
+  
+  - filter: 'request.target.host == "websocket-server"'
+    target: direct
+
+  # Load balancing rule
+  - filter: 'request.target.host == "loadbalanced.test"'
+    target: load-balancer
+
+  # QUIC connector test (disabled for essential tests)
+  # - filter: 'request.target.host =~ ".*\\.quic$"'
+  #   target: upstream-quic
+
+  # HTTP upstream for .com
+  - filter: 'request.target.host =~ ".*\\.com$" && request.source.port > 1024'
+    target: upstream-http
+
+  # SOCKS upstream for .org
+  - filter: 'request.target.host =~ ".*\\.org$"'
+    target: upstream-socks
+
+  # Default fallback
+  - filter: "true"
+    target: direct
+
+metrics:
+  bind: "0.0.0.0:8888"
+  api_prefix: "/api"
+  ui: "<embedded>"
+  history_size: 500
+  cors: "*"
+
+accessLog:
+  path: /tmp/access-full-features.log
+  format: json
+
+timeouts:
+  idle: 60
+  udp: 60
+
+ioParams:
+  bufferSize: 131072
+  useSplice: true

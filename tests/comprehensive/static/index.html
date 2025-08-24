@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hello from Nginx Target Server</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        .info {
+            background: #ecf0f1;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        .status {
+            color: #27ae60;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Hello from Nginx Target Server</h1>
+        <p class="status">✓ Server is running and accessible</p>
+        
+        <div class="info">
+            <h3>Server Information</h3>
+            <ul>
+                <li><strong>Server:</strong> Nginx (Target Server)</li>
+                <li><strong>Port:</strong> 80</li>
+                <li><strong>Purpose:</strong> RedProxy test target</li>
+                <li><strong>Container:</strong> target-server</li>
+            </ul>
+        </div>
+        
+        <div class="info">
+            <h3>Test Endpoints</h3>
+            <ul>
+                <li><code>/</code> - This page</li>
+                <li><code>/api/status</code> - JSON status response</li>
+                <li><code>/health</code> - Health check endpoint</li>
+                <li><code>/large</code> - Large response for buffer testing</li>
+            </ul>
+        </div>
+        
+        <p><em>This server is used to test RedProxy functionality across different protocols and routing scenarios.</em></p>
+    </div>
+</body>
+</html>

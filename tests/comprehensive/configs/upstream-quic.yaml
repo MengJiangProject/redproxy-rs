@@ -1,0 +1,27 @@
+listeners:
+  - name: quic-upstream
+    type: quic
+    bind: "0.0.0.0:9443"
+    tls:
+      cert: /etc/certs/server-cert.pem
+      key: /etc/certs/server-key.pem
+    quic:
+      enable_bbr: true
+      max_idle_timeout: 30000
+      initial_max_data: 10485760
+
+connectors:
+  - name: direct
+    type: direct
+
+rules:
+  - filter: "true"
+    target: direct
+
+accessLog:
+  path: /tmp/upstream-quic-access.log
+  format: json
+
+timeouts:
+  idle: 60
+  udp: 60

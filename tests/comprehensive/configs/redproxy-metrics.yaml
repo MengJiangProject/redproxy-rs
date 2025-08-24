@@ -1,0 +1,40 @@
+listeners:
+  - name: "http-proxy"
+    address: "0.0.0.0:8800"
+    protocol: "http"
+    
+  - name: "socks-proxy"
+    address: "0.0.0.0:1081"
+    protocol: "socks"
+
+connectors:
+  - name: "direct"
+    protocol: "direct"
+    
+  - name: "upstream-http"
+    protocol: "http"
+    address: "upstream-http:3128"
+
+rules:
+  - filter: "request.target.host == 'upstream.test'"
+    connector: "upstream-http"
+  - filter: "true"
+    connector: "direct"
+
+# Enable metrics
+metrics:
+  enabled: true
+  bind: "0.0.0.0:8888"
+  path: "/api/metrics"
+  
+# Enable embedded UI  
+embeddedUI:
+  enabled: true
+  bind: "0.0.0.0:8888"
+  
+accessLog:
+  format: "[{timestamp}] {request.source.host}:{request.source.port} -> {request.target.host}:{request.target.port} via {connector} ({duration}ms, {bytes_sent}B sent, {bytes_received}B recv)"
+  
+timeouts:
+  connect: "10s"
+  idle: "60s"

@@ -1,0 +1,41 @@
+FROM rust:latest AS builder
+
+ARG FEATURES=default
+ENV FEATURES=${FEATURES}
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY . .
+
+# Build RedProxy with specified features
+RUN if [ "$FEATURES" = "default" ]; then \
+        cargo build --release; \
+    else \
+        cargo build --release --features "$FEATURES"; \
+    fi
+
+# Runtime stage - use Debian slim for glibc compatibility
+FROM debian:stable-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
+
+# Copy binary
+COPY --from=builder /app/target/release/redproxy-rs /usr/local/bin/redproxy
+
+# Create non-root user
+RUN groupadd -g 1000 redproxy && \
+    useradd -d /home/redproxy -s /bin/bash -u 1000 -g redproxy redproxy
+
+# Create directories
+RUN mkdir -p /etc /logs /home/redproxy && \
+    chown -R redproxy:redproxy /logs /home/redproxy
+
+USER redproxy
+WORKDIR /home/redproxy
+
+EXPOSE 8800 1081 8443 8888
+
+CMD ["/usr/local/bin/redproxy", "-c", "/etc/redproxy.yaml"]

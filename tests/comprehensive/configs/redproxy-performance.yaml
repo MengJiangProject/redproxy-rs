@@ -1,0 +1,35 @@
+listeners:
+  - name: http-proxy
+    type: http
+    bind: "0.0.0.0:8800"
+    
+  - name: socks-proxy
+    type: socks
+    bind: "0.0.0.0:1081"
+
+connectors:
+  - name: direct
+    type: direct
+
+rules:
+  - filter: "true"
+    target: direct
+
+metrics:
+  bind: "0.0.0.0:8888"
+  api_prefix: "/api"
+  ui: "<embedded>"
+  history_size: 1000
+
+accessLog:
+  path: /logs/access-performance.log
+  format: json
+  
+timeouts:
+  idle: 300    # Longer timeout for performance testing
+  udp: 300
+
+# Optimized for performance testing
+ioParams:
+  bufferSize: 262144    # Larger buffer for performance
+  useSplice: true

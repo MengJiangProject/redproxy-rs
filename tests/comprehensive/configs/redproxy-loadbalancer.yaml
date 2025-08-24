@@ -1,0 +1,63 @@
+listeners:
+  - name: "http-proxy"
+    type: http
+    bind: "0.0.0.0:8800"
+    
+  - name: "socks-proxy"
+    type: socks
+    bind: "0.0.0.0:1081"
+
+connectors:
+  - name: "direct"
+    type: direct
+    
+  - name: "upstream1"
+    type: direct
+    
+  - name: "upstream2" 
+    type: direct
+    
+  - name: "upstream3"
+    type: direct
+    
+  - name: "upstream-pool"
+    type: loadbalance
+    connectors:
+      - "upstream1"
+      - "upstream2"
+      - "upstream3"
+    algorithm: roundRobin
+    
+  - name: "hash-pool"
+    type: loadbalance
+    connectors:
+      - "upstream1"
+      - "upstream2"
+    algorithm: {hashBy: "request.target.host"}
+
+rules:
+  - filter: 'request.target.host =~ ".*\\.pool\\.test"'
+    target: "upstream-pool"
+  - filter: 'request.target.host =~ ".*\\.hash\\.test"'
+    target: "hash-pool"
+  - filter: "true"
+    target: "direct"
+
+metrics:
+  bind: "0.0.0.0:8888"
+  api_prefix: "/api"
+  ui: "<embedded>"
+  history_size: 1000
+
+accessLog:
+  path: "/logs/access-loadbalancer.log"
+  format:
+    script: "`${request.source} -> ${request.target} via ${request.connector}`"
+  
+timeouts:
+  idle: 60
+  udp: 60
+
+ioParams:
+  bufferSize: 131072
+  useSplice: true

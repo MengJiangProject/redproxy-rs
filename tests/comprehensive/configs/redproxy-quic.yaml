@@ -1,0 +1,70 @@
+listeners:
+  - name: http-proxy
+    type: http
+    bind: "0.0.0.0:8800"
+
+  - name: socks-proxy  
+    type: socks
+    bind: "0.0.0.0:1081"
+
+  - name: quic-listener
+    type: quic
+    bind: "0.0.0.0:8443"
+    tls:
+      cert: /etc/certs/server-cert.pem
+      key: /etc/certs/server-key.pem
+    quic:
+      enable_bbr: true
+      max_idle_timeout: 30000
+      initial_max_data: 10485760
+      initial_max_stream_data_bidi_local: 1048576
+      initial_max_stream_data_bidi_remote: 1048576
+      initial_max_streams_bidi: 100
+      initial_max_streams_uni: 100
+
+connectors:
+  - name: direct
+    type: direct
+
+  - name: upstream-quic
+    type: quic
+    server: "upstream-quic"
+    port: 9443
+    tls:
+      ca: /etc/certs/ca-cert.pem
+      verify_peer: false
+    quic:
+      enable_bbr: true
+      max_idle_timeout: 30000
+
+rules:
+  # Route .quic domains through QUIC upstream
+  - filter: 'request.target.host =~ ".*\\.quic$"'
+    target: upstream-quic
+
+  # Route specific test hosts through QUIC
+  - filter: 'request.target.host == "quic-test.example.com"'
+    target: upstream-quic
+
+  # Default to direct
+  - filter: "true"  
+    target: direct
+
+metrics:
+  bind: "0.0.0.0:8888"
+  api_prefix: "/api"
+  ui: "<embedded>"
+  history_size: 1000
+
+accessLog:
+  path: /logs/access-quic.log
+  format: json
+  customFormat: '{"timestamp": "${timestamp}", "protocol": "QUIC", "method": "${request.method}", "host": "${request.target.host}", "connector": "${connector}", "duration_ms": ${duration_ms}}'
+
+timeouts:
+  idle: 60
+  udp: 60
+
+ioParams:
+  bufferSize: 131072
+  useSplice: true

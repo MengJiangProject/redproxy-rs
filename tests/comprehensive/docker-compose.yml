@@ -1,0 +1,319 @@
+# Unified RedProxy Comprehensive Test Suite
+# All services defined here, started selectively by Make
+services:
+  # Certificate generator - shared by all TLS tests
+  cert-generator:
+    image: alpine:latest
+    profiles: ["manual"]
+    volumes:
+      - ./certificates:/certs:rw
+    command: >
+      sh -c "
+        apk add --no-cache openssl &&
+        mkdir -p /certs &&
+        if [ ! -f /certs/ca-cert.pem ]; then
+          echo 'Generating certificates...' &&
+          openssl genrsa -out /certs/ca-key.pem 2048 &&
+          openssl req -new -x509 -key /certs/ca-key.pem -out /certs/ca-cert.pem -days 365 -subj '/CN=Test CA' &&
+          openssl genrsa -out /certs/server-key.pem 2048 &&
+          openssl req -new -key /certs/server-key.pem -out /certs/server.csr -subj '/CN=redproxy' &&
+          openssl x509 -req -in /certs/server.csr -CA /certs/ca-cert.pem -CAkey /certs/ca-key.pem -CAcreateserial -out /certs/server-cert.pem -days 365 &&
+          openssl genrsa -out /certs/client-key.pem 2048 &&
+          openssl req -new -key /certs/client-key.pem -out /certs/client.csr -subj '/CN=test-client' &&
+          openssl x509 -req -in /certs/client.csr -CA /certs/ca-cert.pem -CAkey /certs/ca-key.pem -CAcreateserial -out /certs/client-cert.pem -days 365 &&
+          chmod 644 /certs/*.pem &&
+          echo 'Certificates generated successfully' &&
+          ls -la /certs/
+        else
+          echo 'Certificates already exist'
+        fi
+      "
+    networks:
+      - test-net
+
+  # RedProxy instances for different test scenarios
+  redproxy-essential:
+    build:
+      context: ../..
+      dockerfile: tests/comprehensive/Dockerfile.redproxy
+    profiles: ["manual"]
+    volumes:
+      - ./configs/redproxy-essential.yaml:/etc/redproxy.yaml:ro
+      - ./logs:/logs:rw
+    networks:
+      - test-net
+
+  redproxy-features:
+    build:
+      context: ../..
+      dockerfile: tests/comprehensive/Dockerfile.redproxy
+    profiles: ["manual"]
+    volumes:
+      - ./configs/redproxy-features.yaml:/etc/redproxy.yaml:ro
+      - ./logs:/logs:rw
+    networks:
+      - test-net
+
+  redproxy-quic:
+    build:
+      context: ../..
+      dockerfile: tests/comprehensive/Dockerfile.redproxy
+    profiles: ["manual"]
+    volumes:
+      - ./configs/redproxy-quic.yaml:/etc/redproxy.yaml:ro
+      - ./certificates:/etc/certs:ro
+      - ./logs:/logs:rw
+    networks:
+      - test-net
+
+  redproxy-mtls:
+    build:
+      context: ../..
+      dockerfile: tests/comprehensive/Dockerfile.redproxy
+    profiles: ["manual"]
+    volumes:
+      - ./configs/redproxy-mtls.yaml:/etc/redproxy.yaml:ro
+      - ./certificates:/etc/certs:ro
+      - ./logs:/logs:rw
+    networks:
+      - test-net
+
+  redproxy-loadbalancer:
+    build:
+      context: ../..
+      dockerfile: tests/comprehensive/Dockerfile.redproxy
+    profiles: ["manual"]
+    volumes:
+      - ./configs/redproxy-loadbalancer.yaml:/etc/redproxy.yaml:ro
+      - ./logs:/logs:rw
+    networks:
+      - test-net
+
+  redproxy-rules:
+    build:
+      context: ../..
+      dockerfile: tests/comprehensive/Dockerfile.redproxy
+    profiles: ["manual"]
+    volumes:
+      - ./configs/redproxy-rules.yaml:/etc/redproxy.yaml:ro
+      - ./logs:/logs:rw
+    networks:
+      - test-net
+
+  redproxy-linux:
+    build:
+      context: ../..
+      dockerfile: tests/comprehensive/Dockerfile.redproxy
+    profiles: ["manual"]
+    volumes:
+      - ./configs/redproxy-linux.yaml:/etc/redproxy.yaml:ro
+      - ./logs:/logs:rw
+    networks:
+      - test-net
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+  redproxy-performance:
+    build:
+      context: ../..
+      dockerfile: tests/comprehensive/Dockerfile.redproxy
+    profiles: ["manual"]
+    volumes:
+      - ./configs/redproxy-performance.yaml:/etc/redproxy.yaml:ro
+      - ./logs:/logs:rw
+    networks:
+      - test-net
+
+  # Target servers
+  target-nginx:
+    image: nginx:alpine
+    profiles: ["manual"]
+    volumes:
+      - ./configs/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./static:/usr/share/nginx/html:ro
+    networks:
+      - test-net
+
+  target-websocket:
+    image: node:18-alpine
+    profiles: ["manual"]
+    working_dir: /app
+    volumes:
+      - ./services/websocket-server.js:/app/server.js:ro
+    command: node server.js
+    networks:
+      - test-net
+
+  target-blocked:
+    image: nginx:alpine
+    profiles: ["manual"]
+    volumes:
+      - ./static:/usr/share/nginx/html:ro
+    networks:
+      - test-net
+
+  # Upstream proxy services
+  upstream-http:
+    image: squid:latest
+    profiles: ["manual"]
+    volumes:
+      - ./configs/squid.conf:/etc/squid/squid.conf:ro
+    networks:
+      - test-net
+
+  upstream-socks5:
+    image: serjs/go-socks5-proxy:latest
+    profiles: ["manual"]
+    environment:
+      - PROXY_USER=
+      - PROXY_PASSWORD=
+    networks:
+      - test-net
+
+  upstream-quic:
+    build:
+      context: ../..
+      dockerfile: tests/comprehensive/Dockerfile.redproxy
+    profiles: ["manual"]
+    volumes:
+      - ./configs/upstream-quic.yaml:/etc/redproxy.yaml:ro
+      - ./certificates:/etc/certs:ro
+    networks:
+      - test-net
+
+  upstream-mtls:
+    build:
+      context: ../..
+      dockerfile: tests/comprehensive/Dockerfile.redproxy
+    profiles: ["manual"]
+    volumes:
+      - ./configs/upstream-mtls.yaml:/etc/redproxy.yaml:ro
+      - ./certificates:/etc/certs:ro
+    networks:
+      - test-net
+
+  # Load balancer upstream targets
+  upstream-lb-1:
+    image: nginx:alpine
+    profiles: ["manual"]
+    volumes:
+      - ./static:/usr/share/nginx/html:ro
+    environment:
+      - SERVER_NAME=upstream-1
+    networks:
+      - test-net
+
+  upstream-lb-2:
+    image: nginx:alpine
+    profiles: ["manual"]
+    volumes:
+      - ./static:/usr/share/nginx/html:ro
+    environment:
+      - SERVER_NAME=upstream-2
+    networks:
+      - test-net
+
+  upstream-lb-3:
+    image: nginx:alpine
+    profiles: ["manual"]
+    volumes:
+      - ./static:/usr/share/nginx/html:ro
+    environment:
+      - SERVER_NAME=upstream-3
+    networks:
+      - test-net
+
+  # Test runners
+  tester-essential:
+    build:
+      context: .
+      dockerfile: Dockerfile.tester
+    profiles: ["manual"]
+    volumes:
+      - ./test-scripts:/test-scripts:ro
+      - ./test-results:/test-results:rw
+    command: ["/test-scripts/run-essential-tests.sh"]
+    networks:
+      - test-net
+
+  tester-quic:
+    build:
+      context: .
+      dockerfile: Dockerfile.tester
+    profiles: ["manual"]
+    volumes:
+      - ./test-scripts:/test-scripts:ro
+      - ./test-results:/test-results:rw
+      - ./certificates:/certs:ro
+    command: ["/test-scripts/run-quic-tests.sh"]
+    networks:
+      - test-net
+
+  tester-mtls:
+    build:
+      context: .
+      dockerfile: Dockerfile.tester
+    profiles: ["manual"]
+    volumes:
+      - ./test-scripts:/test-scripts:ro
+      - ./test-results:/test-results:rw
+      - ./certificates:/certs:ro
+    command: ["/test-scripts/run-mtls-tests.sh"]
+    networks:
+      - test-net
+
+  tester-loadbalancer:
+    build:
+      context: .
+      dockerfile: Dockerfile.tester
+    profiles: ["manual"]
+    volumes:
+      - ./test-scripts:/test-scripts:ro
+      - ./test-results:/test-results:rw
+    command: ["/test-scripts/run-loadbalancer-tests.sh"]
+    networks:
+      - test-net
+
+  tester-rules:
+    build:
+      context: .
+      dockerfile: Dockerfile.tester
+    profiles: ["manual"]
+    volumes:
+      - ./test-scripts:/test-scripts:ro
+      - ./test-results:/test-results:rw
+    command: ["/test-scripts/run-rules-tests.sh"]
+    networks:
+      - test-net
+
+  tester-linux:
+    build:
+      context: .
+      dockerfile: Dockerfile.tester
+    profiles: ["manual"]
+    volumes:
+      - ./test-scripts:/test-scripts:ro
+      - ./test-results:/test-results:rw
+    command: ["/test-scripts/run-linux-tests.sh"]
+    network_mode: "container:comprehensive-redproxy-linux-1"
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+  tester-performance:
+    build:
+      context: .
+      dockerfile: Dockerfile.tester
+    profiles: ["manual"]
+    volumes:
+      - ./test-scripts:/test-scripts:ro
+      - ./test-results:/test-results:rw
+    command: ["/test-scripts/run-performance-tests.sh"]
+    networks:
+      - test-net
+
+networks:
+  test-net:
+    driver: bridge

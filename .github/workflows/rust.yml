@@ -74,6 +74,38 @@ jobs:
           path: target/debug/redproxy-rs
           retention-days: 7
 
+  # Integration tests with Docker
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Run comprehensive tests
+        run: |
+          cd tests/comprehensive
+          make test-all
+        timeout-minutes: 20
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results-${{ github.sha }}
+          path: |
+            tests/comprehensive/test-results/
+          retention-days: 30
+
+      - name: Upload test logs on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: integration-test-logs-failure-${{ github.sha }}
+          path: |
+            tests/comprehensive/test-results/*.log
+          retention-days: 7
+
   # Cross-platform release builds
   build-cross:
     needs: [security, test]

@@ -1,0 +1,30 @@
+FROM debian:stable-slim
+
+# Install test tools
+RUN apt-get update && apt-get install -y \
+    curl \
+    netcat-openbsd \
+    bash \
+    jq \
+    socat \
+    openssl \
+    dnsutils \
+    tcpdump \
+    iperf3 \
+    wrk \
+    bc \
+    ca-certificates \
+    iptables \
+    iproute2 \
+    kmod \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create test directories  
+RUN mkdir -p /test-scripts /test-results /tmp/test-data
+
+# For Linux tests requiring iptables, we need root privileges
+# Note: Linux-specific tests will run as root, others can run as regular user
+WORKDIR /root
+
+# Default command
+CMD ["/bin/bash"]

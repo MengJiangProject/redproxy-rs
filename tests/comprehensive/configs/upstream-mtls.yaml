@@ -1,0 +1,26 @@
+listeners:
+  - name: "http-mtls-upstream"
+    type: http
+    bind: "0.0.0.0:9800"
+    tls:
+      cert: "/etc/certs/server-cert.pem"
+      key: "/etc/certs/server-key.pem"
+      client:
+        ca: "/etc/certs/ca-cert.pem"
+        required: true
+
+connectors:
+  - name: "direct"
+    type: direct
+
+rules:
+  - target: "direct"
+
+accessLog:
+  path: "/tmp/access-upstream-mtls.log"
+  format:
+    script: "`Upstream mTLS: ${request.source} -> ${request.target}`"
+  
+timeouts:
+  idle: 60
+  udp: 60

@@ -1,0 +1,47 @@
+listeners:
+  - name: http-proxy
+    type: http
+    bind: "0.0.0.0:8800"
+      
+  - name: socks-proxy
+    type: socks
+    bind: "0.0.0.0:1081"
+
+connectors:
+  - name: direct
+    type: direct
+    
+  - name: upstream-mtls
+    type: http
+    server: "upstream-mtls"
+    port: 9800
+    tls:
+      insecure: true
+      ca: "/etc/certs/ca-cert.pem"
+      auth:
+        cert: "/etc/certs/client-cert.pem"
+        key: "/etc/certs/client-key.pem"
+
+rules:
+  - filter: 'request.target.host == "mtls.test"'
+    target: upstream-mtls
+  - filter: "true"
+    target: direct
+
+metrics:
+  bind: "0.0.0.0:8888"
+  api_prefix: "/api"
+  ui: "<embedded>"
+  history_size: 1000
+
+accessLog:
+  path: /logs/access-mtls.log
+  format: json
+  
+timeouts:
+  idle: 60
+  udp: 60
+
+ioParams:
+  bufferSize: 131072
+  useSplice: true
