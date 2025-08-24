@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # HTTP echo server for testing direct connections
+  http-echo:
+    image: hashicorp/http-echo:latest
+    command: ["-text=Hello from HTTP echo server", "-listen=:8080"]
+    ports:
+      - "18080:8080"
+    networks:
+      - test-network
+
+  # SOCKS5 proxy server for testing upstream connections
+  socks-proxy:
+    image: serjs/go-socks5-proxy:latest
+    ports:
+      - "11080:1080"
+    networks:
+      - test-network
+
+  # HTTP proxy server for testing upstream connections
+  http-proxy:
+    image: ubuntu/squid:latest
+    ports:
+      - "13128:3128"
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+    networks:
+      - test-network
+
+  # Target HTTP server behind proxies
+  target-server:
+    image: nginx:alpine
+    ports:
+      - "19090:80"
+    networks:
+      - test-network
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+
+  # RedProxy server under test
+  redproxy:
+    build:
+      context: ../..
+      dockerfile: tests/sanity/Dockerfile
+    ports:
+      - "18800:8800"  # HTTP listener
+      - "11081:1081"  # SOCKS listener
+    volumes:
+      - ./redproxy-config.yaml:/app/config.yaml:ro
+    networks:
+      - test-network
+    depends_on:
+      - http-echo
+      - socks-proxy
+      - http-proxy
+      - target-server
+
+  # Test runner container
+  test-runner:
+    image: alpine:latest
+    volumes:
+      - ./test-scripts:/scripts:ro
+    networks:
+      - test-network
+    depends_on:
+      - redproxy
+    command: ["sh", "/scripts/run-tests.sh"]
+    environment:
+      - REDPROXY_HTTP_PORT=8800
+      - REDPROXY_SOCKS_PORT=1081
+      - HTTP_ECHO_HOST=http-echo
+      - HTTP_ECHO_PORT=8080
+      - TARGET_HOST=target-server
+      - TARGET_PORT=80
+
+networks:
+  test-network:
+    driver: bridge
