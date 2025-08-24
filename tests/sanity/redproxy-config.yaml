@@ -19,10 +19,16 @@ connectors:
     port: 1080
 
 rules:
+  # Direct connection to echo server (test direct connector)
   - filter: 'request.target.host == "http-echo"'
     target: direct
-  - filter: 'request.target.host == "target-server"'
-    target: direct
+  # Route target-server through upstream HTTP proxy (test HTTP connector)  
+  - filter: 'request.target.host == "target-server" && request.listener == "http"'
+    target: upstream-http
+  # Route target-server through upstream SOCKS proxy (test SOCKS connector)
+  - filter: 'request.target.host == "target-server" && request.listener == "socks"'
+    target: upstream-socks
+  # Default fallback to direct
   - filter: "true"
     target: direct
 
