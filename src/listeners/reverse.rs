@@ -138,6 +138,12 @@ impl<S: SocketOps + Send + Sync + 'static> Listener for ReverseProxyListener<S> 
     fn name(&self) -> &str {
         &self.name
     }
+
+    async fn shutdown(&self) -> Result<()> {
+        info!("{}: shutting down UDP sessions", self.name);
+        self.sessions.clear().await;
+        Ok(())
+    }
 }
 
 impl<S: SocketOps + Send + Sync + 'static> ReverseProxyListener<S> {

@@ -114,6 +114,12 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
         self.name.as_str()
     }
 
+    async fn shutdown(&self) -> Result<()> {
+        tracing::debug!("{}: shutting down connector", self.name);
+        self.udp_binds.clear().await;
+        Ok(())
+    }
+
     fn features(&self) -> &[Feature] {
         &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
     }

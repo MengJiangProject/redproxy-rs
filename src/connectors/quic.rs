@@ -93,6 +93,12 @@ impl super::Connector for QuicConnector {
         self.name.as_str()
     }
 
+    async fn shutdown(&self) -> Result<()> {
+        tracing::debug!("{}: shutting down connector", self.name);
+        self.clear_connection().await;
+        Ok(())
+    }
+
     fn features(&self) -> &[Feature] {
         &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
     }

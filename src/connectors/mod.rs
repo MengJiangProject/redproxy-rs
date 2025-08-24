@@ -22,6 +22,9 @@ pub trait Connector: Send + Sync + std::any::Any {
         Ok(())
     }
     async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<()>;
+    async fn shutdown(&self) -> Result<()> {
+        Ok(())
+    }
     fn name(&self) -> &str;
     fn features(&self) -> &[Feature] {
         &[Feature::TcpForward]

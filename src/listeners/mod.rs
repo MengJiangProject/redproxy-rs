@@ -38,6 +38,9 @@ pub trait Listener: Send + Sync {
         timeouts: Timeouts,
         queue: Sender<ContextRef>,
     ) -> Result<()>;
+    async fn shutdown(&self) -> Result<()> {
+        Ok(())
+    }
     fn name(&self) -> &str;
 }
 

@@ -8,10 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased] - 0.10.0
 
 ### Added
+- Graceful shutdown system with SIGTERM/SIGINT/CTRL+C signal handling
+- Configurable shutdown timeouts (`shutdownConnection`, `shutdownListener`) in config
 - Nix development environment with direnv support
 - Default devShell with complete Rust toolchain (cargo, rustc, clippy, rustfmt, rust-src)
 
 ### Changed
+- Server now shuts down gracefully when receiving termination signals
 - **Major Refactoring**: Refactored main.rs for improved testability and maintainability
 - **Architecture**: Refactored connector architecture with improved socket abstraction
 - **Testing**: Enhanced connector testing framework and socket operations testing
@@ -31,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unused `NoAuth` struct from SOCKS implementation (superseded by `PasswordAuth` for better client compatibility)
 
 ### Fixed
+- Improved connection cleanup during server shutdown
 - HTTP test reliability issues
 - Socket operations and connector testing edge cases
 - Windows build compatibility issues

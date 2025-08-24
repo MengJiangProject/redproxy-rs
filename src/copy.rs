@@ -245,6 +245,7 @@ pub async fn copy_bidi(ctx: ContextRef, params: &IoParams) -> Result<()> {
     let frames = ctx_lock.take_frames();
     let client_stat = ctx_lock.props().client_stat.clone();
     let server_stat = ctx_lock.props().server_stat.clone();
+    let cancellation_token = ctx_lock.cancellation_token().clone();
     #[cfg(feature = "metrics")]
     let client_label = ctx_lock.props().listener.clone();
     #[cfg(feature = "metrics")]
@@ -343,6 +344,10 @@ pub async fn copy_bidi(ctx: ContextRef, params: &IoParams) -> Result<()> {
             },
             _ = interval.tick() => if server_stat.is_timeout(idle_timeout) && client_stat.is_timeout(idle_timeout){
                 return Err(anyhow::anyhow!("idle timeout"))
+            },
+            _ = cancellation_token.cancelled() => {
+                tracing::info!("Context cancellation requested, exiting copy_bidi gracefully");
+                return Err(anyhow::anyhow!("cancelled"));
             }
         }
     }

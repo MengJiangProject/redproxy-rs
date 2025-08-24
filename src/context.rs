@@ -19,7 +19,7 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite, BufReader, BufWriter},
     net::lookup_host,
-    sync::{Mutex, RwLock, mpsc::Sender},
+    sync::{Mutex, Notify, RwLock, mpsc::Sender},
 };
 use tracing::{error, trace, warn};
 
@@ -453,16 +453,35 @@ fn context_metrics() -> &'static ContextMetrics {
     CONTEXT_METRICS.get_or_init(ContextMetrics::new)
 }
 
-#[derive(Default)]
 pub struct ContextManager {
     pub history_size: usize,
     next_id: AtomicU64,
+    // Efficient atomic counter for alive contexts
+    alive_count: AtomicUsize,
     pub alive: Mutex<HashMap<u64, ContextWeakRef>>,
     pub terminated: Mutex<LinkedList<Arc<ContextProps>>>,
     // use std Mutex here because Drop is not async
     pub gc_list: StdMutex<Vec<Arc<ContextProps>>>,
     pub access_log: Option<AccessLog>,
     pub default_timeout: u64,
+    // Efficient notification for connection termination
+    termination_notify: Arc<Notify>,
+}
+
+impl Default for ContextManager {
+    fn default() -> Self {
+        Self {
+            history_size: Default::default(),
+            next_id: Default::default(),
+            alive_count: AtomicUsize::new(0),
+            alive: Default::default(),
+            terminated: Default::default(),
+            gc_list: Default::default(),
+            access_log: None,
+            default_timeout: Default::default(),
+            termination_notify: Arc::new(Notify::new()),
+        }
+    }
 }
 
 impl ContextManager {
@@ -489,7 +508,11 @@ impl ContextManager {
             callback: None,
             state: self.clone(),
             http_request: None,
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
         }));
+
+        // Increment atomic counter and add to alive map
+        self.alive_count.fetch_add(1, Ordering::Relaxed);
         self.alive.lock().await.insert(id, Arc::downgrade(&ret));
         ret
     }
@@ -536,6 +559,92 @@ impl ContextManager {
             }
         });
     }
+
+    /// Get the count of alive contexts
+    pub fn alive_count(&self) -> usize {
+        self.alive_count.load(Ordering::Relaxed)
+    }
+
+    /// Wait for all contexts to terminate with a timeout using efficient notification
+    pub async fn wait_for_termination(&self, timeout_duration: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout_duration;
+
+        loop {
+            if self.alive_count() == 0 {
+                return true;
+            }
+
+            let notified = self.termination_notify.notified();
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
+                // Timeout occurred, check one last time for race conditions
+                return self.alive_count() == 0;
+            }
+            // If notified, the loop continues to check alive_count again
+        }
+    }
+
+    /// Abort all remaining contexts with robust error handling and forced termination
+    pub async fn abort_all_contexts(&self) {
+        let alive = self.alive.lock().await;
+        let mut aborted_count = 0;
+        let mut failed_aborts = Vec::new();
+
+        // Collect all strong references that need to be aborted
+        let contexts_to_abort: Vec<_> = alive
+            .values()
+            .filter_map(|weak_ref| weak_ref.upgrade())
+            .collect();
+
+        drop(alive); // Release lock early
+
+        tracing::info!(
+            "Attempting to abort {} active contexts",
+            contexts_to_abort.len()
+        );
+
+        for (index, ctx_ref) in contexts_to_abort.iter().enumerate() {
+            match self.abort_single_context(ctx_ref, index).await {
+                Ok(()) => aborted_count += 1,
+                Err(e) => {
+                    failed_aborts.push((index, e));
+                }
+            }
+        }
+
+        if !failed_aborts.is_empty() {
+            tracing::warn!(
+                "Failed to abort {} contexts: {:?}",
+                failed_aborts.len(),
+                failed_aborts
+            );
+        }
+
+        tracing::info!(
+            "Successfully aborted {}/{} contexts",
+            aborted_count,
+            contexts_to_abort.len()
+        );
+
+        // Notify waiters that termination state has changed
+        self.termination_notify.notify_waiters();
+    }
+
+    /// Signal a single context to shut down gracefully using cancellation token
+    async fn abort_single_context(&self, ctx_ref: &ContextRef, index: usize) -> Result<(), String> {
+        // Try to acquire read lock with timeout to access cancellation token
+        let ctx = match tokio::time::timeout(Duration::from_millis(100), ctx_ref.read()).await {
+            Ok(guard) => guard,
+            Err(_) => {
+                return Err(format!("Context {} lock acquisition timeout", index));
+            }
+        };
+
+        // Signal cancellation
+        ctx.cancellation_token.cancel();
+
+        tracing::debug!("Context {} cancellation signal sent", index);
+        Ok(())
+    }
 }
 
 pub struct Context {
@@ -547,6 +656,7 @@ pub struct Context {
     callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
     state: Arc<ContextManager>,
     http_request: Option<Arc<crate::common::http::HttpRequest>>,
+    cancellation_token: tokio_util::sync::CancellationToken,
 }
 
 pub type ContextRef = Arc<RwLock<Context>>;
@@ -742,6 +852,10 @@ impl Context {
     pub fn http_request(&self) -> Option<Arc<crate::common::http::HttpRequest>> {
         self.http_request.clone()
     }
+
+    pub fn cancellation_token(&self) -> &tokio_util::sync::CancellationToken {
+        &self.cancellation_token
+    }
 }
 
 // a set of opreations that aquires write lock
@@ -793,11 +907,18 @@ impl ContextRefOps for ContextRef {
 impl Drop for Context {
     fn drop(&mut self) {
         trace!("Context dropped: {}", self);
+
+        // Decrement atomic counter immediately
+        self.state.alive_count.fetch_sub(1, Ordering::Relaxed);
+
         if let Ok(mut gc_list) = self.state.gc_list.lock() {
             gc_list.push(self.props.clone());
         } else {
             error!("Failed to acquire GC list lock during context drop");
         }
+
+        // Notify waiters that a context has been dropped
+        self.state.termination_notify.notify_waiters();
     }
 }
 

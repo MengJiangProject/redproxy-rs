@@ -53,6 +53,20 @@ pub struct Timeouts {
     pub idle: u64,
     #[serde(default = "default_timeout")]
     pub udp: u64,
+    /// Timeout in seconds to wait for active connections to complete during graceful shutdown
+    #[serde(default = "default_shutdown_connection_timeout")]
+    pub shutdown_connection: u64,
+    /// Timeout in seconds to wait for listener tasks to finish gracefully
+    #[serde(default = "default_shutdown_listener_timeout")]
+    pub shutdown_listener: u64,
+}
+
+const fn default_shutdown_connection_timeout() -> u64 {
+    30
+}
+
+const fn default_shutdown_listener_timeout() -> u64 {
+    5
 }
 
 impl Default for Timeouts {
@@ -60,6 +74,8 @@ impl Default for Timeouts {
         Timeouts {
             idle: default_timeout(),
             udp: default_timeout(),
+            shutdown_connection: default_shutdown_connection_timeout(),
+            shutdown_listener: default_shutdown_listener_timeout(),
         }
     }
 }
