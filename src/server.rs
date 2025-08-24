@@ -306,7 +306,7 @@ impl ProxyServer {
             let alive_count = server.contexts.alive_count();
 
             // Report progress every 2 seconds or when count changes significantly
-            if alive_count != last_reported_count || start_wait.elapsed().as_secs() % 2 == 0 {
+            if alive_count != last_reported_count || start_wait.elapsed().as_secs().is_multiple_of(2) {
                 if alive_count > 0 {
                     info!(
                         "Waiting for {} active connections to complete... ({:.1}s elapsed)",
