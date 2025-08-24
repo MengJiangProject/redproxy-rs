@@ -1,11 +1,15 @@
-#!/bin/sh
+#!/bin/bash
 # Protocol tests for RedProxy comprehensive suite
 # Tests HTTP CONNECT and SOCKS5 protocols with different connectors
 
 set -e
 
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Load shared library
-. /scripts/lib/common.sh
+# shellcheck source=lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
 
 log_test "Protocol Tests - HTTP CONNECT and SOCKS5"
 

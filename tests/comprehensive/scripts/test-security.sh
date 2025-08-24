@@ -1,11 +1,15 @@
-#!/bin/sh
+#!/bin/bash
 # Security tests for RedProxy comprehensive suite  
 # Tests mTLS, QUIC, and security features
 
 set -e
 
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Load shared library
-. /scripts/lib/common.sh
+# shellcheck source=lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
 
 log_test "Security Tests - mTLS, QUIC, and Security Features"
 

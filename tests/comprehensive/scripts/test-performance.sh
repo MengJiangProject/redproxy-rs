@@ -1,11 +1,15 @@
-#!/bin/sh
+#!/bin/bash
 # Performance tests for RedProxy comprehensive suite
 # Tests concurrent connections, throughput, and resource usage
 
 set -e
 
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Load shared library
-. /scripts/lib/common.sh
+# shellcheck source=lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
 
 log_test "Performance Tests - Concurrency and Resource Usage"
 
@@ -41,7 +45,7 @@ fi
 log_test "Test 3: Mixed protocol concurrency"
 # Run HTTP and SOCKS tests simultaneously
 (
-    for i in $(seq 1 5); do
+    for _ in $(seq 1 5); do
         test_http_connect "$REDPROXY_HOST" "$REDPROXY_HTTP_PORT" \
             "http://$HTTP_ECHO_HOST:$HTTP_ECHO_PORT/" "Hello from HTTP echo server" &
     done
@@ -49,7 +53,7 @@ log_test "Test 3: Mixed protocol concurrency"
 ) &
 
 (
-    for i in $(seq 1 5); do
+    for _ in $(seq 1 5); do
         test_socks_proxy "$REDPROXY_HOST" "$REDPROXY_SOCKS_PORT" \
             "http://$TARGET_HOST:$TARGET_PORT/" "nginx" &
     done
@@ -64,7 +68,7 @@ log_info "Mixed protocol concurrency test passed"
 log_test "Test 4: Connection efficiency test"
 start_time=$(date +%s)
 
-for i in $(seq 1 20); do
+for _ in $(seq 1 20); do
     test_http_connect "$REDPROXY_HOST" "$REDPROXY_HTTP_PORT" \
         "http://$HTTP_ECHO_HOST:$HTTP_ECHO_PORT/" "Hello from HTTP echo server" > /dev/null
 done
@@ -81,7 +85,7 @@ fi
 # Test 5: Error handling under load
 log_test "Test 5: Error handling under load"
 # Mix valid and invalid requests
-for i in $(seq 1 5); do
+for _ in $(seq 1 5); do
     (
         test_http_connect "$REDPROXY_HOST" "$REDPROXY_HTTP_PORT" \
             "http://$HTTP_ECHO_HOST:$HTTP_ECHO_PORT/" "Hello from HTTP echo server" > /dev/null

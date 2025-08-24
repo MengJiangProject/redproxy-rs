@@ -22,6 +22,7 @@
             rust-src
           ] ++ (with pkgs;[
             docker-compose
+            shellcheck
           ]);
         };
 

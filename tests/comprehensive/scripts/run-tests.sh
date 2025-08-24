@@ -1,11 +1,15 @@
-#!/bin/sh
+#!/bin/bash
 # Main test runner for RedProxy comprehensive tests
 # Selects test suite based on TEST_SUITE environment variable
 
 set -e
 
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Load shared library
-. /scripts/lib/common.sh
+# shellcheck source=lib/common.sh
+. "$SCRIPT_DIR/lib/common.sh"
 
 # Setup test environment
 setup_test_env
@@ -29,15 +33,15 @@ echo
 case "${TEST_SUITE:-protocols}" in
     "protocols")
         log_info "Running protocol tests..."
-        /scripts/test-protocols.sh
+        "$SCRIPT_DIR/test-protocols.sh"
         ;;
     "security")
         log_info "Running security tests..."  
-        /scripts/test-security.sh
+        "$SCRIPT_DIR/test-security.sh"
         ;;
     "performance")
         log_info "Running performance tests..."
-        /scripts/test-performance.sh
+        "$SCRIPT_DIR/test-performance.sh"
         ;;
     *)
         log_error "Unknown test suite: $TEST_SUITE"

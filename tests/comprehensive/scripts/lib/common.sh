@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Shared test library for RedProxy comprehensive tests
 # Provides reusable functions to eliminate code duplication
 
@@ -29,14 +29,14 @@ log_test() {
 
 # Service health check
 wait_for_service() {
-    local host=$1
-    local port=$2
-    local timeout=${3:-30}
+    local host="$1"
+    local port="$2"
+    local timeout="${3:-30}"
     local count=0
     
     log_info "Waiting for $host:$port..."
     while ! nc -z "$host" "$port" 2>/dev/null; do
-        if [ $count -ge $timeout ]; then
+        if [ $count -ge "$timeout" ]; then
             log_error "Timeout waiting for $host:$port"
             return 1
         fi
@@ -48,10 +48,10 @@ wait_for_service() {
 
 # HTTP test functions
 test_http_connect() {
-    local proxy_host=$1
-    local proxy_port=$2
-    local target_url=$3
-    local expected_text=$4
+    local proxy_host="$1"
+    local proxy_port="$2"
+    local target_url="$3"
+    local expected_text="$4"
     
     response=$(curl -x "$proxy_host:$proxy_port" --connect-timeout 10 -s "$target_url")
     if echo "$response" | grep -q "$expected_text"; then
@@ -65,10 +65,10 @@ test_http_connect() {
 
 # SOCKS test functions  
 test_socks_proxy() {
-    local proxy_host=$1
-    local proxy_port=$2
-    local target_url=$3
-    local expected_text=$4
+    local proxy_host="$1"
+    local proxy_port="$2"
+    local target_url="$3"
+    local expected_text="$4"
     
     response=$(curl --socks5 "$proxy_host:$proxy_port" --connect-timeout 10 -s "$target_url")
     if echo "$response" | grep -q "$expected_text"; then
@@ -82,31 +82,31 @@ test_socks_proxy() {
 
 # Concurrent test helper
 test_concurrent() {
-    local test_func=$1
-    local count=${2:-5}
+    local test_func="$1"
+    local count="${2:-5}"
     local pids=""
     
     log_info "Running $count concurrent tests..."
     
-    for i in $(seq 1 $count); do
+    for i in $(seq 1 "$count"); do
         ($test_func > "/tmp/test_$i.out" 2>&1) &
         pids="$pids $!"
     done
     
     # Wait for all tests
     for pid in $pids; do
-        wait $pid
+        wait "$pid"
     done
     
     # Check results
     success_count=0
-    for i in $(seq 1 $count); do
+    for i in $(seq 1 "$count"); do
         if [ -f "/tmp/test_$i.out" ]; then
             success_count=$((success_count + 1))
         fi
     done
     
-    if [ $success_count -eq $count ]; then
+    if [ $success_count -eq "$count" ]; then
         log_info "All $count concurrent tests succeeded"
         return 0
     else
@@ -117,8 +117,8 @@ test_concurrent() {
 
 # Error handling test  
 test_error_handling() {
-    local proxy_host=$1
-    local proxy_port=$2
+    local proxy_host="$1"
+    local proxy_port="$2"
     
     set +e
     curl -x "$proxy_host:$proxy_port" --connect-timeout 5 -s http://nonexistent-host:80/ > /dev/null 2>&1
