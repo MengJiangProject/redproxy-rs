@@ -1,0 +1,64 @@
+# Simplified RedProxy Comprehensive Test Suite
+# Target: <100 lines, environment-driven configuration
+
+services:
+  # Core test targets
+  http-echo:
+    image: hashicorp/http-echo:latest
+    command: ["-text=Hello from HTTP echo server", "-listen=:8080"]
+    networks: [test-net]
+
+  target-server:
+    image: nginx:alpine
+    networks: [test-net]
+
+  # Upstream proxies for testing connectors
+  http-proxy:
+    image: ubuntu/squid:latest
+    networks: [test-net]
+
+  socks-proxy:
+    image: serjs/go-socks5-proxy:latest
+    networks: [test-net]
+
+  # Single RedProxy instance with static config
+  redproxy:
+    build:
+      context: ../..
+      dockerfile: tests/comprehensive/Dockerfile
+    volumes:
+      - ./config:/config:ro
+      - ./logs:/logs:rw
+    networks: [test-net]
+    depends_on: [http-echo, target-server, http-proxy, socks-proxy]
+
+  # Test runner with environment-driven test selection
+  test-runner:
+    image: alpine:latest
+    environment:
+      # Test configuration
+      - TEST_SUITE=${TEST_SUITE:-protocols}
+      - REDPROXY_HOST=${REDPROXY_HOST:-redproxy}
+      - REDPROXY_HTTP_PORT=${REDPROXY_HTTP_PORT:-8800}
+      - REDPROXY_SOCKS_PORT=${REDPROXY_SOCKS_PORT:-1081}
+      - HTTP_ECHO_HOST=${HTTP_ECHO_HOST:-http-echo}
+      - HTTP_ECHO_PORT=${HTTP_ECHO_PORT:-8080}
+      - TARGET_HOST=${TARGET_HOST:-target-server}
+      - TARGET_PORT=${TARGET_PORT:-80}
+      - VERBOSE=${VERBOSE:-false}
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./logs:/logs:rw
+    networks: [test-net]
+    depends_on: [redproxy]
+    command: ["sh", "/scripts/run-tests.sh"]
+
+networks:
+  test-net:
+    driver: bridge
+
+# Usage Examples:
+# TEST_SUITE=protocols docker-compose up test-runner
+# TEST_SUITE=security VERBOSE=true docker-compose up test-runner  
+# TEST_SUITE=performance docker-compose up test-runner
+# Or use Makefile: make test-protocols, make test-security, make test-performance

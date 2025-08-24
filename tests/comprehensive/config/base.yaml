@@ -1,0 +1,39 @@
+# Base RedProxy Configuration for Comprehensive Tests
+# Static configuration for container environment
+
+listeners:
+  - name: http
+    type: http
+    bind: "0.0.0.0:8800"
+  - name: socks
+    type: socks
+    bind: "0.0.0.0:1081"
+
+connectors:
+  - name: direct
+    type: direct
+  - name: upstream-http
+    type: http
+    server: "http-proxy"
+    port: 3128
+  - name: upstream-socks
+    type: socks
+    server: "socks-proxy"
+    port: 1080
+
+rules:
+  # Direct connection to echo server
+  - filter: 'request.target.host == "http-echo"'
+    target: direct
+  # Route target-server based on listener type
+  - filter: 'request.target.host == "target-server" && request.listener == "http"'
+    target: upstream-http
+  - filter: 'request.target.host == "target-server" && request.listener == "socks"'
+    target: upstream-socks
+  # Default fallback
+  - filter: "true"
+    target: direct
+
+accessLog:
+  path: "/tmp/access.log"
+  format: "json"
