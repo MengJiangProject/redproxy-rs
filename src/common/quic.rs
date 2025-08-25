@@ -28,10 +28,15 @@ pub const ALPN_QUIC_HTTP1: &[&[u8]] = &[b"http"]; //this is not regular HTTP3 co
 
 pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig> {
     let (certs, key) = tls.certs()?;
-    let mut server_crypto = rustls::ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .context("load certificate")?;
+    let mut server_crypto = rustls::ServerConfig::builder_with_provider(
+        rustls::crypto::ring::default_provider().into()
+    )
+    .with_safe_default_protocol_versions()
+    .context("failed to configure TLS protocol versions")?
+    .with_no_client_auth()
+    .with_single_cert(certs, key)
+    .context("load certificate")?;
+    tracing::info!("server_crypto created");
     server_crypto.alpn_protocols = ALPN_QUIC_HTTP1.iter().map(|&x| x.into()).collect();
 
     let mut transport_config = quinn::TransportConfig::default();
@@ -48,7 +53,12 @@ pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig> {
 }
 
 pub fn create_quic_client(tls: &TlsClientConfig, enable_bbr: bool) -> Result<ClientConfig> {
-    let builder = rustls::ClientConfig::builder().with_root_certificates(tls.root_store()?);
+    let builder = rustls::ClientConfig::builder_with_provider(
+        rustls::crypto::ring::default_provider().into()
+    )
+    .with_safe_default_protocol_versions()
+    .context("failed to configure TLS protocol versions")?
+    .with_root_certificates(tls.root_store()?);
 
     let mut client_crypto = if let Some(auth) = &tls.auth {
         let (certs, key) = auth.certs()?;
