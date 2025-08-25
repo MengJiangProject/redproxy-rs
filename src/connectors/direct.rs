@@ -88,7 +88,7 @@ impl<S: SocketOps> DirectConnector<S> {
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
     let config: DirectConnectorConfig =
-        serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+        serde_yaml_ng::from_value(value.clone()).context("parse direct connector config")?;
     let ret = DirectConnector::new(config);
     Ok(Box::new(ret))
 }

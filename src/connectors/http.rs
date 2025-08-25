@@ -135,7 +135,7 @@ impl<S: SocketOps> HttpConnector<S> {
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
     let config: HttpConnectorConfig =
-        serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+        serde_yaml_ng::from_value(value.clone()).context("parse http connector config")?;
     let ret = HttpConnector::new(config);
     Ok(Box::new(ret))
 }

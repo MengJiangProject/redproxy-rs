@@ -110,7 +110,7 @@ fn default_max_udp_socket() -> usize {
 
 pub fn from_value(value: &Value) -> Result<Box<dyn Listener>> {
     let config: TProxyListenerConfig =
-        serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+        serde_yaml_ng::from_value(value.clone()).context("parse tproxy listener config")?;
     let ret = TProxyListener {
         config,
         inner: None,

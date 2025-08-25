@@ -89,7 +89,7 @@ impl<S: SocketOps> SocksConnector<S> {
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
     let config: SocksConnectorConfig =
-        serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+        serde_yaml_ng::from_value(value.clone()).context("parse socks connector config")?;
     let ret = SocksConnector::new(config);
     Ok(Box::new(ret))
 }

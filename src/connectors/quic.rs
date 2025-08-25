@@ -78,7 +78,7 @@ fn default_inline_udp() -> bool {
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
     let config: QuicConnectorConfig =
-        serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+        serde_yaml_ng::from_value(value.clone()).context("parse quic connector config")?;
     let ret = QuicConnector {
         config,
         endpoint: None,

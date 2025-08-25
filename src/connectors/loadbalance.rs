@@ -77,7 +77,7 @@ impl Default for LoadBalanceConnector {
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<ConnectorRef> {
     let ret: LoadBalanceConnector =
-        serde_yaml_ng::from_value(value.clone()).context("parse config")?;
+        serde_yaml_ng::from_value(value.clone()).context("parse loadbalance connector config")?;
     Ok(Box::new(ret))
 }
 

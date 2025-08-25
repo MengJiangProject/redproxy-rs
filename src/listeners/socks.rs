@@ -82,7 +82,7 @@ fn default_allow_udp() -> bool {
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>> {
     let config: SocksListenerConfig =
-        serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
+        serde_yaml_ng::from_value(value.clone()).with_context(|| "parse socks listener config")?;
     let ret = SocksListener::new(config, Arc::new(RealSocketOps));
     Ok(Box::new(ret))
 }

@@ -58,7 +58,7 @@ impl<S: SocketOps> HttpListener<S> {
 
 pub fn from_value(value: &serde_yaml_ng::Value) -> Result<Box<dyn Listener>> {
     let config: HttpListenerConfig =
-        serde_yaml_ng::from_value(value.clone()).with_context(|| "parse config")?;
+        serde_yaml_ng::from_value(value.clone()).with_context(|| "parse http listener config")?;
     let ret = HttpListener::new(config, Arc::new(RealSocketOps));
     Ok(Box::new(ret))
 }
