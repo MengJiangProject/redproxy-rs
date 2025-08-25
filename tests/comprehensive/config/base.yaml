@@ -35,5 +35,9 @@ rules:
     target: direct
 
 accessLog:
-  path: "/tmp/access.log"
+  path: "/logs/base-access.log"
   format: "json"
+
+metrics:
+  bind: "0.0.0.0:9090"
+  apiPrefix: "/api"

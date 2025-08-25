@@ -2,92 +2,89 @@
 
 Simplified, maintainable test suite for **basic** RedProxy functionality validation.
 
-**⚠️ Current Status: Foundation Only (24% coverage)**  
-This is a starting point, not a complete comprehensive test suite.
+**✅ Current Status: Matrix Implementation Complete (30/30 combinations)**  
+All core listener×connector protocol combinations are now implemented and tested.
 
 ## Quick Start
 
 ```bash
 cd tests/comprehensive
 make test-all                    # Run all tests
-make test-protocols             # HTTP CONNECT and SOCKS5 tests  
+make test-matrix                # Test all listener×connector combinations  
 make test-security              # Security and error handling
 make test-performance           # Concurrency and load tests
+make clean                      # Stop services and clean up
 ```
 
 ## Architecture
 
-**Single RedProxy instance** with static configuration:
+**Single RedProxy instance** with matrix configuration:
 - `config/base.yaml` - Static config for container environment
 - `docker-compose.yml` - ~65 lines, clean service definitions
-- 3 focused test scripts instead of 8+ specialized ones
+- Matrix test with comprehensive HTTP forward proxy functionality
 - Shared test library eliminates code duplication
 
-## Current Test Coverage (Limited)
+## Current Test Coverage
 
-### ✅ **What's Tested (6/25 Protocol Matrix combinations)**
-- **HTTP Listener → Direct/HTTP/SOCKS5 Connectors**: Basic proxy functionality
-- **SOCKS5 Listener → Direct/HTTP/SOCKS5 Connectors**: Basic SOCKS proxying
+### ✅ **What's Tested (Complete Matrix Coverage)**
+- **HTTP Listener → All Connectors**: Full HTTP forward proxy functionality (GET/POST/JSON/headers)
+- **SOCKS5 Listener → All Connectors**: Complete SOCKS proxying with authentication handling
+- **Reverse Proxy Listener → All Connectors**: Direct HTTP requests through reverse proxy
+- **QUIC Listener → All Connectors**: HTTP CONNECT proxy over QUIC streams
+- **SSH Listener → All Connectors**: SSH tunnel port forwarding
+- **Matrix Testing**: All 30 listener×connector combinations validated
 - **Basic Security**: Error handling, concurrent connections
 - **Basic Performance**: Connection efficiency, load testing
 
-### ❌ **Major Missing Features (19/25 combinations + advanced features)**
-- **Protocol Matrix**: Only 6/25 listener×connector combinations tested
-- **QUIC/HTTP3**: No QUIC listener or connector testing
-- **TPROXY**: No transparent proxy testing (Linux-specific)
-- **Reverse Proxy**: No reverse proxy listener testing
-- **Load Balancing**: No multi-upstream connector testing
+### ❌ **Advanced Features Still Missing**
+- **TPROXY**: No transparent proxy testing (Linux-specific, requires special network setup)
 - **UDP Protocols**: No UDP tunneling or proxying
-- **RFC 9298**: No "Proxying UDP in HTTP" testing
-- **SSH Integration**: No SSH tunneling/forwarding
+- **RFC 9298**: No "Proxying UDP in HTTP" testing  
 - **mTLS**: No client certificate authentication
 - **Advanced Routing**: Limited Milu rule engine testing
 - **Metrics**: No Prometheus/monitoring validation
 - **WebSocket**: No upgrade handling testing
-- **HTTP Forward Proxy**: Only CONNECT, missing GET/POST/etc
-
-## Environment Variables
-
-- `TEST_SUITE={protocols|security|performance}` - Select test category
-- `VERBOSE=true` - Enable detailed output
 
 ## Files (10 total)
 
 ```
 tests/comprehensive/
-├── Makefile                    # Simple test targets
+├── Makefile                   # build targets
 ├── docker-compose.yml         # Single compose file (~68 lines)
 ├── Dockerfile                 # Multi-stage RedProxy build
 ├── README.md                  # This file
 ├── config/base.yaml           # Static config for tests
 └── scripts/
-    ├── run-tests.sh           # Test suite router
-    ├── test-protocols.sh      # Protocol tests
-    ├── test-security.sh       # Security tests  
-    ├── test-performance.sh    # Performance tests
-    └── lib/common.sh          # Shared functions
+    ├── test_matrix.py         # Matrix combination tests
+    ├── test_security.py       # Security tests  
+    ├── test_performance.py    # Performance tests
+    ├── matrix_generator.py    # Matrix config generator
+    ├── generate_test_certs.py # Certificate generation
+    └── lib/test_utils.py      # Shared test library
 ```
 
 ## Future Work Needed
 
-### **Protocol Matrix Completion (Priority 1)**
-RedProxy supports a 5×5 listener×connector matrix (25 combinations):
+### **Protocol Matrix Status**
+RedProxy supports 5 listener types × 6 connector types (30 combinations):
 
-| Listener | Direct | HTTP | SOCKS5 | QUIC | Load Balancer |
-|----------|--------|------|--------|------|---------------|
-| HTTP     | ✅     | ✅    | ✅      | ❌    | ❌             |
-| SOCKS5   | ✅     | ✅    | ✅      | ❌    | ❌             |
-| QUIC     | ❌     | ❌    | ❌      | ❌    | ❌             |
-| TPROXY   | ❌     | ❌    | ❌      | ❌    | ❌             |
-| Reverse  | ❌     | ❌    | ❌      | ❌    | ❌             |
+| Listener | Direct | HTTP | SOCKS5 | Load Balancer | QUIC | SSH |
+|----------|--------|------|--------|---------------|------|-----|
+| HTTP     | ✅     | ✅    | ✅      | ✅             | ✅    | ✅   |
+| SOCKS5   | ✅     | ✅    | ✅      | ✅             | ✅    | ✅   |
+| Reverse  | ✅     | ✅    | ✅      | ✅             | ✅    | ✅   |
+| QUIC     | ✅     | ✅    | ✅      | ✅             | ✅    | ✅   |
+| SSH      | ✅     | ✅    | ✅      | ✅             | ✅    | ✅   |
+
+**All 30 combinations implemented and tested (100% matrix coverage)**
 
 ### **Advanced Feature Testing (Priority 2)**
+- TPROXY transparent proxy testing (requires special network setup)
 - UDP protocols and RFC 9298 (existing unit tests available)
-- SSH integration (existing unit tests available)  
 - mTLS client certificates
 - Metrics and monitoring endpoints
 - WebSocket upgrade handling
-- HTTP Forward Proxy (GET/POST/PUT/DELETE)
+- Enhanced HTTP Forward Proxy (PUT/DELETE methods, large payloads, connection reuse)
 - Graceful shutdown and configuration validation
 
 ### **Reference Implementation**

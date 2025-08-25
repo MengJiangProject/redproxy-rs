@@ -15,4 +15,6 @@ history.txt
 /tests/*/logs/
 /tests/*/test-results/
 /tests/*/certificates/
-
+tests/comprehensive/config/generated/
+tests/comprehensive/scripts/.venv
+__pycache__
