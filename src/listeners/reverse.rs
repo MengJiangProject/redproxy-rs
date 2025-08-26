@@ -80,8 +80,8 @@ fn default_protocol() -> Protocol {
 }
 
 pub fn from_value(value: &Value) -> Result<Box<dyn Listener>> {
-    let config: ReverseProxyListenerConfig =
-        serde_yaml_ng::from_value(value.clone()).with_context(|| "parse reverse proxy listener config")?;
+    let config: ReverseProxyListenerConfig = serde_yaml_ng::from_value(value.clone())
+        .with_context(|| "parse reverse proxy listener config")?;
     let ret = ReverseProxyListener::new(config, Arc::new(RealSocketOps));
     Ok(Box::new(ret))
 }

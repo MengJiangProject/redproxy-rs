@@ -29,7 +29,7 @@ pub const ALPN_QUIC_HTTP1: &[&[u8]] = &[b"http"]; //this is not regular HTTP3 co
 pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig> {
     let (certs, key) = tls.certs()?;
     let mut server_crypto = rustls::ServerConfig::builder_with_provider(
-        rustls::crypto::ring::default_provider().into()
+        rustls::crypto::ring::default_provider().into(),
     )
     .with_safe_default_protocol_versions()
     .context("failed to configure TLS protocol versions")?
@@ -54,7 +54,7 @@ pub fn create_quic_server(tls: &TlsServerConfig) -> Result<ServerConfig> {
 
 pub fn create_quic_client(tls: &TlsClientConfig, enable_bbr: bool) -> Result<ClientConfig> {
     let builder = rustls::ClientConfig::builder_with_provider(
-        rustls::crypto::ring::default_provider().into()
+        rustls::crypto::ring::default_provider().into(),
     )
     .with_safe_default_protocol_versions()
     .context("failed to configure TLS protocol versions")?

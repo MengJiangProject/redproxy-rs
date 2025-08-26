@@ -127,13 +127,13 @@ impl<S: SocketOps + Send + Sync + 'static> HttpListener<S> {
                             .set_keepalive(stream.as_ref(), true)
                             .await
                             .unwrap_or_else(|e| warn!("set_keepalive failed: {}", e));
-                        
+
                         // Set the listener's bind address as local address for loop detection
                         ctx.write()
                             .await
                             .set_client_stream(make_buffered_stream(stream))
                             .set_local_addr(this.bind);
-                            
+
                         let auth_data = if this.auth.required {
                             Some(this.auth.clone())
                         } else {

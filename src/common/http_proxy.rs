@@ -407,8 +407,18 @@ where
     // After authentication, check for proxy loops for all requests
     let proxy_id = get_proxy_id();
     if let Err(e) = check_proxy_loop(local_addr, &request, proxy_id) {
-        if let Err(send_err) = send_error_response(socket, 503, "Service Unavailable", &format!("Proxy loop prevention: {}", e)).await {
-            warn!("Failed to send loop prevention error response: {}", send_err);
+        if let Err(send_err) = send_error_response(
+            socket,
+            503,
+            "Service Unavailable",
+            &format!("Proxy loop prevention: {}", e),
+        )
+        .await
+        {
+            warn!(
+                "Failed to send loop prevention error response: {}",
+                send_err
+            );
         }
         return Err(e);
     }
@@ -470,7 +480,9 @@ where
         if let Err(e) = handle_http_forward_request(&mut ctx_lock, request) {
             // Get a fresh reference to the socket since we can't use the previous one
             let socket = ctx_lock.borrow_client_stream().unwrap();
-            if let Err(send_err) = send_error_response(socket, 400, "Bad Request", &e.to_string()).await {
+            if let Err(send_err) =
+                send_error_response(socket, 400, "Bad Request", &e.to_string()).await
+            {
                 warn!("Failed to send bad request error response: {}", send_err);
             }
             return Err(e);
@@ -482,7 +494,9 @@ where
         if let Err(e) = handle_http_forward_request(&mut ctx_lock, request) {
             // Get a fresh reference to the socket since we can't use the previous one
             let socket = ctx_lock.borrow_client_stream().unwrap();
-            if let Err(send_err) = send_error_response(socket, 400, "Bad Request", &e.to_string()).await {
+            if let Err(send_err) =
+                send_error_response(socket, 400, "Bad Request", &e.to_string()).await
+            {
                 warn!("Failed to send bad request error response: {}", send_err);
             }
             return Err(e);
@@ -503,23 +517,27 @@ where
 /// Generate a random proxy identifier for Via header (per-instance, not per-request)
 fn generate_proxy_id() -> String {
     use rand::Rng;
-    format!("id-{:08x}",rand::rng().random::<u32>())
+    format!("id-{:08x}", rand::rng().random::<u32>())
 }
 
 /// Check for proxy loops using multiple detection methods
-fn check_proxy_loop(local_addr: std::net::SocketAddr, request: &HttpRequest, proxy_id: &str) -> Result<()> {
+fn check_proxy_loop(
+    local_addr: std::net::SocketAddr,
+    request: &HttpRequest,
+    proxy_id: &str,
+) -> Result<()> {
     const MAX_HOPS: usize = 10;
-    
+
     // 1. Check Via header for loops and hop count
     let via_header = request.header("Via", "");
     if !via_header.is_empty() {
         let hops: Vec<&str> = via_header.split(',').map(str::trim).collect();
-        
+
         // Check hop count limit
         if hops.len() >= MAX_HOPS {
             bail!("Request rejected: hop count limit ({}) exceeded", MAX_HOPS);
         }
-        
+
         // Check for our own proxy ID in the Via header
         for hop in &hops {
             if hop.contains(proxy_id) {
@@ -527,19 +545,23 @@ fn check_proxy_loop(local_addr: std::net::SocketAddr, request: &HttpRequest, pro
             }
         }
     }
-    
+
     // 2. Get target address for local/bind address checking
     let target_addr = if request.method.eq_ignore_ascii_case("CONNECT") {
         // CONNECT method: resource is "hostname:port"
-        request.resource.parse()
+        request
+            .resource
+            .parse()
             .with_context(|| format!("failed to parse CONNECT target: {}", request.resource))?
     } else if request.resource.starts_with("http://") || request.resource.starts_with("https://") {
         // Absolute URI
         let url = Url::parse(&request.resource)
             .map_err(|e| anyhow!("Failed to parse resource URI: {}", e))?;
-        let host = url.host_str()
+        let host = url
+            .host_str()
             .ok_or_else(|| anyhow!("Missing host in resource URI"))?;
-        let port = url.port_or_known_default()
+        let port = url
+            .port_or_known_default()
             .ok_or_else(|| anyhow!("Missing port in resource URI"))?;
         TargetAddress::DomainPort(host.to_string(), port)
     } else {
@@ -548,58 +570,88 @@ fn check_proxy_loop(local_addr: std::net::SocketAddr, request: &HttpRequest, pro
         if host_header.is_empty() {
             bail!("Missing Host header for relative resource path");
         }
-        host_header.parse()
+        host_header
+            .parse()
             .with_context(|| format!("failed to parse Host header: {}", host_header))?
     };
-    
+
     // 3. Check if target resolves to local addresses
     match target_addr {
         TargetAddress::DomainPort(ref host, port) => {
             // Block obvious local addresses
-            if host == "localhost" || host == "127.0.0.1" || host == "::1" 
-                || host.starts_with("127.") || host.starts_with("::ffff:127.") {
-                bail!("Request rejected: target resolves to local address ({}:{})", host, port);
+            if host == "localhost"
+                || host == "127.0.0.1"
+                || host == "::1"
+                || host.starts_with("127.")
+                || host.starts_with("::ffff:127.")
+            {
+                bail!(
+                    "Request rejected: target resolves to local address ({}:{})",
+                    host,
+                    port
+                );
             }
-            
+
             // Check if target matches listener's bind address
             if local_addr.port() == port {
                 // Check if host resolves to same address as our bind address
                 if *host == local_addr.ip().to_string() {
-                    bail!("Request rejected: target matches listener bind address ({}:{})", host, port);
+                    bail!(
+                        "Request rejected: target matches listener bind address ({}:{})",
+                        host,
+                        port
+                    );
                 }
-                
+
                 // Also check for 0.0.0.0 binding (listens on all interfaces)
-                if local_addr.ip().is_unspecified() && (
-                    host == "0.0.0.0" || 
-                    host.parse::<std::net::IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false)
-                ) {
-                    bail!("Request rejected: target matches listener address space ({}:{})", host, port);
+                if local_addr.ip().is_unspecified()
+                    && (host == "0.0.0.0"
+                        || host
+                            .parse::<std::net::IpAddr>()
+                            .map(|ip| ip.is_loopback())
+                            .unwrap_or(false))
+                {
+                    bail!(
+                        "Request rejected: target matches listener address space ({}:{})",
+                        host,
+                        port
+                    );
                 }
             }
         }
         TargetAddress::SocketAddr(socket_addr) => {
             // Check if target socket address is local
             if socket_addr.ip().is_loopback() {
-                bail!("Request rejected: target resolves to local address ({})", socket_addr);
+                bail!(
+                    "Request rejected: target resolves to local address ({})",
+                    socket_addr
+                );
             }
-            
+
             // Check if target matches listener's bind address exactly
             if socket_addr == local_addr {
-                bail!("Request rejected: target matches listener bind address ({})", socket_addr);
+                bail!(
+                    "Request rejected: target matches listener bind address ({})",
+                    socket_addr
+                );
             }
-            
+
             // Also check for 0.0.0.0 binding (listens on all interfaces)
-            if local_addr.ip().is_unspecified() && socket_addr.port() == local_addr.port() {
-                if socket_addr.ip().is_loopback() || socket_addr.ip().is_unspecified() {
-                    bail!("Request rejected: target matches listener address space ({})", socket_addr);
-                }
+            if local_addr.ip().is_unspecified()
+                && socket_addr.port() == local_addr.port()
+                && (socket_addr.ip().is_loopback() || socket_addr.ip().is_unspecified())
+            {
+                bail!(
+                    "Request rejected: target matches listener address space ({})",
+                    socket_addr
+                );
             }
         }
         TargetAddress::Unknown => {
             // Can't check unknown targets, let them through
         }
     }
-    
+
     Ok(())
 }
 
@@ -607,7 +659,7 @@ fn check_proxy_loop(local_addr: std::net::SocketAddr, request: &HttpRequest, pro
 fn handle_http_forward_request(ctx_lock: &mut Context, mut request: HttpRequest) -> Result<()> {
     // Get the proxy identifier for this instance (same for all requests from this proxy)
     let proxy_id = get_proxy_id();
-    
+
     let target_addr =
         if request.resource.starts_with("http://") || request.resource.starts_with("https://") {
             // Absolute URI
