@@ -1,6 +1,7 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
 
 pub mod auth;
+pub mod connection_pool;
 pub mod dns;
 pub mod fragment;
 pub mod frames;

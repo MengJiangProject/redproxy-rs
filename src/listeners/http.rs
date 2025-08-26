@@ -147,24 +147,12 @@ impl<S: SocketOps + Send + Sync + 'static> HttpListener<S> {
                         )
                         .await;
                         if let Err(e) = res {
-                            warn!(
-                                "{}: handshake failed: {}
-cause: {:?}",
-                                this.name,
-                                e,
-                                e.source(),
-                            );
+                            warn!("{}: handshake failed: {}", this.name, e,);
                         }
                     });
                 }
                 Err(e) => {
-                    error!(
-                        "{} accept error: {} 
-cause: {:?}",
-                        self.name,
-                        e,
-                        e.source(),
-                    );
+                    error!("{} accept error: {}", self.name, e,);
                     return;
                 }
             }
