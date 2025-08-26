@@ -1,4 +1,11 @@
-use crate::{access_log::AccessLog, common::frames::FrameIO, config::IoParams, copy::copy_bidi};
+use crate::{
+    access_log::AccessLog, 
+    common::{frames::FrameIO, http::HttpRequestV1},
+    config::IoParams, 
+    copy::copy_bidi,
+    protocols::http::{context_ext::HttpContextExt, http_context::HttpContext},
+    HttpRequest,
+};
 use anyhow::{Context as AnyhowContext, Error, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize, de::Visitor, ser::SerializeStruct};
@@ -497,7 +504,7 @@ impl ContextManager {
             server_frames: None,
             callback: None,
             manager: self.clone(),
-            http_request: None,
+            http_context: None,
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             // Initialize BIND fields
             bind_task: None,
@@ -659,7 +666,7 @@ pub struct Context {
     server_frames: Option<FrameIO>,
     callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
     manager: Arc<ContextManager>,
-    http_request: Option<Arc<crate::common::http::HttpRequest>>,
+    http_context: Option<HttpContext>,
     cancellation_token: tokio_util::sync::CancellationToken,
     // BIND-related fields - using JoinHandle for spawned task
     bind_task: Option<BindTask>,
@@ -849,12 +856,22 @@ impl Context {
         self
     }
 
-    pub fn set_http_request(&mut self, request: crate::common::http::HttpRequest) -> &mut Self {
+    pub fn set_http_request_v1(&mut self, request: HttpRequestV1) -> &mut Self {
+        self.set_http_request(request.into())
+    }
+
+    pub fn http_request_v1(&self) -> Option<Arc<HttpRequestV1>> {
+        self.http_request
+            .as_ref()
+            .map(|req| Arc::new(req.as_ref().clone().into()))
+    }
+
+    pub fn set_http_request(&mut self, request: HttpRequest) -> &mut Self {
         self.http_request = Some(Arc::new(request));
         self
     }
 
-    pub fn http_request(&self) -> Option<Arc<crate::common::http::HttpRequest>> {
+    pub fn http_request(&self) -> Option<Arc<HttpRequest>> {
         self.http_request.clone()
     }
 
@@ -872,7 +889,6 @@ impl Context {
     pub fn take_bind_task(&mut self) -> Option<BindTask> {
         self.bind_task.take()
     }
-
     /// Set the IO loop function for this context
     pub fn set_io_loop(&mut self, io_loop: IOLoopFn) -> &mut Self {
         self.io_loop = io_loop;

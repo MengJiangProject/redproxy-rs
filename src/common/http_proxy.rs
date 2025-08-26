@@ -37,7 +37,7 @@ fn decode_basic_auth(auth_header: &str) -> Option<(String, String)> {
 use crate::{
     common::{
         auth::AuthData,
-        http::{HttpRequest, HttpResponse},
+        http::{HttpRequestV1, HttpResponseV1},
     },
     context::{
         Context, ContextCallback, ContextRef, ContextRefOps, Feature, IOBufStream, TargetAddress,
@@ -106,7 +106,7 @@ impl HttpProxyContextExt for Context {
 }
 
 // Helper function to check if a request is a WebSocket upgrade
-pub fn is_websocket_upgrade(request: &HttpRequest) -> bool {
+pub fn is_websocket_upgrade(request: &HttpRequestV1) -> bool {
     let connection = request.header("Connection", "").to_lowercase();
     let upgrade = request.header("Upgrade", "").to_lowercase();
 
@@ -126,7 +126,7 @@ pub async fn send_error_response(
     status_text: &str,
     error_message: &str,
 ) -> Result<()> {
-    let response = HttpResponse::new(status_code, status_text)
+    let response = HttpResponseV1::new(status_code, status_text)
         .with_header("Content-Type", "text/plain")
         .with_header("Connection", "close")
         .with_header("Content-Length", error_message.len().to_string());
@@ -143,7 +143,7 @@ pub async fn send_simple_error_response(
     status_code: u16,
     status_text: &str,
 ) -> Result<()> {
-    HttpResponse::new(status_code, status_text)
+    HttpResponseV1::new(status_code, status_text)
         .with_header("Connection", "close")
         .write_to(client_stream)
         .await
@@ -213,7 +213,8 @@ where
                     .set_server_addr(remote);
             } else {
                 // Traditional CONNECT tunneling (either forced or no HTTP request)
-                let mut request = HttpRequest::new("CONNECT", &target).with_header("Host", &target);
+                let mut request =
+                    HttpRequestV1::new("CONNECT", &target).with_header("Host", &target);
 
                 // Add Proxy-Authorization header if auth is provided
                 if let Some((username, password)) = &auth {
@@ -223,7 +224,7 @@ where
                 }
 
                 request.write_to(&mut server).await?;
-                let resp = HttpResponse::read_from(&mut server).await?;
+                let resp = HttpResponseV1::read_from(&mut server).await?;
                 if resp.code != 200 {
                     bail!("upstream server failure: {:?}", resp);
                 }
@@ -240,7 +241,7 @@ where
                 // RFC 9298 HTTP/1.1 upgrade approach
                 let uri_template =
                     generate_rfc9298_uri_from_template(&target, rfc9298_uri_template.as_deref());
-                let mut request = HttpRequest::new("GET", &uri_template)
+                let mut request = HttpRequestV1::new("GET", &uri_template)
                     .with_header(
                         "Host",
                         format!(
@@ -264,7 +265,7 @@ where
                 }
 
                 request.write_to(&mut server).await?;
-                let resp = HttpResponse::read_from(&mut server).await?;
+                let resp = HttpResponseV1::read_from(&mut server).await?;
                 tracing::trace!("RFC 9298 response: {:?}", resp);
 
                 if resp.code != 101 {
@@ -297,7 +298,7 @@ where
                     .set_server_addr(remote);
             } else {
                 // Custom protocol (existing behavior)
-                let mut request = HttpRequest::new("CONNECT", &target)
+                let mut request = HttpRequestV1::new("CONNECT", &target)
                     .with_header("Host", &target)
                     .with_header("Proxy-Protocol", "udp")
                     .with_header("Proxy-Channel", &frame_channel);
@@ -320,7 +321,7 @@ where
                 }
 
                 request.write_to(&mut server).await?;
-                let resp = HttpResponse::read_from(&mut server).await?;
+                let resp = HttpResponseV1::read_from(&mut server).await?;
                 tracing::trace!("Custom protocol response: {:?}", resp);
                 if resp.code != 200 {
                     bail!("upstream server failure: {:?}", resp);
@@ -366,7 +367,7 @@ where
     let mut ctx_lock = ctx.write().await;
     let local_addr = ctx_lock.local_addr(); // Get local addr before borrowing socket
     let socket = ctx_lock.borrow_client_stream().unwrap();
-    let request = match HttpRequest::read_from(socket).await {
+    let request = match HttpRequestV1::read_from(socket).await {
         Ok(request) => request,
         Err(e) => {
             // Send proper 400 Bad Request response for HTTP parsing errors
@@ -523,7 +524,7 @@ fn generate_proxy_id() -> String {
 /// Check for proxy loops using multiple detection methods
 fn check_proxy_loop(
     local_addr: std::net::SocketAddr,
-    request: &HttpRequest,
+    request: &HttpRequestV1,
     proxy_id: &str,
 ) -> Result<()> {
     const MAX_HOPS: usize = 10;
@@ -657,7 +658,7 @@ fn check_proxy_loop(
 }
 
 // Helper function for HTTP forward proxy request handling (without loop detection)
-fn handle_http_forward_request(ctx_lock: &mut Context, mut request: HttpRequest) -> Result<()> {
+fn handle_http_forward_request(ctx_lock: &mut Context, mut request: HttpRequestV1) -> Result<()> {
     // Get the proxy identifier for this instance (same for all requests from this proxy)
     let proxy_id = get_proxy_id();
 
@@ -697,7 +698,7 @@ fn handle_http_forward_request(ctx_lock: &mut Context, mut request: HttpRequest)
     ctx_lock
         .set_target(target_addr)
         .set_feature(Feature::TcpForward)
-        .set_http_request(request)
+        .set_http_request_v1(request)
         .set_callback(HttpForwardCallback);
 
     Ok(())
@@ -707,7 +708,7 @@ fn handle_http_forward_request(ctx_lock: &mut Context, mut request: HttpRequest)
 async fn handle_rfc9298_upgrade<FrameFn, T2>(
     ctx: ContextRef,
     queue: Sender<ContextRef>,
-    request: HttpRequest,
+    request: HttpRequestV1,
     _create_frames: FrameFn,
 ) -> Result<()>
 where
@@ -868,7 +869,7 @@ struct HttpConnectCallback;
 impl ContextCallback for HttpConnectCallback {
     async fn on_connect(&self, ctx: &mut Context) {
         let socket = ctx.borrow_client_stream().unwrap();
-        if let Err(e) = HttpResponse::new(200, "Connection established")
+        if let Err(e) = HttpResponseV1::new(200, "Connection established")
             .write_to(socket)
             .await
         {
@@ -899,7 +900,7 @@ impl ContextCallback for HttpForwardCallback {
             }
         };
         let server_stream = ctx.take_server_stream();
-        let request = ctx.http_request();
+        let request = ctx.http_request_v1();
 
         if server_stream.is_none() || request.is_none() {
             warn!("HttpForwardCallback::on_connect: missing server_stream or http_request");
@@ -977,7 +978,7 @@ impl ContextCallback for FrameChannelCallback {
             }
         };
 
-        if let Err(e) = HttpResponse::new(200, "Connection established")
+        if let Err(e) = HttpResponseV1::new(200, "Connection established")
             .with_header("Session-Id", self.session_id.to_string())
             .with_header(
                 "Udp-Bind-Address",
@@ -1030,7 +1031,7 @@ impl ContextCallback for Rfc9298Callback {
         };
 
         // Send 101 Switching Protocols response
-        if let Err(e) = HttpResponse::new(101, "Switching Protocols")
+        if let Err(e) = HttpResponseV1::new(101, "Switching Protocols")
             .with_header("Connection", "Upgrade")
             .with_header("Upgrade", "connect-udp")
             .write_to(&mut stream)
@@ -1200,45 +1201,45 @@ mod tests {
     #[test]
     fn test_websocket_detection() {
         // Valid WebSocket upgrade request
-        let ws_request = HttpRequest::new("GET", "/")
+        let ws_request = HttpRequestV1::new("GET", "/")
             .with_header("Connection", "upgrade")
             .with_header("Upgrade", "websocket");
         assert!(is_websocket_upgrade(&ws_request));
 
         // Valid WebSocket upgrade with multiple Connection header values
-        let ws_request_multi = HttpRequest::new("GET", "/")
+        let ws_request_multi = HttpRequestV1::new("GET", "/")
             .with_header("Connection", "keep-alive, upgrade")
             .with_header("Upgrade", "websocket");
         assert!(is_websocket_upgrade(&ws_request_multi));
 
         // Valid WebSocket upgrade with different casing
-        let ws_request_case = HttpRequest::new("GET", "/")
+        let ws_request_case = HttpRequestV1::new("GET", "/")
             .with_header("Connection", "Upgrade")
             .with_header("Upgrade", "WebSocket");
         assert!(is_websocket_upgrade(&ws_request_case));
 
         // Invalid: contains "upgrade" but not as separate token
-        let invalid_contains = HttpRequest::new("GET", "/")
+        let invalid_contains = HttpRequestV1::new("GET", "/")
             .with_header("Connection", "keep-alive-upgrade")
             .with_header("Upgrade", "websocket");
         assert!(!is_websocket_upgrade(&invalid_contains));
 
         // Invalid: Upgrade header contains websocket but not exactly
-        let invalid_upgrade = HttpRequest::new("GET", "/")
+        let invalid_upgrade = HttpRequestV1::new("GET", "/")
             .with_header("Connection", "upgrade")
             .with_header("Upgrade", "websocket-custom");
         assert!(!is_websocket_upgrade(&invalid_upgrade));
 
         // Invalid: Regular HTTP request
-        let http_request = HttpRequest::new("GET", "/").with_header("Connection", "keep-alive");
+        let http_request = HttpRequestV1::new("GET", "/").with_header("Connection", "keep-alive");
         assert!(!is_websocket_upgrade(&http_request));
 
         // Invalid: Missing Connection header
-        let no_connection = HttpRequest::new("GET", "/").with_header("Upgrade", "websocket");
+        let no_connection = HttpRequestV1::new("GET", "/").with_header("Upgrade", "websocket");
         assert!(!is_websocket_upgrade(&no_connection));
 
         // Invalid: Missing Upgrade header
-        let no_upgrade = HttpRequest::new("GET", "/").with_header("Connection", "upgrade");
+        let no_upgrade = HttpRequestV1::new("GET", "/").with_header("Connection", "upgrade");
         assert!(!is_websocket_upgrade(&no_upgrade));
     }
 
@@ -1249,22 +1250,22 @@ mod tests {
         let proxy_id = "test-proxy-123";
 
         // CONNECT to different port should be allowed
-        let connect_request = HttpRequest::new("CONNECT", "127.0.0.1:9090");
+        let connect_request = HttpRequestV1::new("CONNECT", "127.0.0.1:9090");
         assert!(check_proxy_loop(local_addr, &connect_request, proxy_id).is_ok());
 
         // HTTP request to different port should be allowed
-        let http_request = HttpRequest::new("GET", "http://127.0.0.1:9090/test");
+        let http_request = HttpRequestV1::new("GET", "http://127.0.0.1:9090/test");
         assert!(check_proxy_loop(local_addr, &http_request, proxy_id).is_ok());
 
         // Request with Host header to different port should be allowed
-        let host_request = HttpRequest::new("GET", "/test").with_header("Host", "127.0.0.1:9090");
+        let host_request = HttpRequestV1::new("GET", "/test").with_header("Host", "127.0.0.1:9090");
         assert!(check_proxy_loop(local_addr, &host_request, proxy_id).is_ok());
 
         // Test other localhost variants on different ports
-        let localhost_request = HttpRequest::new("CONNECT", "localhost:9090");
+        let localhost_request = HttpRequestV1::new("CONNECT", "localhost:9090");
         assert!(check_proxy_loop(local_addr, &localhost_request, proxy_id).is_ok());
 
-        let ipv6_request = HttpRequest::new("CONNECT", "[::1]:9090");
+        let ipv6_request = HttpRequestV1::new("CONNECT", "[::1]:9090");
         assert!(check_proxy_loop(local_addr, &ipv6_request, proxy_id).is_ok());
     }
 
@@ -1275,23 +1276,23 @@ mod tests {
         let proxy_id = "test-proxy-123";
 
         // CONNECT to same port should be blocked
-        let connect_request = HttpRequest::new("CONNECT", "127.0.0.1:8080");
+        let connect_request = HttpRequestV1::new("CONNECT", "127.0.0.1:8080");
         assert!(check_proxy_loop(local_addr, &connect_request, proxy_id).is_err());
 
         // HTTP request to same port should be blocked
-        let http_request = HttpRequest::new("GET", "http://127.0.0.1:8080/test");
+        let http_request = HttpRequestV1::new("GET", "http://127.0.0.1:8080/test");
         assert!(check_proxy_loop(local_addr, &http_request, proxy_id).is_err());
 
         // Request with Host header to same port should be blocked
-        let host_request = HttpRequest::new("GET", "/test").with_header("Host", "127.0.0.1:8080");
+        let host_request = HttpRequestV1::new("GET", "/test").with_header("Host", "127.0.0.1:8080");
         assert!(check_proxy_loop(local_addr, &host_request, proxy_id).is_err());
 
         // Test other localhost variants on same port
-        let localhost_request = HttpRequest::new("CONNECT", "localhost:8080");
+        let localhost_request = HttpRequestV1::new("CONNECT", "localhost:8080");
         assert!(check_proxy_loop(local_addr, &localhost_request, proxy_id).is_err());
 
         // Test 127.x.x.x range
-        let range_request = HttpRequest::new("CONNECT", "127.0.0.2:8080");
+        let range_request = HttpRequestV1::new("CONNECT", "127.0.0.2:8080");
         assert!(check_proxy_loop(local_addr, &range_request, proxy_id).is_err());
     }
 
@@ -1301,22 +1302,22 @@ mod tests {
         let proxy_id = "test-proxy-123";
 
         // Request with our proxy ID in Via header should be blocked
-        let via_loop_request = HttpRequest::new("GET", "http://example.com/test")
+        let via_loop_request = HttpRequestV1::new("GET", "http://example.com/test")
             .with_header("Via", "1.1 other-proxy, 1.1 test-proxy-123");
         assert!(check_proxy_loop(local_addr, &via_loop_request, proxy_id).is_err());
 
         // Request with our proxy ID as substring should be blocked
-        let via_substring_request = HttpRequest::new("GET", "http://example.com/test")
+        let via_substring_request = HttpRequestV1::new("GET", "http://example.com/test")
             .with_header("Via", "1.1 test-proxy-123-extra");
         assert!(check_proxy_loop(local_addr, &via_substring_request, proxy_id).is_err());
 
         // Request without our proxy ID should be allowed
-        let via_clean_request = HttpRequest::new("GET", "http://example.com/test")
+        let via_clean_request = HttpRequestV1::new("GET", "http://example.com/test")
             .with_header("Via", "1.1 other-proxy, 1.1 another-proxy");
         assert!(check_proxy_loop(local_addr, &via_clean_request, proxy_id).is_ok());
 
         // Request without Via header should be allowed
-        let no_via_request = HttpRequest::new("GET", "http://example.com/test");
+        let no_via_request = HttpRequestV1::new("GET", "http://example.com/test");
         assert!(check_proxy_loop(local_addr, &no_via_request, proxy_id).is_ok());
     }
 
@@ -1328,19 +1329,19 @@ mod tests {
         // Request with exactly MAX_HOPS (10) should be blocked
         let max_hops = ["proxy1"; 10].join(", ");
         let max_hops_request =
-            HttpRequest::new("GET", "http://example.com/test").with_header("Via", &max_hops);
+            HttpRequestV1::new("GET", "http://example.com/test").with_header("Via", &max_hops);
         assert!(check_proxy_loop(local_addr, &max_hops_request, proxy_id).is_err());
 
         // Request with more than MAX_HOPS should be blocked
         let too_many_hops = ["proxy1"; 11].join(", ");
         let too_many_request =
-            HttpRequest::new("GET", "http://example.com/test").with_header("Via", &too_many_hops);
+            HttpRequestV1::new("GET", "http://example.com/test").with_header("Via", &too_many_hops);
         assert!(check_proxy_loop(local_addr, &too_many_request, proxy_id).is_err());
 
         // Request with fewer than MAX_HOPS should be allowed
         let ok_hops = ["proxy1"; 9].join(", ");
         let ok_request =
-            HttpRequest::new("GET", "http://example.com/test").with_header("Via", &ok_hops);
+            HttpRequestV1::new("GET", "http://example.com/test").with_header("Via", &ok_hops);
         assert!(check_proxy_loop(local_addr, &ok_request, proxy_id).is_ok());
     }
 
@@ -1350,7 +1351,7 @@ mod tests {
         let proxy_id = "test-proxy-123";
 
         // Exact socket address match should be blocked
-        let exact_match_request = HttpRequest::new("CONNECT", "127.0.0.1:8080");
+        let exact_match_request = HttpRequestV1::new("CONNECT", "127.0.0.1:8080");
         assert!(check_proxy_loop(local_addr, &exact_match_request, proxy_id).is_err());
     }
 
@@ -1361,19 +1362,19 @@ mod tests {
         let proxy_id = "test-proxy-123";
 
         // Localhost connection to same port should be blocked when binding to all interfaces
-        let localhost_request = HttpRequest::new("CONNECT", "127.0.0.1:8080");
+        let localhost_request = HttpRequestV1::new("CONNECT", "127.0.0.1:8080");
         assert!(check_proxy_loop(local_addr, &localhost_request, proxy_id).is_err());
 
         // Connection to 0.0.0.0 on same port should be blocked
-        let all_interfaces_request = HttpRequest::new("CONNECT", "0.0.0.0:8080");
+        let all_interfaces_request = HttpRequestV1::new("CONNECT", "0.0.0.0:8080");
         assert!(check_proxy_loop(local_addr, &all_interfaces_request, proxy_id).is_err());
 
         // Connection to different port should be allowed
-        let different_port_request = HttpRequest::new("CONNECT", "127.0.0.1:9090");
+        let different_port_request = HttpRequestV1::new("CONNECT", "127.0.0.1:9090");
         assert!(check_proxy_loop(local_addr, &different_port_request, proxy_id).is_ok());
 
         // Connection to external address should be allowed
-        let external_request = HttpRequest::new("GET", "http://example.com/test");
+        let external_request = HttpRequestV1::new("GET", "http://example.com/test");
         assert!(check_proxy_loop(local_addr, &external_request, proxy_id).is_ok());
     }
 
@@ -1383,13 +1384,13 @@ mod tests {
         let proxy_id = "test-proxy-123";
 
         // External addresses should always be allowed regardless of port
-        let external_request = HttpRequest::new("GET", "http://example.com:8080/test");
+        let external_request = HttpRequestV1::new("GET", "http://example.com:8080/test");
         assert!(check_proxy_loop(local_addr, &external_request, proxy_id).is_ok());
 
-        let google_request = HttpRequest::new("CONNECT", "8.8.8.8:53");
+        let google_request = HttpRequestV1::new("CONNECT", "8.8.8.8:53");
         assert!(check_proxy_loop(local_addr, &google_request, proxy_id).is_ok());
 
-        let private_network_request = HttpRequest::new("GET", "http://192.168.1.100:8080/test");
+        let private_network_request = HttpRequestV1::new("GET", "http://192.168.1.100:8080/test");
         assert!(check_proxy_loop(local_addr, &private_network_request, proxy_id).is_ok());
     }
 
@@ -1402,7 +1403,7 @@ mod tests {
 
         // This test mainly verifies that the Unknown case in the match
         // is handled without panicking
-        let _malformed_host_request = HttpRequest::new("GET", "/test");
+        let _malformed_host_request = HttpRequestV1::new("GET", "/test");
         // Note: Without a Host header, this would normally fail in parsing,
         // but the Unknown match case should handle it gracefully
     }

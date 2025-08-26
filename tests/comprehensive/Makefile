@@ -120,6 +120,7 @@ test-httpx: $(RUNNER_IMAGE) $(REDPROXY_IMAGE) output-dirs
 		$(ARGS)
 	@echo "HttpX listener tests completed - reports generated in ./reports/"
 
+
 # BIND functionality tests - NEW PYTEST FORMAT
 test-bind: $(RUNNER_IMAGE) $(REDPROXY_IMAGE) output-dirs
 	@echo "Running BIND functionality tests..."
@@ -132,7 +133,7 @@ test-bind: $(RUNNER_IMAGE) $(REDPROXY_IMAGE) output-dirs
 	@echo "BIND tests completed - reports generated in ./reports/"
 
 # Run all tests (can be parallelized with make -j)
-test-all: test-matrix test-security test-performance test-bind
+test-all: test-matrix test-security test-performance test-httpx test-bind
 	@echo "All comprehensive tests completed successfully!"
 
 # Cleanup

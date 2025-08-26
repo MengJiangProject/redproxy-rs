@@ -11,7 +11,7 @@ use tracing::{debug, error, info, warn};
 
 use super::Listener;
 use crate::common::frames::Frame;
-use crate::common::socket_ops::{AppTcpListener, RealSocketOps, SocketOps};
+use crate::common::socket_ops::{TcpListener, RealSocketOps, SocketOps};
 use crate::common::udp::{self, setup_udp_session};
 use crate::config::Timeouts;
 use crate::context::ContextManager;
@@ -149,7 +149,7 @@ impl<S: SocketOps + Send + Sync + 'static> Listener for ReverseProxyListener<S> 
 impl<S: SocketOps + Send + Sync + 'static> ReverseProxyListener<S> {
     async fn tcp_accept(
         self: &Arc<Self>,
-        listener: &dyn AppTcpListener,
+        listener: &dyn TcpListener,
         contexts: &Arc<ContextManager>,
         _timeouts: &Timeouts,
         queue: &Sender<ContextRef>,

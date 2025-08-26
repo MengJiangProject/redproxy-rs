@@ -6,14 +6,14 @@ type Reader<'a> = &'a mut (dyn AsyncBufRead + Send + Unpin);
 type Writer<'a> = &'a mut (dyn AsyncWrite + Send + Unpin);
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct HttpRequest {
+pub struct HttpRequestV1 {
     pub method: String,
     pub resource: String,
     pub version: String,
     pub headers: Vec<(String, String)>,
 }
 
-impl HttpRequest {
+impl HttpRequestV1 {
     pub fn new<T1: ToString, T2: ToString>(method: T1, resource: T2) -> Self {
         Self {
             version: "HTTP/1.1".to_owned(),
@@ -81,14 +81,14 @@ impl HttpRequest {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct HttpResponse {
+pub struct HttpResponseV1 {
     pub version: String,
     pub code: u16,
     pub status: String,
     pub headers: Vec<(String, String)>,
 }
 
-impl HttpResponse {
+impl HttpResponseV1 {
     pub fn new<T: ToString>(code: u16, status: T) -> Self {
         Self {
             version: "HTTP/1.1".to_owned(),
@@ -194,7 +194,7 @@ mod tests {
     #[test(tokio::test)]
     async fn parse_request() {
         let input = "GET / HTTP/1.1\r\nHost: test\r\n\r\n";
-        let output = HttpRequest {
+        let output = HttpRequestV1 {
             method: "GET".into(),
             resource: "/".into(),
             version: "HTTP/1.1".into(),
@@ -202,12 +202,12 @@ mod tests {
         };
         let stream = Builder::new().read(input.as_bytes()).build();
         let mut stream = BufReader::new(stream);
-        assert_eq!(HttpRequest::read_from(&mut stream).await.unwrap(), output);
+        assert_eq!(HttpRequestV1::read_from(&mut stream).await.unwrap(), output);
     }
     #[test(tokio::test)]
     async fn parse_response() {
         let input = "HTTP/1.1 200 OK\r\nHost: test\r\n\r\n";
-        let output = HttpResponse {
+        let output = HttpResponseV1 {
             version: "HTTP/1.1".into(),
             code: 200,
             status: "OK".into(),
@@ -215,6 +215,9 @@ mod tests {
         };
         let stream = Builder::new().read(input.as_bytes()).build();
         let mut stream = BufReader::new(stream);
-        assert_eq!(HttpResponse::read_from(&mut stream).await.unwrap(), output);
+        assert_eq!(
+            HttpResponseV1::read_from(&mut stream).await.unwrap(),
+            output
+        );
     }
 }
