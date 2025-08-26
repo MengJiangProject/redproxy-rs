@@ -85,22 +85,14 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - uses: cpunion/setup-docker-compose@v1
 
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: docker-${{ runner.os }}-${{ hashFiles('tests/comprehensive/Dockerfile*', 'tests/comprehensive/scripts/pyproject.toml') }}
-          restore-keys: |
-            docker-${{ runner.os }}-
-
       - name: Run tests
         run: |
           cd tests/comprehensive
           make test-all
         env:
           DOCKER_BUILDKIT: 1
-          BUILDX_CACHE_FROM: type=local,src=/tmp/.buildx-cache
-          BUILDX_CACHE_TO: type=local,dest=/tmp/.buildx-cache-new,mode=max
+          BUILDX_CACHE_FROM: type=gha,scope=$GITHUB_REF_NAME-tests
+          BUILDX_CACHE_TO: type=gha,scope=$GITHUB_REF_NAME-tests,mode=max
 
       - name: Upload test logs
         if: always()

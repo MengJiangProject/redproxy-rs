@@ -1,19 +1,21 @@
-# Multi-stage build for RedProxy comprehensive tests
-FROM rust:latest as builder
+FROM rust:latest AS chef 
+# We only pay the installation cost once, 
+# it will be cached from the second build onwards
+RUN cargo install cargo-chef 
+WORKDIR /app
 
-WORKDIR /usr/src/app
-
-# Copy manifest files first for better layer caching
-COPY Cargo.toml Cargo.lock ./
-COPY milu/ milu/
-
-# Fetch dependencies first (cached layer)
-RUN cargo fetch
-
-# Copy source code
+FROM chef AS planner
 COPY . .
+RUN cargo chef prepare  --recipe-path recipe.json
 
-# Build with all features for comprehensive testing
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+
+# Build dependencies - this is the caching Docker layer!
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# Build application
+COPY . .
 RUN cargo build --release --all-features
 
 # Runtime stage - use Debian to match test runner
@@ -32,7 +34,7 @@ RUN groupadd -g ${GID} redproxy 2>/dev/null || true
 RUN useradd -u ${UID} -g ${GID} -m -s /bin/false redproxy 2>/dev/null || true
 
 # Copy binary
-COPY --from=builder /usr/src/app/target/release/redproxy-rs /usr/local/bin/redproxy
+COPY --from=builder /app/target/release/redproxy-rs /usr/local/bin/redproxy
 
 USER ${UID}:${GID}
 WORKDIR /
