@@ -82,8 +82,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: cpunion/setup-docker-compose@v1
 
       - name: Run comprehensive tests
         working-directory: tests/comprehensive
