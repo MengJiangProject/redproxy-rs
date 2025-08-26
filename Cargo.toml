@@ -40,7 +40,7 @@ libc = "0.2"
 hickory-resolver = "0.25"
 chashmap-async = "0.1.0"
 lru = "0.16"
-url = "2.5.6"
+url = "2.5.7"
 base64 = "0.22.1"
 
 # features quic
