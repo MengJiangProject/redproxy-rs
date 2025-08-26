@@ -366,7 +366,16 @@ where
     let mut ctx_lock = ctx.write().await;
     let local_addr = ctx_lock.local_addr(); // Get local addr before borrowing socket
     let socket = ctx_lock.borrow_client_stream().unwrap();
-    let request = HttpRequest::read_from(socket).await?;
+    let request = match HttpRequest::read_from(socket).await {
+        Ok(request) => request,
+        Err(e) => {
+            // Send proper 400 Bad Request response for HTTP parsing errors
+            if let Err(send_err) = send_simple_error_response(socket, 400, "Bad Request").await {
+                warn!("Failed to send 400 Bad Request response: {}", send_err);
+            }
+            return Err(e);
+        }
+    };
     tracing::trace!("request={:?}", request);
 
     // Check authentication if required
