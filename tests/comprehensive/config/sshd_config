@@ -1,0 +1,39 @@
+# SSH daemon configuration for proxy testing
+#
+# WARNING: This configuration contains INSECURE settings for testing only!
+# NEVER use this configuration in production environments.
+
+# Port and protocol settings
+Port 2222
+Protocol 2
+
+# Authentication settings  
+PasswordAuthentication yes
+PubkeyAuthentication yes
+PermitRootLogin no
+
+# Enable port forwarding and tunneling (needed for SSH proxy functionality)
+AllowTcpForwarding yes
+GatewayPorts no
+PermitTunnel yes
+AllowAgentForwarding yes
+
+# Security settings - INSECURE for testing
+# PRODUCTION WARNING: StrictModes no disables ownership/permission checks
+# In production, use StrictModes yes and ensure proper file permissions
+StrictModes no
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+
+# Logging
+LogLevel INFO
+SyslogFacility AUTH
+
+# Connection settings
+MaxAuthTries 3
+ClientAliveInterval 60
+ClientAliveCountMax 3
+
+# Performance settings
+MaxSessions 10
+MaxStartups 10:30:60

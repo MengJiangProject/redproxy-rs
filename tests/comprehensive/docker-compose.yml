@@ -1,0 +1,108 @@
+# Simplified RedProxy Comprehensive Test Suite
+# Target: <100 lines, environment-driven configuration
+
+services:
+  # Core test targets
+  http-echo:
+    image: mendhak/http-https-echo:31
+    environment:
+      - HTTP_PORT=8080
+      - HTTPS_PORT=8443
+    networks: [test-net]
+
+  target-server:
+    image: nginx:alpine
+    networks: [test-net]
+
+  # Upstream proxies for testing connectors
+  http-proxy:
+    image: ubuntu/squid:latest
+    networks: [test-net]
+    volumes:
+      - ./config/squid.conf:/etc/squid/squid.conf:ro
+    healthcheck:
+      test: ["NONE"]
+
+  socks-proxy:
+    image: serjs/go-socks5-proxy:latest
+    networks: [test-net]
+    healthcheck:
+      test: ["NONE"]
+
+  # QUIC upstream proxy (another RedProxy instance with QUIC listener)
+  quic-proxy:
+    build:
+      context: ../..
+      dockerfile: tests/comprehensive/Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    volumes:
+      - ./config:/config:ro
+      - ./logs:/logs:rw
+    networks: [test-net]
+    depends_on: [http-echo]
+    command: ["redproxy", "-c", "/config/quic-proxy.yaml"]
+
+  # SSH upstream proxy
+  ssh-proxy:
+    image: linuxserver/openssh-server:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PASSWORD_ACCESS=true
+      - USER_PASSWORD=proxy123
+      - USER_NAME=proxy
+      - DOCKER_MODS=linuxserver/mods:openssh-server-ssh-tunnel
+    ports:
+      - "2222:2222"
+    networks: [test-net]
+
+  # Single RedProxy instance with static config
+  redproxy:
+    build:
+      context: ../..
+      dockerfile: tests/comprehensive/Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    volumes:
+      - ./config:/config:rw
+      - ./logs:/logs:rw
+    networks: [test-net]
+    depends_on: [http-echo, target-server, http-proxy, socks-proxy, quic-proxy, ssh-proxy]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "--connect-timeout", "3", "--max-time", "5", "http://localhost:9090/api/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    command: ["redproxy", "-c", "${REDPROXY_CONFIG:-/config/base.yaml}"]
+
+  # Test runner with environment-driven test selection
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-runner
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./config:/config:rw
+      - ./logs:/logs:rw
+      - ./reports:/reports:rw
+    networks: [test-net]
+    depends_on:
+      redproxy:
+        condition: service_healthy
+
+networks:
+  test-net:
+    driver: bridge
+
+# Usage Examples:
+# TEST_SUITE=protocols docker-compose up test-runner
+# TEST_SUITE=http-forward docker-compose up test-runner
+# TEST_SUITE=security VERBOSE=true docker-compose up test-runner  
+# TEST_SUITE=performance docker-compose up test-runner
+# Or use Makefile: make test-protocols, make test-http-forward, make test-security, make test-performance

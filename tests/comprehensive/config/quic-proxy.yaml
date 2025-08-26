@@ -1,0 +1,31 @@
+listeners:
+  - name: quic-listener
+    type: quic
+    bind: "0.0.0.0:8443"
+    tls:
+      cert: "/config/generated/server.crt"
+      key: "/config/generated/server.key"
+
+connectors:
+  - name: direct
+    type: direct
+
+rules:
+  - target: direct
+
+accessLog:
+  path: "/logs/quic-proxy-access.log"
+  format: "json"
+
+log:
+  level: trace
+
+timeouts:
+  idle: 300
+  udp: 300
+  shutdownConnection: 10
+  shutdownListener: 2
+
+ioParams:
+  bufferSize: 8192
+  useSplice: false
