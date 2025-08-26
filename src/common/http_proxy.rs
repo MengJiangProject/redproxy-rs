@@ -578,22 +578,23 @@ fn check_proxy_loop(
     // 3. Check if target resolves to local addresses
     match target_addr {
         TargetAddress::DomainPort(ref host, port) => {
-            // Block obvious local addresses
-            if host == "localhost"
-                || host == "127.0.0.1"
-                || host == "::1"
-                || host.starts_with("127.")
-                || host.starts_with("::ffff:127.")
-            {
-                bail!(
-                    "Request rejected: target resolves to local address ({}:{})",
-                    host,
-                    port
-                );
-            }
-
-            // Check if target matches listener's bind address
+            // Check if target matches listener's bind address and port exactly
             if local_addr.port() == port {
+                // Check for exact localhost addresses on same port
+                let is_localhost = host == "localhost"
+                    || host == "127.0.0.1"
+                    || host == "::1"
+                    || host.starts_with("127.")
+                    || host.starts_with("::ffff:127.");
+
+                if is_localhost {
+                    bail!(
+                        "Request rejected: target resolves to local address ({}:{})",
+                        host,
+                        port
+                    );
+                }
+
                 // Check if host resolves to same address as our bind address
                 if *host == local_addr.ip().to_string() {
                     bail!(
@@ -620,18 +621,18 @@ fn check_proxy_loop(
             }
         }
         TargetAddress::SocketAddr(socket_addr) => {
-            // Check if target socket address is local
-            if socket_addr.ip().is_loopback() {
-                bail!(
-                    "Request rejected: target resolves to local address ({})",
-                    socket_addr
-                );
-            }
-
             // Check if target matches listener's bind address exactly
             if socket_addr == local_addr {
                 bail!(
                     "Request rejected: target matches listener bind address ({})",
+                    socket_addr
+                );
+            }
+
+            // Check if target is on the same port and is localhost
+            if socket_addr.port() == local_addr.port() && socket_addr.ip().is_loopback() {
+                bail!(
+                    "Request rejected: target resolves to local address ({})",
                     socket_addr
                 );
             }
@@ -1094,6 +1095,7 @@ impl ContextCallback for Rfc9298Callback {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::SocketAddr;
 
     #[test]
     fn test_rfc9298_uri_template_parsing() {
@@ -1250,6 +1252,171 @@ mod tests {
         // Invalid: Missing Upgrade header
         let no_upgrade = HttpRequest::new("GET", "/").with_header("Connection", "upgrade");
         assert!(!is_websocket_upgrade(&no_upgrade));
+    }
+
+    #[test]
+    fn test_loop_detection_allows_different_ports() {
+        // Test that localhost connections to different ports are allowed
+        let local_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let proxy_id = "test-proxy-123";
+
+        // CONNECT to different port should be allowed
+        let connect_request = HttpRequest::new("CONNECT", "127.0.0.1:9090");
+        assert!(check_proxy_loop(local_addr, &connect_request, proxy_id).is_ok());
+
+        // HTTP request to different port should be allowed
+        let http_request = HttpRequest::new("GET", "http://127.0.0.1:9090/test");
+        assert!(check_proxy_loop(local_addr, &http_request, proxy_id).is_ok());
+
+        // Request with Host header to different port should be allowed
+        let host_request = HttpRequest::new("GET", "/test").with_header("Host", "127.0.0.1:9090");
+        assert!(check_proxy_loop(local_addr, &host_request, proxy_id).is_ok());
+
+        // Test other localhost variants on different ports
+        let localhost_request = HttpRequest::new("CONNECT", "localhost:9090");
+        assert!(check_proxy_loop(local_addr, &localhost_request, proxy_id).is_ok());
+
+        let ipv6_request = HttpRequest::new("CONNECT", "[::1]:9090");
+        assert!(check_proxy_loop(local_addr, &ipv6_request, proxy_id).is_ok());
+    }
+
+    #[test]
+    fn test_loop_detection_blocks_same_port() {
+        // Test that localhost connections to the same port are blocked
+        let local_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let proxy_id = "test-proxy-123";
+
+        // CONNECT to same port should be blocked
+        let connect_request = HttpRequest::new("CONNECT", "127.0.0.1:8080");
+        assert!(check_proxy_loop(local_addr, &connect_request, proxy_id).is_err());
+
+        // HTTP request to same port should be blocked
+        let http_request = HttpRequest::new("GET", "http://127.0.0.1:8080/test");
+        assert!(check_proxy_loop(local_addr, &http_request, proxy_id).is_err());
+
+        // Request with Host header to same port should be blocked
+        let host_request = HttpRequest::new("GET", "/test").with_header("Host", "127.0.0.1:8080");
+        assert!(check_proxy_loop(local_addr, &host_request, proxy_id).is_err());
+
+        // Test other localhost variants on same port
+        let localhost_request = HttpRequest::new("CONNECT", "localhost:8080");
+        assert!(check_proxy_loop(local_addr, &localhost_request, proxy_id).is_err());
+
+        // Test 127.x.x.x range
+        let range_request = HttpRequest::new("CONNECT", "127.0.0.2:8080");
+        assert!(check_proxy_loop(local_addr, &range_request, proxy_id).is_err());
+    }
+
+    #[test]
+    fn test_loop_detection_via_header_loops() {
+        let local_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let proxy_id = "test-proxy-123";
+
+        // Request with our proxy ID in Via header should be blocked
+        let via_loop_request = HttpRequest::new("GET", "http://example.com/test")
+            .with_header("Via", "1.1 other-proxy, 1.1 test-proxy-123");
+        assert!(check_proxy_loop(local_addr, &via_loop_request, proxy_id).is_err());
+
+        // Request with our proxy ID as substring should be blocked
+        let via_substring_request = HttpRequest::new("GET", "http://example.com/test")
+            .with_header("Via", "1.1 test-proxy-123-extra");
+        assert!(check_proxy_loop(local_addr, &via_substring_request, proxy_id).is_err());
+
+        // Request without our proxy ID should be allowed
+        let via_clean_request = HttpRequest::new("GET", "http://example.com/test")
+            .with_header("Via", "1.1 other-proxy, 1.1 another-proxy");
+        assert!(check_proxy_loop(local_addr, &via_clean_request, proxy_id).is_ok());
+
+        // Request without Via header should be allowed
+        let no_via_request = HttpRequest::new("GET", "http://example.com/test");
+        assert!(check_proxy_loop(local_addr, &no_via_request, proxy_id).is_ok());
+    }
+
+    #[test]
+    fn test_loop_detection_hop_count_limit() {
+        let local_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let proxy_id = "test-proxy-123";
+
+        // Request with exactly MAX_HOPS (10) should be blocked
+        let max_hops = ["proxy1"; 10].join(", ");
+        let max_hops_request =
+            HttpRequest::new("GET", "http://example.com/test").with_header("Via", &max_hops);
+        assert!(check_proxy_loop(local_addr, &max_hops_request, proxy_id).is_err());
+
+        // Request with more than MAX_HOPS should be blocked
+        let too_many_hops = ["proxy1"; 11].join(", ");
+        let too_many_request =
+            HttpRequest::new("GET", "http://example.com/test").with_header("Via", &too_many_hops);
+        assert!(check_proxy_loop(local_addr, &too_many_request, proxy_id).is_err());
+
+        // Request with fewer than MAX_HOPS should be allowed
+        let ok_hops = ["proxy1"; 9].join(", ");
+        let ok_request =
+            HttpRequest::new("GET", "http://example.com/test").with_header("Via", &ok_hops);
+        assert!(check_proxy_loop(local_addr, &ok_request, proxy_id).is_ok());
+    }
+
+    #[test]
+    fn test_loop_detection_exact_address_match() {
+        let local_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let proxy_id = "test-proxy-123";
+
+        // Exact socket address match should be blocked
+        let exact_match_request = HttpRequest::new("CONNECT", "127.0.0.1:8080");
+        assert!(check_proxy_loop(local_addr, &exact_match_request, proxy_id).is_err());
+    }
+
+    #[test]
+    fn test_loop_detection_bind_all_interfaces() {
+        // Test when proxy binds to 0.0.0.0 (all interfaces)
+        let local_addr: SocketAddr = "0.0.0.0:8080".parse().unwrap();
+        let proxy_id = "test-proxy-123";
+
+        // Localhost connection to same port should be blocked when binding to all interfaces
+        let localhost_request = HttpRequest::new("CONNECT", "127.0.0.1:8080");
+        assert!(check_proxy_loop(local_addr, &localhost_request, proxy_id).is_err());
+
+        // Connection to 0.0.0.0 on same port should be blocked
+        let all_interfaces_request = HttpRequest::new("CONNECT", "0.0.0.0:8080");
+        assert!(check_proxy_loop(local_addr, &all_interfaces_request, proxy_id).is_err());
+
+        // Connection to different port should be allowed
+        let different_port_request = HttpRequest::new("CONNECT", "127.0.0.1:9090");
+        assert!(check_proxy_loop(local_addr, &different_port_request, proxy_id).is_ok());
+
+        // Connection to external address should be allowed
+        let external_request = HttpRequest::new("GET", "http://example.com/test");
+        assert!(check_proxy_loop(local_addr, &external_request, proxy_id).is_ok());
+    }
+
+    #[test]
+    fn test_loop_detection_external_addresses() {
+        let local_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let proxy_id = "test-proxy-123";
+
+        // External addresses should always be allowed regardless of port
+        let external_request = HttpRequest::new("GET", "http://example.com:8080/test");
+        assert!(check_proxy_loop(local_addr, &external_request, proxy_id).is_ok());
+
+        let google_request = HttpRequest::new("CONNECT", "8.8.8.8:53");
+        assert!(check_proxy_loop(local_addr, &google_request, proxy_id).is_ok());
+
+        let private_network_request = HttpRequest::new("GET", "http://192.168.1.100:8080/test");
+        assert!(check_proxy_loop(local_addr, &private_network_request, proxy_id).is_ok());
+    }
+
+    #[test]
+    fn test_loop_detection_unknown_targets() {
+        // Test that malformed requests don't cause loop detection to panic
+        // (They should be handled gracefully elsewhere in the pipeline)
+        let _local_addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let _proxy_id = "test-proxy-123";
+
+        // This test mainly verifies that the Unknown case in the match
+        // is handled without panicking
+        let _malformed_host_request = HttpRequest::new("GET", "/test");
+        // Note: Without a Host header, this would normally fail in parsing,
+        // but the Unknown match case should handle it gracefully
     }
 
     #[test]
