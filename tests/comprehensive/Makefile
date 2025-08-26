@@ -1,4 +1,4 @@
-.PHONY: help test-all test-security test-performance clean build rebuild
+.PHONY: help test-all test-security test-performance clean build rebuild output-dirs
 
 # Export current user ID and group ID for Docker containers
 export UID := $(shell id -u)
@@ -16,15 +16,15 @@ CERTS_MARKER := $(GENERATED_DIR)/.certs-generated
 MATRIX_CONFIG := $(GENERATED_DIR)/matrix.yaml
 LOGS_DIR := logs
 REPORTS_DIR := reports
-IMAGE_MARKER := $(GENERATED_DIR)/.test-runner-image-built
-REDPROXY_IMAGE_MARKER := $(GENERATED_DIR)/.redproxy-image-built
+RUNNER_IMAGE := $(GENERATED_DIR)/.test-runner-image-built
+REDPROXY_IMAGE := $(GENERATED_DIR)/.redproxy-image-built
 
 # Dependency files that trigger image rebuilds
-DEP_FILES := scripts/pyproject.toml scripts/uv.lock Dockerfile.test-runner
+RUNNER_DEP_FILES := scripts/pyproject.toml scripts/uv.lock Dockerfile.test-runner
 
 # Rust source files that trigger RedProxy image rebuilds (relative to repo root)
-RUST_FILES := ../../Cargo.toml ../../Cargo.lock ../../src ../../milu
-REDPROXY_DEP_FILES := Dockerfile $(shell find $(RUST_FILES) -name "*.rs" -o -name "*.toml" -o -name "*.lock" 2>/dev/null || echo "")
+RUST_SRC :=  ../../src ../../milu
+REDPROXY_DEP_FILES := Dockerfile ../../Cargo.toml ../../Cargo.lock $(shell find $(RUST_SRC) -name "*.rs" -o -name "Cargo.toml" -o -name "Cargo.lock" 2>/dev/null || echo "")
 
 # Default target
 help:
@@ -42,49 +42,51 @@ $(LOGS_DIR):
 $(REPORTS_DIR):
 	mkdir -p $(REPORTS_DIR)
 
-# Build test-runner image when dependencies change
-$(IMAGE_MARKER): $(DEP_FILES) | $(GENERATED_DIR)
-	@echo "Building test-runner image (dependencies changed)..."
-	docker-compose build test-runner
-	@touch $(IMAGE_MARKER)
-
-# Build RedProxy images when Rust code changes
-$(REDPROXY_IMAGE_MARKER): $(REDPROXY_DEP_FILES) | $(GENERATED_DIR)
-	@echo "Building RedProxy images (Rust code changed)..."
-	docker-compose build redproxy quic-proxy
-	@touch $(REDPROXY_IMAGE_MARKER)
-
-# Ensure generated directory exists
 $(GENERATED_DIR):
 	mkdir -p $(GENERATED_DIR)
 
+# Create output directories
+output-dirs: $(LOGS_DIR) $(REPORTS_DIR) $(GENERATED_DIR)
+
+# Build test-runner image when dependencies change
+$(RUNNER_IMAGE): $(RUNNER_DEP_FILES) output-dirs
+	@echo "Building test-runner image (dependencies changed)..."
+	docker-compose build test-runner
+	@touch $(RUNNER_IMAGE)
+
+# Build RedProxy images when Rust code changes
+$(REDPROXY_IMAGE): $(REDPROXY_DEP_FILES) output-dirs
+	@echo "Building RedProxy images (Rust code changed)..."
+	docker-compose build redproxy quic-proxy
+	@touch $(REDPROXY_IMAGE)
+
 # Generate test certificates and keys (only if not present)
-$(CERTS_MARKER): scripts/generate_test_certs.py $(IMAGE_MARKER) | $(LOGS_DIR)
+$(CERTS_MARKER): scripts/generate_test_certs.py $(RUNNER_IMAGE) output-dirs
 	@echo "Generating test certificates and SSH keys..."
 	docker-compose run --rm test-runner uv run --frozen /scripts/generate_test_certs.py
 	@echo "Certificate generation completed"
-	@mkdir -p $(GENERATED_DIR) && touch $(CERTS_MARKER)
+	@touch $(CERTS_MARKER)
 
 # Generate matrix configuration (only if certs changed or config missing)
-$(MATRIX_CONFIG): scripts/matrix_generator.py $(CERTS_MARKER) $(IMAGE_MARKER)
+$(MATRIX_CONFIG): scripts/matrix_generator.py $(CERTS_MARKER) $(RUNNER_IMAGE)
 	@echo "Generating matrix configuration..."
 	docker-compose run --rm test-runner uv run --frozen /scripts/matrix_generator.py
 	@echo "Matrix configuration generation completed"
 
 # Matrix tests (all listener×connector combinations)
-test-matrix: $(MATRIX_CONFIG) $(REDPROXY_IMAGE_MARKER) | $(REPORTS_DIR)
+test-matrix: $(MATRIX_CONFIG) $(REDPROXY_IMAGE)
 	@echo "Running matrix tests..."
 	REDPROXY_CONFIG=/config/generated/matrix.yaml docker-compose run --rm test-runner uv run --frozen /scripts/test_matrix.py
 	@echo "Matrix tests completed"
 
 # Security tests  
-test-security: $(IMAGE_MARKER) $(REDPROXY_IMAGE_MARKER) | $(LOGS_DIR) $(REPORTS_DIR)
+test-security: $(RUNNER_IMAGE) $(REDPROXY_IMAGE)
 	@echo "Running security tests..."
 	docker-compose run --rm test-runner uv run --frozen /scripts/test_security.py
 	@echo "Security tests completed"
 
 # Performance tests
-test-performance: $(IMAGE_MARKER) $(REDPROXY_IMAGE_MARKER) | $(LOGS_DIR) $(REPORTS_DIR)
+test-performance: $(RUNNER_IMAGE) $(REDPROXY_IMAGE)
 	@echo "Running performance tests..."
 	docker-compose run --rm test-runner uv run --frozen /scripts/test_performance.py
 	@echo "Performance tests completed"
