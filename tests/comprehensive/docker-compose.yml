@@ -89,7 +89,8 @@ services:
     volumes:
       - ./scripts:/scripts:ro
       - ./config:/config:rw
-      - ./logs:/logs:rw 
+      - ./logs:/logs:rw
+      - ./reports:/reports:rw
     networks: [test-net]
     depends_on:
       redproxy:

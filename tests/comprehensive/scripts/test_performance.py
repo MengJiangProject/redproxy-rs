@@ -17,6 +17,7 @@ from test_utils import (
     TestLogger, TestEnvironment, HttpForwardProxyTester, SocksProxyTester,
     setup_test_environment, wait_for_all_services
 )
+from test_reporter import TestReporter, TestResult
 
 
 async def test_concurrent_http_connections(env: TestEnvironment, concurrent_count: int = 20) -> bool:
@@ -221,6 +222,7 @@ async def test_memory_usage_stability(env: TestEnvironment) -> bool:
 async def run_performance_tests() -> bool:
     """Run all performance tests"""
     env = setup_test_environment()
+    reporter = TestReporter(output_dir="/reports")
     
     TestLogger.info("=== RedProxy Performance Tests ===")
     
@@ -229,37 +231,68 @@ async def run_performance_tests() -> bool:
         TestLogger.error("Services not ready for performance testing")
         return False
     
+    # Set up reporting
+    reporter.set_environment({
+        "test_type": "performance",
+        "redproxy_version": os.environ.get("REDPROXY_VERSION", "unknown")
+    })
+    
+    suite = reporter.create_suite("Performance Tests")
+    
     # Run performance tests
-    tests = [
-        test_concurrent_http_connections(env, 20),
-        test_concurrent_socks_connections(env, 15),
-        test_sustained_load(env, 15),  # Shorter duration for CI
-        test_connection_reuse(env),
-        test_memory_usage_stability(env),
+    test_functions = [
+        ("Concurrent HTTP Connections", lambda: test_concurrent_http_connections(env, 20)),
+        ("Concurrent SOCKS Connections", lambda: test_concurrent_socks_connections(env, 15)),
+        ("Sustained Load", lambda: test_sustained_load(env, 15)),
+        ("Connection Reuse", lambda: test_connection_reuse(env)),
+        ("Memory Usage Stability", lambda: test_memory_usage_stability(env)),
     ]
     
-    results = []
-    for i, test in enumerate(tests, 1):
-        start_time = time.time() 
-        result = await test
-        duration = time.time() - start_time
-        results.append(result)
+    for i, (test_name, test_func) in enumerate(test_functions, 1):
+        start_time = time.time()
+        try:
+            result = await test_func()
+            duration = time.time() - start_time
+            
+            test_result = TestResult(
+                name=test_name,
+                status="passed" if result else "failed",
+                duration=duration
+            )
+            suite.tests.append(test_result)
+            
+            if result:
+                TestLogger.info(f"✅ Performance test {i} passed ({duration:.2f}s)")
+            else:
+                TestLogger.error(f"❌ Performance test {i} failed ({duration:.2f}s)")
+        except Exception as e:
+            duration = time.time() - start_time
+            test_result = TestResult(
+                name=test_name,
+                status="failed",
+                duration=duration,
+                error_message=str(e)
+            )
+            suite.tests.append(test_result)
+            TestLogger.error(f"❌ Performance test {i} failed with error: {e}")
         
-        if result:
-            TestLogger.info(f"✅ Performance test {i} passed ({duration:.2f}s)")
-        else:
-            TestLogger.error(f"❌ Performance test {i} failed ({duration:.2f}s)")
         print()  # Blank line between tests
     
+    # Generate reports
+    reporter.finalize_suite(suite)
+    json_path = reporter.save_json_report("performance_report.json")
+    html_path = reporter.save_html_report("performance_report.html")
+    
     # Summary
-    passed = sum(results)
-    total = len(results)
+    passed = suite.passed_tests
+    total = suite.total_tests
     
     TestLogger.info("=== Performance Test Results ===")
     TestLogger.info(f"Passed: {passed}/{total}")
+    TestLogger.info(f"Reports saved: {json_path}, {html_path}")
     
     if passed < total:
-        TestLogger.error(f"Failed: {total - passed}/{total}")
+        TestLogger.error(f"Failed: {suite.failed_tests}/{total}")
         return False
     else:
         TestLogger.info("All performance tests passed! 🚀")

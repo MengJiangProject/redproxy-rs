@@ -4,11 +4,18 @@
 export UID := $(shell id -u)
 export GID := $(shell id -g)
 
+# Generate version string with git hash
+CARGO_VERSION := $(shell grep -E '^version = ' ../../Cargo.toml | head -n1 | sed 's/version = "\(.*\)"/\1/')
+GIT_HASH := $(shell cd ../.. && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+GIT_DIRTY := $(shell cd ../.. && git diff --quiet 2>/dev/null || echo "-dirty")
+export REDPROXY_VERSION := $(CARGO_VERSION)-$(GIT_HASH)$(GIT_DIRTY)
+
 # Generated file paths (Docker container paths)
 GENERATED_DIR := config/generated
 CERTS_MARKER := $(GENERATED_DIR)/.certs-generated
 MATRIX_CONFIG := $(GENERATED_DIR)/matrix.yaml
 LOGS_DIR := logs
+REPORTS_DIR := reports
 IMAGE_MARKER := $(GENERATED_DIR)/.test-runner-image-built
 REDPROXY_IMAGE_MARKER := $(GENERATED_DIR)/.redproxy-image-built
 
@@ -31,6 +38,9 @@ help:
 # Create required directories
 $(LOGS_DIR):
 	mkdir -p $(LOGS_DIR)
+
+$(REPORTS_DIR):
+	mkdir -p $(REPORTS_DIR)
 
 # Build test-runner image when dependencies change
 $(IMAGE_MARKER): $(DEP_FILES) | $(GENERATED_DIR)
@@ -62,19 +72,19 @@ $(MATRIX_CONFIG): scripts/matrix_generator.py $(CERTS_MARKER) $(IMAGE_MARKER)
 	@echo "Matrix configuration generation completed"
 
 # Matrix tests (all listener×connector combinations)
-test-matrix: $(MATRIX_CONFIG) $(REDPROXY_IMAGE_MARKER)
+test-matrix: $(MATRIX_CONFIG) $(REDPROXY_IMAGE_MARKER) | $(REPORTS_DIR)
 	@echo "Running matrix tests..."
 	REDPROXY_CONFIG=/config/generated/matrix.yaml docker-compose run --rm test-runner uv run --frozen /scripts/test_matrix.py
 	@echo "Matrix tests completed"
 
 # Security tests  
-test-security: $(IMAGE_MARKER) $(REDPROXY_IMAGE_MARKER) | $(LOGS_DIR)
+test-security: $(IMAGE_MARKER) $(REDPROXY_IMAGE_MARKER) | $(LOGS_DIR) $(REPORTS_DIR)
 	@echo "Running security tests..."
 	docker-compose run --rm test-runner uv run --frozen /scripts/test_security.py
 	@echo "Security tests completed"
 
 # Performance tests
-test-performance: $(IMAGE_MARKER) $(REDPROXY_IMAGE_MARKER) | $(LOGS_DIR)
+test-performance: $(IMAGE_MARKER) $(REDPROXY_IMAGE_MARKER) | $(LOGS_DIR) $(REPORTS_DIR)
 	@echo "Running performance tests..."
 	docker-compose run --rm test-runner uv run --frozen /scripts/test_performance.py
 	@echo "Performance tests completed"
@@ -88,5 +98,5 @@ clean:
 	@echo "Cleaning up test environment..."
 	docker-compose down -v --remove-orphans
 	docker image prune -f --filter label=project=comprehensive
-	rm -rf ./$(LOGS_DIR) ./$(GENERATED_DIR)
+	rm -rf ./$(LOGS_DIR) ./$(GENERATED_DIR) ./$(REPORTS_DIR)
 	@echo "Cleanup completed"

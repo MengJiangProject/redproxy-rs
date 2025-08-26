@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
 
 from test_utils import TestLogger
 from matrix_generator import MatrixGenerator
+from test_reporter import TestReporter, TestResult
 
 
 class MatrixTestRunner:
@@ -22,8 +23,10 @@ class MatrixTestRunner:
     
     def __init__(self):
         self.generator = MatrixGenerator()
+        self.reporter = TestReporter(output_dir="/reports")
+        self.suite = None
         
-    async def test_matrix_combination(self, test_info: dict) -> bool:
+    async def test_matrix_combination(self, test_info: dict) -> TestResult:
         """Test a specific listener×connector combination"""
         listener_type = test_info["listener_type"]
         listener_port = test_info["listener_port"]
@@ -32,24 +35,49 @@ class MatrixTestRunner:
         
         TestLogger.info(f"Testing: {test_name}")
         
+        start_time = time.time()
         try:
             if listener_type == "http":
-                return await self._test_http_listener(listener_port, connector_name)
+                success = await self._test_http_listener(listener_port, connector_name)
             elif listener_type == "socks":
-                return await self._test_socks_listener(listener_port, connector_name)
+                success = await self._test_socks_listener(listener_port, connector_name)
             elif listener_type == "reverse":
-                return await self._test_reverse_listener(listener_port, connector_name)
+                success = await self._test_reverse_listener(listener_port, connector_name)
             elif listener_type == "quic":
-                return await self._test_quic_listener(listener_port, connector_name)
+                success = await self._test_quic_listener(listener_port, connector_name)
             elif listener_type == "ssh":
-                return await self._test_ssh_listener(listener_port, connector_name)
+                success = await self._test_ssh_listener(listener_port, connector_name)
             else:
                 TestLogger.warn(f"Testing not implemented for listener type: {listener_type}")
-                return True  # Skip unknown types
+                success = True  # Skip unknown types
+                
+            duration = time.time() - start_time
+            status = "passed" if success else "failed"
+            return TestResult(
+                name=test_name,
+                status=status,
+                duration=duration,
+                details={
+                    "listener_type": listener_type,
+                    "listener_port": listener_port,
+                    "connector_name": connector_name
+                }
+            )
                 
         except Exception as e:
+            duration = time.time() - start_time
             TestLogger.error(f"Matrix test failed: {e}")
-            return False
+            return TestResult(
+                name=test_name,
+                status="failed",
+                duration=duration,
+                error_message=str(e),
+                details={
+                    "listener_type": listener_type,
+                    "listener_port": listener_port,
+                    "connector_name": connector_name
+                }
+            )
     
     async def _test_http_listener(self, port: int, connector: str) -> bool:
         """Test HTTP listener on specific port with comprehensive testing"""
@@ -338,29 +366,38 @@ class MatrixTestRunner:
         if not await self.wait_for_redproxy_matrix():
             return False
         
-        # Run tests for each combination
-        results = []
-        start_time = time.time()
+        # Set up test reporting
+        self.reporter.set_environment({
+            "test_type": "matrix",
+            "config_path": config_path,
+            "redproxy_version": os.environ.get("REDPROXY_VERSION", "unknown")
+        })
         
+        self.suite = self.reporter.create_suite("Matrix Tests")
+        
+        # Run tests for each combination
         for test_info in test_matrix:
             result = await self.test_matrix_combination(test_info)
-            results.append(result)
+            self.suite.tests.append(result)
         
-        end_time = time.time()
-        duration = end_time - start_time
+        # Finalize suite and generate reports
+        self.reporter.finalize_suite(self.suite)
+        json_path = self.reporter.save_json_report("matrix_report.json")
+        html_path = self.reporter.save_html_report("matrix_report.html")
         
         # Calculate results
-        passed = sum(results)
-        total = len(results)
-        success_rate = passed / total if total > 0 else 0
+        passed = self.suite.passed_tests
+        total = self.suite.total_tests
+        success_rate = self.suite.success_rate
         
         # Print summary
         TestLogger.info("=== Matrix Test Results ===")
         TestLogger.info(f"Total combinations: {total}")
         TestLogger.info(f"Passed: {passed} ({success_rate*100:.1f}%)")
         if passed < total:
-            TestLogger.error(f"Failed: {total - passed}")
-        TestLogger.info(f"Duration: {duration:.2f}s")
+            TestLogger.error(f"Failed: {self.suite.failed_tests}")
+        TestLogger.info(f"Duration: {self.suite.duration:.2f}s")
+        TestLogger.info(f"Reports saved: {json_path}, {html_path}")
         
         return success_rate >= 0.8  # 80% success rate required
 

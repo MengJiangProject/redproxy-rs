@@ -16,6 +16,7 @@ from test_utils import (
     TestLogger, TestEnvironment, HttpForwardProxyTester, SocksProxyTester,
     setup_test_environment, wait_for_all_services
 )
+from test_reporter import TestReporter, TestResult
 
 
 async def test_basic_security(env: TestEnvironment) -> bool:
@@ -112,15 +113,33 @@ async def test_malformed_requests(env: TestEnvironment) -> bool:
             # Server should close connection or send error
             try:
                 response = sock.recv(1024)
-                # If we get a response, it should be an error response
-                if b"400" in response or b"Bad Request" in response:
-                    TestLogger.info("✅ Correctly handled malformed request")
+                response_str = response.decode('utf-8', errors='replace')
+                TestLogger.info(f"Received response: {repr(response_str[:200])}")
+                
+                # Empty response means connection was closed - this indicates a bug
+                # HTTP servers should send proper 400 Bad Request responses, not silently close
+                if len(response) == 0:
+                    TestLogger.error("❌ Connection closed without HTTP error response (bug: should send 400 Bad Request)")
+                    return False
+                
+                # If we get a response, it should be a proper HTTP error response
+                if b"400" in response or b"Bad Request" in response or b"HTTP/1.1 400" in response:
+                    TestLogger.info("✅ Correctly handled malformed request with 400 error")
+                    return True
+                elif b"405" in response or b"Method Not Allowed" in response:
+                    TestLogger.info("✅ Correctly handled malformed request with 405 error") 
+                    return True
+                elif b"HTTP/1.1" in response and (b"4" in response or b"5" in response):
+                    TestLogger.info("✅ Correctly handled malformed request with HTTP error")
                     return True
                 else:
-                    TestLogger.warn("⚠️ Got unexpected response to malformed request")
-                    return True  # Still acceptable
-            except:
-                TestLogger.info("✅ Connection closed for malformed request")
+                    TestLogger.error(f"❌ Got unexpected response to malformed request: {repr(response_str[:200])}")
+                    return False
+            except ConnectionResetError:
+                TestLogger.info("✅ Connection reset for malformed request")
+                return True
+            except Exception as e:
+                TestLogger.info(f"✅ Connection error for malformed request: {e}")
                 return True
                 
     except Exception as e:
@@ -160,6 +179,7 @@ async def test_request_size_limits(env: TestEnvironment) -> bool:
 async def run_security_tests() -> bool:
     """Run all security tests"""
     env = setup_test_environment()
+    reporter = TestReporter(output_dir="/reports")
     
     TestLogger.info("=== RedProxy Security Tests ===")
     
@@ -168,37 +188,68 @@ async def run_security_tests() -> bool:
         TestLogger.error("Services not ready for security testing")
         return False
     
+    # Set up reporting
+    reporter.set_environment({
+        "test_type": "security",
+        "redproxy_version": os.environ.get("REDPROXY_VERSION", "unknown")
+    })
+    
+    suite = reporter.create_suite("Security Tests")
+    
     # Run security tests
-    tests = [
-        test_basic_security(env),
-        test_error_handling_security(env),
-        test_connection_limits(env),
-        test_malformed_requests(env), 
-        test_request_size_limits(env),
+    test_functions = [
+        ("Basic Security", test_basic_security),
+        ("Error Handling Security", test_error_handling_security),
+        ("Connection Limits", test_connection_limits),
+        ("Malformed Requests", test_malformed_requests),
+        ("Request Size Limits", test_request_size_limits),
     ]
     
-    results = []
-    for i, test in enumerate(tests, 1):
+    for i, (test_name, test_func) in enumerate(test_functions, 1):
         start_time = time.time()
-        result = await test
-        duration = time.time() - start_time
-        results.append(result)
+        try:
+            result = await test_func(env)
+            duration = time.time() - start_time
+            
+            test_result = TestResult(
+                name=test_name,
+                status="passed" if result else "failed",
+                duration=duration
+            )
+            suite.tests.append(test_result)
+            
+            if result:
+                TestLogger.info(f"✅ Security test {i} passed ({duration:.2f}s)")
+            else:
+                TestLogger.error(f"❌ Security test {i} failed ({duration:.2f}s)")
+        except Exception as e:
+            duration = time.time() - start_time
+            test_result = TestResult(
+                name=test_name,
+                status="failed",
+                duration=duration,
+                error_message=str(e)
+            )
+            suite.tests.append(test_result)
+            TestLogger.error(f"❌ Security test {i} failed with error: {e}")
         
-        if result:
-            TestLogger.info(f"✅ Security test {i} passed ({duration:.2f}s)")
-        else:
-            TestLogger.error(f"❌ Security test {i} failed ({duration:.2f}s)")
         print()  # Blank line between tests
     
+    # Generate reports
+    reporter.finalize_suite(suite)
+    json_path = reporter.save_json_report("security_report.json")
+    html_path = reporter.save_html_report("security_report.html")
+    
     # Summary
-    passed = sum(results)
-    total = len(results)
+    passed = suite.passed_tests
+    total = suite.total_tests
     
     TestLogger.info("=== Security Test Results ===")
     TestLogger.info(f"Passed: {passed}/{total}")
+    TestLogger.info(f"Reports saved: {json_path}, {html_path}")
     
     if passed < total:
-        TestLogger.error(f"Failed: {total - passed}/{total}")
+        TestLogger.error(f"Failed: {suite.failed_tests}/{total}")
         return False
     else:
         TestLogger.info("All security tests passed! 🔒")
