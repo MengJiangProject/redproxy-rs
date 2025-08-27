@@ -112,7 +112,7 @@ impl<S: SocketOps + Send + Sync + 'static> HttpListener<S> {
                                 .tls_handshake_server(stream, tls_config)
                                 .await
                             {
-                                Ok(stream) => stream,
+                                Ok((stream, _alpn)) => stream,
                                 Err(e) => {
                                     warn!("tls handshake failed: {}", e);
                                     return;
