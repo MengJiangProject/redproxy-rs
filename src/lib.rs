@@ -28,5 +28,5 @@ pub use server::ProxyServer;
 // Re-export HTTP protocol types for convenience
 pub use protocols::http::{
     HttpMethod, HttpProtocolHandler, HttpProtocolHandlerFactory, HttpRequest, HttpResponse,
-    HttpStream, HttpVersion, UdpChannelHandle, UdpMode,
+    HttpVersion,
 };

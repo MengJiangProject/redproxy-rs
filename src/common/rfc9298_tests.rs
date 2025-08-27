@@ -224,25 +224,25 @@ async fn test_http_proxy_context_ext_comprehensive() {
 #[test]
 fn test_websocket_detection_comprehensive() {
     // Test valid WebSocket upgrade requests
-    let ws_request = crate::common::http::HttpRequest::new("GET", "/chat")
+    let ws_request = crate::common::http::HttpRequestV1::new("GET", "/chat")
         .with_header("Connection", "upgrade")
         .with_header("Upgrade", "websocket");
     assert!(is_websocket_upgrade(&ws_request));
 
     // Test case insensitive headers
-    let ws_request_case = crate::common::http::HttpRequest::new("GET", "/ws")
+    let ws_request_case = crate::common::http::HttpRequestV1::new("GET", "/ws")
         .with_header("CONNECTION", "UPGRADE")
         .with_header("UPGRADE", "WEBSOCKET");
     assert!(is_websocket_upgrade(&ws_request_case));
 
     // Test Connection header with multiple values
-    let ws_request_multi = crate::common::http::HttpRequest::new("GET", "/")
+    let ws_request_multi = crate::common::http::HttpRequestV1::new("GET", "/")
         .with_header("Connection", "keep-alive, upgrade")
         .with_header("Upgrade", "websocket");
     assert!(is_websocket_upgrade(&ws_request_multi));
 
     // Test Connection header with extra whitespace
-    let ws_request_space = crate::common::http::HttpRequest::new("GET", "/")
+    let ws_request_space = crate::common::http::HttpRequestV1::new("GET", "/")
         .with_header("Connection", " upgrade , keep-alive ")
         .with_header("Upgrade", "websocket");
     assert!(is_websocket_upgrade(&ws_request_space));
@@ -250,34 +250,34 @@ fn test_websocket_detection_comprehensive() {
     // Test invalid cases
 
     // Connection contains "upgrade" but not as separate token
-    let invalid_token = crate::common::http::HttpRequest::new("GET", "/")
+    let invalid_token = crate::common::http::HttpRequestV1::new("GET", "/")
         .with_header("Connection", "keep-alive-upgrade")
         .with_header("Upgrade", "websocket");
     assert!(!is_websocket_upgrade(&invalid_token));
 
     // Upgrade header is not exactly "websocket"
-    let invalid_upgrade = crate::common::http::HttpRequest::new("GET", "/")
+    let invalid_upgrade = crate::common::http::HttpRequestV1::new("GET", "/")
         .with_header("Connection", "upgrade")
         .with_header("Upgrade", "websocket-extension");
     assert!(!is_websocket_upgrade(&invalid_upgrade));
 
     // Missing Connection header
     let no_connection =
-        crate::common::http::HttpRequest::new("GET", "/").with_header("Upgrade", "websocket");
+        crate::common::http::HttpRequestV1::new("GET", "/").with_header("Upgrade", "websocket");
     assert!(!is_websocket_upgrade(&no_connection));
 
     // Missing Upgrade header
     let no_upgrade =
-        crate::common::http::HttpRequest::new("GET", "/").with_header("Connection", "upgrade");
+        crate::common::http::HttpRequestV1::new("GET", "/").with_header("Connection", "upgrade");
     assert!(!is_websocket_upgrade(&no_upgrade));
 
     // Regular HTTP request
-    let http_request = crate::common::http::HttpRequest::new("GET", "/api/data")
+    let http_request = crate::common::http::HttpRequestV1::new("GET", "/api/data")
         .with_header("Connection", "keep-alive");
     assert!(!is_websocket_upgrade(&http_request));
 
     // Empty headers
-    let empty_headers = crate::common::http::HttpRequest::new("GET", "/")
+    let empty_headers = crate::common::http::HttpRequestV1::new("GET", "/")
         .with_header("Connection", "")
         .with_header("Upgrade", "");
     assert!(!is_websocket_upgrade(&empty_headers));

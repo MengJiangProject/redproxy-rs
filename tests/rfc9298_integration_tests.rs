@@ -8,7 +8,7 @@ use redproxy_rs::context::TargetAddress;
 fn test_rfc9298_integration_http_upgrade_flow() {
     // Test the full HTTP upgrade flow for RFC 9298
 
-    let mock_request = redproxy_rs::common::http::HttpRequest {
+    let mock_request = redproxy_rs::common::http::HttpRequestV1 {
         method: "GET".to_string(),
         resource: "/.well-known/masque/udp/example.com/8080/".to_string(),
         version: "HTTP/1.1".to_string(),
@@ -64,7 +64,7 @@ fn test_rfc9298_end_to_end_mock_scenario() {
     // End-to-end test simulating a complete RFC 9298 proxy scenario
 
     // Step 1: Client sends HTTP upgrade request
-    let client_request = redproxy_rs::common::http::HttpRequest {
+    let client_request = redproxy_rs::common::http::HttpRequestV1 {
         method: "GET".to_string(),
         resource: "/.well-known/masque/udp/192.168.1.100/53/".to_string(),
         version: "HTTP/1.1".to_string(),
@@ -114,7 +114,7 @@ fn test_rfc9298_error_handling_integration() {
     }
 
     // Test missing WebSocket headers
-    let non_websocket_request = redproxy_rs::common::http::HttpRequest {
+    let non_websocket_request = redproxy_rs::common::http::HttpRequestV1 {
         method: "GET".to_string(),
         resource: "/.well-known/masque/udp/example.com/8080/".to_string(),
         version: "HTTP/1.1".to_string(),

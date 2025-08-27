@@ -1,4 +1,8 @@
-use crate::{access_log::AccessLog, common::frames::FrameIO};
+use crate::{
+    HttpRequest,
+    access_log::AccessLog,
+    common::{frames::FrameIO, http::HttpRequestV1},
+};
 use anyhow::{Context as AnyhowContext, Error, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize, de::Visitor, ser::SerializeStruct};
@@ -655,7 +659,7 @@ pub struct Context {
     server_frames: Option<FrameIO>,
     callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
     state: Arc<ContextManager>,
-    http_request: Option<Arc<crate::common::http::HttpRequest>>,
+    http_request: Option<Arc<HttpRequest>>,
     cancellation_token: tokio_util::sync::CancellationToken,
 }
 
@@ -844,12 +848,22 @@ impl Context {
         self
     }
 
-    pub fn set_http_request(&mut self, request: crate::common::http::HttpRequest) -> &mut Self {
+    pub fn set_http_request_v1(&mut self, request: HttpRequestV1) -> &mut Self {
+        self.set_http_request(request.into())
+    }
+
+    pub fn http_request_v1(&self) -> Option<Arc<HttpRequestV1>> {
+        self.http_request
+            .as_ref()
+            .map(|req| Arc::new(req.as_ref().clone().into()))
+    }
+
+    pub fn set_http_request(&mut self, request: HttpRequest) -> &mut Self {
         self.http_request = Some(Arc::new(request));
         self
     }
 
-    pub fn http_request(&self) -> Option<Arc<crate::common::http::HttpRequest>> {
+    pub fn http_request(&self) -> Option<Arc<HttpRequest>> {
         self.http_request.clone()
     }
 
