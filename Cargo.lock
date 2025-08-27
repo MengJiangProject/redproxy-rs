@@ -2558,6 +2558,7 @@ version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "aws-lc-rs",
  "axum",
  "base64",
  "bytes",
@@ -2566,6 +2567,7 @@ dependencies = [
  "clap",
  "futures",
  "futures-util",
+ "h2",
  "hickory-resolver",
  "hyper",
  "hyper-util",

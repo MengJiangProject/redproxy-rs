@@ -10,24 +10,27 @@
 
   outputs = { self, fenix, flake-utils, nixpkgs }:
     flake-utils.lib.eachDefaultSystem (system:
-      let pkgs = nixpkgs.legacyPackages.${system}; in
+      let 
+        pkgs = nixpkgs.legacyPackages.${system}; 
+        rustPlatform = fenix.packages.${system}.stable.withComponents [
+          "cargo"
+          "rustc"
+          "clippy"
+          "rustfmt"
+          "rust-analyzer"
+          "rust-src"
+        ];
+      in
       {
         devShells.default = pkgs.mkShell {
-          buildInputs = with fenix.packages.${system}.stable; [
-            cargo
-            rustc
-            clippy
-            rustfmt
-            rust-analyzer
-            rust-src
-          ] ++ (with pkgs;[
+          buildInputs = [rustPlatform] ++ (with pkgs;[
             docker-compose
             shellcheck
           ]);
         };
 
         defaultPackage = (pkgs.makeRustPlatform {
-          inherit (fenix.packages.${system}.stable.minimal) cargo rustc;
+          rustPlatform = rustPlatform;
         }).buildRustPackage {
           pname = "redproxy-rs";
           version = "0.10.0";
