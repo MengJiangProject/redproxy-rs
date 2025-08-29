@@ -14,15 +14,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
 
 from test_utils import (
     TestLogger, TestEnvironment, HttpForwardProxyTester, SocksProxyTester,
-    setup_test_environment, wait_for_all_services
+    setup_test_environment
 )
 from test_reporter import TestReporter, TestResult
+from test_framework import SelectiveTestRunner, run_test_script
 
 
-async def test_basic_security(env: TestEnvironment) -> bool:
+async def test_basic_security() -> bool:
     """Test 1: Basic connection security"""
-    TestLogger.test("Test 1: Basic connection security")
+    TestLogger.test("Basic connection security")
     
+    env = setup_test_environment()
     tester = HttpForwardProxyTester(env)
     
     if await tester.test_forward_proxy_get(
@@ -36,9 +38,11 @@ async def test_basic_security(env: TestEnvironment) -> bool:
         return False
 
 
-async def test_error_handling_security(env: TestEnvironment) -> bool:
+async def test_error_handling_security() -> bool:
     """Test 2: Error handling with invalid targets"""
-    TestLogger.test("Test 2: Error handling security")
+    TestLogger.test("Error handling security")
+    
+    env = setup_test_environment()
     
     try:
         import httpx
@@ -49,10 +53,16 @@ async def test_error_handling_security(env: TestEnvironment) -> bool:
         async with httpx.AsyncClient(proxy=env.http_proxy_url, timeout=5.0) as client:
             try:
                 response = await client.get(invalid_url)
-                TestLogger.error("❌ Should have failed for invalid target")
-                return False
-            except (httpx.RequestError, httpx.TimeoutException):
-                TestLogger.info("✅ Correctly handled invalid target")
+                # HTTP error status codes (4xx, 5xx) are acceptable error handling
+                if response.status_code >= 400:
+                    TestLogger.info(f"✅ Correctly handled invalid target with HTTP {response.status_code}")
+                    return True
+                else:
+                    TestLogger.error(f"❌ Should have failed for invalid target, got status {response.status_code}")
+                    TestLogger.error(f"Response body: {response.text[:200]}")
+                    return False
+            except (httpx.RequestError, httpx.TimeoutException) as e:
+                TestLogger.info(f"✅ Correctly handled invalid target: {type(e).__name__}")
                 return True
                 
     except Exception as e:
@@ -60,9 +70,11 @@ async def test_error_handling_security(env: TestEnvironment) -> bool:
         return False
 
 
-async def test_connection_limits(env: TestEnvironment) -> bool:
+async def test_connection_limits() -> bool:
     """Test 3: Connection handling under stress"""
-    TestLogger.test("Test 3: Connection limits and cleanup")
+    TestLogger.test("Connection limits and cleanup")
+    
+    env = setup_test_environment()
     
     try:
         import httpx
@@ -94,9 +106,11 @@ async def test_connection_limits(env: TestEnvironment) -> bool:
         return False
 
 
-async def test_malformed_requests(env: TestEnvironment) -> bool:
+async def test_malformed_requests() -> bool:
     """Test 4: Handling of malformed requests"""
-    TestLogger.test("Test 4: Malformed request handling")
+    TestLogger.test("Malformed request handling")
+    
+    env = setup_test_environment()
     
     try:
         import socket
@@ -147,9 +161,11 @@ async def test_malformed_requests(env: TestEnvironment) -> bool:
         return False
 
 
-async def test_request_size_limits(env: TestEnvironment) -> bool:
+async def test_request_size_limits() -> bool:
     """Test 5: Large request handling"""
-    TestLogger.test("Test 5: Request size limits")
+    TestLogger.test("Request size limits")
+    
+    env = setup_test_environment()
     
     try:
         import httpx
@@ -176,98 +192,24 @@ async def test_request_size_limits(env: TestEnvironment) -> bool:
         return False
 
 
-async def run_security_tests() -> bool:
-    """Run all security tests"""
-    env = setup_test_environment()
-    reporter = TestReporter(output_dir="/reports")
+def create_security_test_runner() -> SelectiveTestRunner:
+    """Create and configure the security test runner"""
+    runner = SelectiveTestRunner("Security Tests", "Tests security features, error handling, and edge cases")
     
-    TestLogger.info("=== RedProxy Security Tests ===")
+    # Register all test functions
+    runner.register_test("basic", "Basic connection security", test_basic_security)
+    runner.register_test("errors", "Error handling with invalid targets", test_error_handling_security)
+    runner.register_test("limits", "Connection limits testing", test_connection_limits)
+    runner.register_test("malformed", "Malformed request handling", test_malformed_requests)
+    runner.register_test("sizes", "Request size limits testing", test_request_size_limits)
     
-    # Wait for services to be ready
-    if not await wait_for_all_services(env):
-        TestLogger.error("Services not ready for security testing")
-        return False
-    
-    # Set up reporting
-    reporter.set_environment({
-        "test_type": "security",
-        "redproxy_version": os.environ.get("REDPROXY_VERSION", "unknown")
-    })
-    
-    suite = reporter.create_suite("Security Tests")
-    
-    # Run security tests
-    test_functions = [
-        ("Basic Security", test_basic_security),
-        ("Error Handling Security", test_error_handling_security),
-        ("Connection Limits", test_connection_limits),
-        ("Malformed Requests", test_malformed_requests),
-        ("Request Size Limits", test_request_size_limits),
-    ]
-    
-    for i, (test_name, test_func) in enumerate(test_functions, 1):
-        start_time = time.time()
-        try:
-            result = await test_func(env)
-            duration = time.time() - start_time
-            
-            test_result = TestResult(
-                name=test_name,
-                status="passed" if result else "failed",
-                duration=duration
-            )
-            suite.tests.append(test_result)
-            
-            if result:
-                TestLogger.info(f"✅ Security test {i} passed ({duration:.2f}s)")
-            else:
-                TestLogger.error(f"❌ Security test {i} failed ({duration:.2f}s)")
-        except Exception as e:
-            duration = time.time() - start_time
-            test_result = TestResult(
-                name=test_name,
-                status="failed",
-                duration=duration,
-                error_message=str(e)
-            )
-            suite.tests.append(test_result)
-            TestLogger.error(f"❌ Security test {i} failed with error: {e}")
-        
-        print()  # Blank line between tests
-    
-    # Generate reports
-    reporter.finalize_suite(suite)
-    json_path = reporter.save_json_report("security_report.json")
-    html_path = reporter.save_html_report("security_report.html")
-    
-    # Summary
-    passed = suite.passed_tests
-    total = suite.total_tests
-    
-    TestLogger.info("=== Security Test Results ===")
-    TestLogger.info(f"Passed: {passed}/{total}")
-    TestLogger.info(f"Reports saved: {json_path}, {html_path}")
-    
-    if passed < total:
-        TestLogger.error(f"Failed: {suite.failed_tests}/{total}")
-        return False
-    else:
-        TestLogger.info("All security tests passed! 🔒")
-        return True
+    return runner
 
 
 async def main():
-    """Main security test execution"""
-    try:
-        success = await run_security_tests()
-        sys.exit(0 if success else 1)
-        
-    except KeyboardInterrupt:
-        TestLogger.warn("Security tests interrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        TestLogger.error(f"Security tests failed with exception: {e}")
-        sys.exit(1)
+    """Main security test execution using the reusable framework"""
+    runner = create_security_test_runner()
+    await run_test_script("test_security.py", "Security Tests", runner)
 
 
 if __name__ == "__main__":

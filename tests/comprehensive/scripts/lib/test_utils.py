@@ -48,6 +48,8 @@ class TestEnvironment:
         self.redproxy_socks_port = int(os.getenv('REDPROXY_SOCKS_PORT', '1081'))
         self.http_echo_host = os.getenv('HTTP_ECHO_HOST', 'http-echo')
         self.http_echo_port = int(os.getenv('HTTP_ECHO_PORT', '8080'))
+        self.websocket_host = os.getenv('WEBSOCKET_HOST', 'websocket-server')
+        self.websocket_port = int(os.getenv('WEBSOCKET_PORT', '9998'))
         self.target_host = os.getenv('TARGET_HOST', 'target-server')
         self.target_port = int(os.getenv('TARGET_PORT', '80'))
         self.verbose = os.getenv('VERBOSE', 'false').lower() == 'true'
@@ -63,6 +65,14 @@ class TestEnvironment:
     def get_echo_url(self, path: str = "/") -> str:
         """Get echo server URL"""
         return f"http://{self.http_echo_host}:{self.http_echo_port}{path}"
+    
+    def get_websocket_url(self, path: str = "/ws") -> str:
+        """Get WebSocket server URL"""
+        return f"ws://{self.websocket_host}:{self.websocket_port}{path}"
+    
+    def get_websocket_http_url(self, path: str = "/") -> str:
+        """Get WebSocket server HTTP URL"""
+        return f"http://{self.websocket_host}:{self.websocket_port}{path}"
 
 
 async def wait_for_service(host: str, port: int, timeout: int = 30) -> bool:
@@ -294,7 +304,7 @@ def setup_test_environment() -> TestEnvironment:
     return env
 
 
-async def wait_for_all_services(env: TestEnvironment) -> bool:
+async def wait_for_all_services(env: TestEnvironment, require_socks: bool = True) -> bool:
     """Wait for all required services to be ready"""
     TestLogger.info("Waiting for services to be ready...")
     
@@ -304,8 +314,11 @@ async def wait_for_all_services(env: TestEnvironment) -> bool:
         ("http-proxy", 3128),
         ("socks-proxy", 1080),
         (env.redproxy_host, env.redproxy_http_port),
-        (env.redproxy_host, env.redproxy_socks_port),
     ]
+    
+    # Only check SOCKS port if required
+    if require_socks:
+        services.append((env.redproxy_host, env.redproxy_socks_port))
     
     for host, port in services:
         if not await wait_for_service(host, port):

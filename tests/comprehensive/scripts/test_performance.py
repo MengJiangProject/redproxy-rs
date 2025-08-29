@@ -15,9 +15,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
 
 from test_utils import (
     TestLogger, TestEnvironment, HttpForwardProxyTester, SocksProxyTester,
-    setup_test_environment, wait_for_all_services
+    setup_test_environment
 )
-from test_reporter import TestReporter, TestResult
+from test_framework import SelectiveTestRunner, run_test_script
 
 
 async def test_concurrent_http_connections(env: TestEnvironment, concurrent_count: int = 20) -> bool:
@@ -299,18 +299,51 @@ async def run_performance_tests() -> bool:
         return True
 
 
+# Wrapper functions for SelectiveTestRunner
+async def test_concurrent_http() -> bool:
+    """Concurrent HTTP connections test"""
+    env = setup_test_environment()
+    return await test_concurrent_http_connections(env, concurrent_count=20)
+
+async def test_concurrent_socks() -> bool:
+    """Concurrent SOCKS connections test"""
+    env = setup_test_environment()
+    return await test_concurrent_socks_connections(env, concurrent_count=15)
+
+async def test_sustained_load_wrapper() -> bool:
+    """Sustained load test"""
+    env = setup_test_environment()
+    return await test_sustained_load(env, duration_seconds=30)
+
+async def test_connection_reuse_wrapper() -> bool:
+    """Connection reuse test"""
+    env = setup_test_environment() 
+    return await test_connection_reuse(env)
+
+async def test_memory_usage_wrapper() -> bool:
+    """Memory usage stability test"""
+    env = setup_test_environment()
+    return await test_memory_usage_stability(env)
+
+
+def create_performance_test_runner() -> SelectiveTestRunner:
+    """Create and configure the performance test runner"""
+    runner = SelectiveTestRunner("Performance Tests", "Tests concurrent connections, throughput, and resource usage")
+    
+    # Register all test functions
+    runner.register_test("http", "Concurrent HTTP connections test", test_concurrent_http)
+    runner.register_test("socks", "Concurrent SOCKS connections test", test_concurrent_socks)
+    runner.register_test("sustained", "Sustained load test", test_sustained_load_wrapper)
+    runner.register_test("reuse", "Connection reuse test", test_connection_reuse_wrapper)
+    runner.register_test("memory", "Memory usage stability test", test_memory_usage_wrapper)
+    
+    return runner
+
+
 async def main():
-    """Main performance test execution"""
-    try:
-        success = await run_performance_tests()
-        sys.exit(0 if success else 1)
-        
-    except KeyboardInterrupt:
-        TestLogger.warn("Performance tests interrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        TestLogger.error(f"Performance tests failed with exception: {e}")
-        sys.exit(1)
+    """Main performance test execution using the reusable framework"""
+    runner = create_performance_test_runner()
+    await run_test_script("test_performance.py", "Performance Tests", runner)
 
 
 if __name__ == "__main__":

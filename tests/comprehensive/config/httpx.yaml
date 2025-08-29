@@ -1,0 +1,46 @@
+# HttpX Listener Test Configuration for Comprehensive Tests
+# Tests the unified HTTP listener (HTTP/1.1, HTTP/2, HTTP/3)
+
+listeners:
+  - name: httpx
+    type: httpx
+    bind: "0.0.0.0:8800"
+    protocols:
+      http1:
+        enable: true
+      http2:
+        enable: false
+      http3:
+        enable: false
+
+
+connectors:
+  - name: direct
+    type: direct
+  - name: upstream-http
+    type: http
+    server: "http-proxy"
+    port: 3128
+  - name: upstream-socks
+    type: socks
+    server: "socks-proxy"
+    port: 1080
+
+rules:
+  # Direct connection to echo server for testing
+  - filter: 'request.target.host == "http-echo"'
+    target: direct
+  # Route target-server based on listener type
+  - filter: 'request.target.host == "target-server" && request.listener == "httpx"'
+    target: upstream-http
+  # Default fallback
+  - filter: "true"
+    target: direct
+
+accessLog:
+  path: "/logs/httpx-access.log"
+  format: "json"
+
+metrics:
+  bind: "0.0.0.0:9090"
+  apiPrefix: "/api"

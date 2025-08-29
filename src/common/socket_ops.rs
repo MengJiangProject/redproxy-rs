@@ -6,6 +6,7 @@ use tokio::net::{TcpListener as TokioTcpListener, TcpSocket, UdpSocket, lookup_h
 
 use crate::common::tls::{TlsClientConfig, TlsServerConfig};
 use crate::common::udp::udp_socket;
+use crate::context::IOStream;
 
 #[cfg(not(windows))]
 pub fn set_keepalive(stream: &tokio::net::TcpStream) -> anyhow::Result<()> {
@@ -21,20 +22,9 @@ pub fn set_keepalive(stream: &tokio::net::TcpStream) -> anyhow::Result<()> {
     crate::common::windows::set_keepalive(stream.as_raw_socket() as _, true).context("setsockopt")
 }
 
-// Stream trait that works with both real and mock streams
-pub trait Stream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync {
-    fn as_any(&self) -> &dyn std::any::Any;
-}
-
-impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static> Stream for T {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
-
 #[async_trait]
 pub trait AppTcpListener: Send + Sync {
-    async fn accept(&self) -> Result<(Box<dyn Stream>, SocketAddr)>;
+    async fn accept(&self) -> Result<(Box<dyn IOStream>, SocketAddr)>;
 }
 
 // Clean, low-level socket abstraction equivalent to Tokio socket library
@@ -49,7 +39,7 @@ pub trait SocketOps: Send + Sync {
         &self,
         remote: SocketAddr,
         bind: Option<IpAddr>,
-    ) -> Result<(Box<dyn Stream>, SocketAddr, SocketAddr)>;
+    ) -> Result<(Box<dyn IOStream>, SocketAddr, SocketAddr)>;
 
     // UDP
     async fn udp_bind(&self, local: SocketAddr) -> Result<(UdpSocket, SocketAddr)>;
@@ -57,19 +47,19 @@ pub trait SocketOps: Send + Sync {
     // TLS
     async fn tls_handshake_client(
         &self,
-        stream: Box<dyn Stream>,
+        stream: Box<dyn IOStream>,
         server_name: &str,
         tls_config: &TlsClientConfig,
-    ) -> Result<Box<dyn Stream>>;
+    ) -> Result<Box<dyn IOStream>>;
     async fn tls_handshake_server(
         &self,
-        stream: Box<dyn Stream>,
+        stream: Box<dyn IOStream>,
         tls_config: &TlsServerConfig,
-    ) -> Result<(Box<dyn Stream>, Option<String>)>;
+    ) -> Result<(Box<dyn IOStream>, Option<String>)>;
 
     // Socket Options
-    async fn set_keepalive(&self, stream: &dyn Stream, enable: bool) -> Result<()>;
-    async fn set_fwmark(&self, stream: &dyn Stream, mark: Option<u32>) -> Result<()>;
+    async fn set_keepalive(&self, stream: &dyn IOStream, enable: bool) -> Result<()>;
+    async fn set_fwmark(&self, stream: &dyn IOStream, mark: Option<u32>) -> Result<()>;
 }
 
 // Real implementation using actual Tokio sockets
@@ -81,7 +71,7 @@ pub struct RealTcpListener {
 
 #[async_trait]
 impl AppTcpListener for RealTcpListener {
-    async fn accept(&self) -> Result<(Box<dyn Stream>, SocketAddr)> {
+    async fn accept(&self) -> Result<(Box<dyn IOStream>, SocketAddr)> {
         let (stream, addr) = self.listener.accept().await?;
         Ok((Box::new(stream), addr))
     }
@@ -106,7 +96,7 @@ impl SocketOps for RealSocketOps {
         &self,
         remote: SocketAddr,
         bind: Option<IpAddr>,
-    ) -> Result<(Box<dyn Stream>, SocketAddr, SocketAddr)> {
+    ) -> Result<(Box<dyn IOStream>, SocketAddr, SocketAddr)> {
         let server = if remote.is_ipv4() {
             TcpSocket::new_v4().context("socket")?
         } else {
@@ -132,10 +122,10 @@ impl SocketOps for RealSocketOps {
 
     async fn tls_handshake_client(
         &self,
-        stream: Box<dyn Stream>,
+        stream: Box<dyn IOStream>,
         server_name: &str,
         tls_config: &TlsClientConfig,
-    ) -> Result<Box<dyn Stream>> {
+    ) -> Result<Box<dyn IOStream>> {
         use rustls::pki_types::ServerName;
 
         let tls_connector = tls_config.connector()?;
@@ -158,9 +148,9 @@ impl SocketOps for RealSocketOps {
 
     async fn tls_handshake_server(
         &self,
-        stream: Box<dyn Stream>,
+        stream: Box<dyn IOStream>,
         tls_config: &TlsServerConfig,
-    ) -> Result<(Box<dyn Stream>, Option<String>)> {
+    ) -> Result<(Box<dyn IOStream>, Option<String>)> {
         let tls_acceptor = tls_config.acceptor()?;
         let tls_stream = tls_acceptor
             .accept(stream)
@@ -177,7 +167,7 @@ impl SocketOps for RealSocketOps {
         Ok((Box::new(tls_stream), alpn_protocol))
     }
 
-    async fn set_keepalive(&self, stream: &dyn Stream, enable: bool) -> Result<()> {
+    async fn set_keepalive(&self, stream: &dyn IOStream, enable: bool) -> Result<()> {
         if let Some(tcp_stream) = stream.as_any().downcast_ref::<tokio::net::TcpStream>()
             && enable
         {
@@ -186,7 +176,7 @@ impl SocketOps for RealSocketOps {
         Ok(())
     }
 
-    async fn set_fwmark(&self, stream: &dyn Stream, mark: Option<u32>) -> Result<()> {
+    async fn set_fwmark(&self, stream: &dyn IOStream, mark: Option<u32>) -> Result<()> {
         if let Some(tcp_stream) = stream.as_any().downcast_ref::<tokio::net::TcpStream>() {
             set_fwmark(tcp_stream, mark)?;
         }
@@ -273,7 +263,7 @@ pub mod test_utils {
 
     #[async_trait]
     impl AppTcpListener for MockTcpListener {
-        async fn accept(&self) -> Result<(Box<dyn Stream>, SocketAddr)> {
+        async fn accept(&self) -> Result<(Box<dyn IOStream>, SocketAddr)> {
             let stream = default_tcp_stream();
             let addr = "127.0.0.1:12345".parse().unwrap();
             Ok((Box::new(stream), addr))
@@ -355,7 +345,7 @@ pub mod test_utils {
             &self,
             _remote: SocketAddr,
             _bind: Option<IpAddr>,
-        ) -> Result<(Box<dyn Stream>, SocketAddr, SocketAddr)> {
+        ) -> Result<(Box<dyn IOStream>, SocketAddr, SocketAddr)> {
             match &self.tcp_result {
                 Ok((local, peer)) => {
                     let mock_stream = (self.stream_builder)();
@@ -380,28 +370,28 @@ pub mod test_utils {
 
         async fn tls_handshake_client(
             &self,
-            stream: Box<dyn Stream>,
+            stream: Box<dyn IOStream>,
             _server_name: &str,
             _tls_config: &TlsClientConfig,
-        ) -> Result<Box<dyn Stream>> {
+        ) -> Result<Box<dyn IOStream>> {
             Ok(stream)
         }
 
         async fn tls_handshake_server(
             &self,
-            stream: Box<dyn Stream>,
+            stream: Box<dyn IOStream>,
             _tls_config: &TlsServerConfig,
-        ) -> Result<(Box<dyn Stream>, Option<String>)> {
+        ) -> Result<(Box<dyn IOStream>, Option<String>)> {
             // For mock, return stream with no ALPN (simulates cleartext)
             Ok((stream, None))
         }
 
-        async fn set_keepalive(&self, _stream: &dyn Stream, _enable: bool) -> Result<()> {
+        async fn set_keepalive(&self, _stream: &dyn IOStream, _enable: bool) -> Result<()> {
             // Mock implementation - just succeed
             Ok(())
         }
 
-        async fn set_fwmark(&self, _stream: &dyn Stream, _mark: Option<u32>) -> Result<()> {
+        async fn set_fwmark(&self, _stream: &dyn IOStream, _mark: Option<u32>) -> Result<()> {
             // Mock implementation - just succeed
             Ok(())
         }

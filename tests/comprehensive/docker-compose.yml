@@ -14,6 +14,23 @@ services:
     image: nginx:alpine
     networks: [test-net]
 
+  # WebSocket test server
+  websocket-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-runner
+    networks: [test-net]
+    volumes:
+      - ./scripts:/scripts:ro
+    command: ["uv", "run", "--frozen", "/scripts/websocket_server.py"]
+    environment:
+      - PORT=9998
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9998/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   # Upstream proxies for testing connectors
   http-proxy:
     image: ubuntu/squid:latest
@@ -70,14 +87,15 @@ services:
       - ./config:/config:rw
       - ./logs:/logs:rw
     networks: [test-net]
-    depends_on: [http-echo, target-server, http-proxy, socks-proxy, quic-proxy, ssh-proxy]
+    depends_on: [http-echo, target-server, websocket-server, http-proxy, socks-proxy, quic-proxy, ssh-proxy]
     healthcheck:
       test: ["CMD", "curl", "-f", "--connect-timeout", "3", "--max-time", "5", "http://localhost:9090/api/metrics"]
       interval: 10s
       timeout: 5s
       retries: 3
-    command: ["redproxy", "-c", "${REDPROXY_CONFIG:-/config/base.yaml}"]
-
+    command: ["redproxy", "-c", "${REDPROXY_CONFIG:-/config/httpx.yaml}", "--log", "${REDPROXY_LOG_LEVEL:-info}"]
+    environment:
+      - RUST_LOG=info,tower_http=info,milu=warn,redproxy=trace,redproxy_rs::rules=info
   # Test runner with environment-driven test selection
   test-runner:
     build:
@@ -99,10 +117,3 @@ services:
 networks:
   test-net:
     driver: bridge
-
-# Usage Examples:
-# TEST_SUITE=protocols docker-compose up test-runner
-# TEST_SUITE=http-forward docker-compose up test-runner
-# TEST_SUITE=security VERBOSE=true docker-compose up test-runner  
-# TEST_SUITE=performance docker-compose up test-runner
-# Or use Makefile: make test-protocols, make test-http-forward, make test-security, make test-performance

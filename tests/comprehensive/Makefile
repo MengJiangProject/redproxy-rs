@@ -1,4 +1,4 @@
-.PHONY: help test-all test-security test-performance clean build rebuild output-dirs
+.PHONY: help test-all test-security test-performance test-httpx test-matrix clean build rebuild output-dirs
 
 # Export current user ID and group ID for Docker containers
 export UID := $(shell id -u)
@@ -29,11 +29,20 @@ REDPROXY_DEP_FILES := Dockerfile ../../Cargo.toml ../../Cargo.lock $(shell find 
 # Default target
 help:
 	@echo "targets:"
+	@echo "  test-httpx          - HttpX listener comprehensive tests"
+	@echo "                        Use ARGS='--tests connect forward' for selective tests"
+	@echo "                        Use ARGS='--list' to see available test suites"
 	@echo "  test-security       - Security and error handling tests"
 	@echo "  test-performance    - Concurrency and performance tests"
 	@echo "  test-matrix         - Test all listener×connector combinations"
 	@echo "  test-all            - Run all test suites"
 	@echo "  clean               - Stop all services and clean up"
+	@echo ""
+	@echo "examples:"
+	@echo "  make test-httpx                                    # Run all HttpX tests"
+	@echo "  make test-httpx ARGS='--tests connect forward'    # Run only CONNECT and forward tests"
+	@echo "  make test-httpx ARGS='--tests destructive'        # Run only error handling tests"
+	@echo "  make test-httpx ARGS='--list'                     # List available test suites"
 
 # Create required directories
 $(LOGS_DIR):
@@ -74,7 +83,7 @@ $(MATRIX_CONFIG): scripts/matrix_generator.py $(CERTS_MARKER) $(RUNNER_IMAGE)
 	@echo "Matrix configuration generation completed"
 
 # Matrix tests (all listener×connector combinations)
-test-matrix: $(MATRIX_CONFIG) $(REDPROXY_IMAGE)
+test-matrix: $(MATRIX_CONFIG) $(RUNNER_IMAGE) $(REDPROXY_IMAGE)
 	@echo "Running matrix tests..."
 	REDPROXY_CONFIG=/config/generated/matrix.yaml docker-compose run --rm test-runner uv run --frozen /scripts/test_matrix.py
 	@echo "Matrix tests completed"
@@ -82,17 +91,23 @@ test-matrix: $(MATRIX_CONFIG) $(REDPROXY_IMAGE)
 # Security tests  
 test-security: $(RUNNER_IMAGE) $(REDPROXY_IMAGE)
 	@echo "Running security tests..."
-	docker-compose run --rm test-runner uv run --frozen /scripts/test_security.py
+	docker-compose run --rm test-runner uv run --frozen /scripts/test_security.py $(ARGS)
 	@echo "Security tests completed"
 
 # Performance tests
 test-performance: $(RUNNER_IMAGE) $(REDPROXY_IMAGE)
 	@echo "Running performance tests..."
-	docker-compose run --rm test-runner uv run --frozen /scripts/test_performance.py
+	docker-compose run --rm test-runner uv run --frozen /scripts/test_performance.py $(ARGS)
 	@echo "Performance tests completed"
 
+# HttpX listener tests
+test-httpx: $(RUNNER_IMAGE) $(REDPROXY_IMAGE)
+	@echo "Running HttpX listener tests..."
+	REDPROXY_CONFIG=/config/httpx.yaml docker-compose run --rm test-runner uv run --frozen /scripts/test_httpx_listener.py $(ARGS)
+	@echo "HttpX listener tests completed"
+
 # Run all tests (can be parallelized with make -j)
-test-all: test-matrix test-security test-performance
+test-all: test-matrix test-security test-performance test-httpx
 	@echo "All comprehensive tests completed successfully!"
 
 # Cleanup

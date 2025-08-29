@@ -26,7 +26,4 @@ pub use context::{Context, ContextRef, TargetAddress};
 pub use server::ProxyServer;
 
 // Re-export HTTP protocol types for convenience
-pub use protocols::http::{
-    HttpMethod, HttpProtocolHandler, HttpProtocolHandlerFactory, HttpRequest, HttpResponse,
-    HttpVersion,
-};
+pub use protocols::http::{HttpMethod, HttpRequest, HttpResponse, HttpVersion};
