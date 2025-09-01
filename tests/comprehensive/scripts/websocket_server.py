@@ -36,27 +36,50 @@ class WebSocketTestServer:
         
     def setup_routes(self):
         """Setup HTTP and WebSocket routes"""
-        self.app.router.add_get('/', self.handle_root)
+        # Specific routes first (order matters in aiohttp)
+        self.app.router.add_get('/', self.handle_root)  
         self.app.router.add_get('/info', self.handle_info)
         self.app.router.add_get('/health', self.handle_health)
         self.app.router.add_get('/ws', self.handle_websocket)
         
+        # HTTP test endpoints for chunked encoding and other tests (BEFORE catch-all)
+        self.app.router.add_get('/chunked', self.handle_chunked_get)
+        self.app.router.add_post('/chunked', self.handle_chunked_post)
+        self.app.router.add_post('/malformed_chunked', self.handle_malformed_chunked)
+        self.app.router.add_get('/large', self.handle_large)
+        self.app.router.add_get('/error', self.handle_error)
+        self.app.router.add_get('/malformed', self.handle_malformed)
+        self.app.router.add_post('/100-continue', self.handle_100_continue)
+        
+        # Catch-all for other test paths (MUST BE LAST)
+        self.app.router.add_route('*', '/{path:.*}', self.handle_generic)
+        
     async def handle_root(self, request):
         """Root endpoint with server information"""
         return web.json_response({
-            'message': 'WebSocket Test Server',
+            'message': 'WebSocket Test Server with HTTP Test Endpoints',
             'server': 'aiohttp + Python',
+            'capabilities': ['websocket', 'http_testing', 'chunked_encoding'],
             'endpoints': {
                 'http_root': '/',
                 'info': '/info',
                 'health': '/health',
-                'websocket': '/ws'
+                'websocket': '/ws',
+                'chunked_get': '/chunked',
+                'chunked_post': '/chunked',
+                'malformed_chunked': '/malformed_chunked', 
+                'large_response': '/large',
+                'error_response': '/error',
+                'malformed_response': '/malformed',
+                'continue_handling': '/100-continue'
             },
-            'websocket_url': f'ws://localhost:{self.port}/ws'
+            'websocket_url': f'ws://localhost:{self.port}/ws',
+            'description': 'Merged WebSocket server with HTTP test server functionality for comprehensive proxy testing'
         })
     
     async def handle_info(self, request):
         """Server information endpoint"""
+        logger.info(f"Info request from {request.remote}")
         return web.json_response({
             'server': 'WebSocket Test Server',
             'implementation': 'aiohttp + Python',
@@ -68,6 +91,7 @@ class WebSocketTestServer:
     
     async def handle_health(self, request):
         """Health check endpoint"""
+        logger.info(f"Health check from {request.remote}")
         return web.json_response({
             'status': 'healthy',
             'timestamp': datetime.now().isoformat()
@@ -170,6 +194,111 @@ class WebSocketTestServer:
                 'message': f'Unknown command: {command}',
                 'available_commands': ['ping', 'echo', 'close', 'error', 'info']
             }))
+    
+    # HTTP Test Server handlers (merged from servers.py)
+    
+    async def handle_chunked_get(self, request):
+        """Send a chunked response - for chunked encoding tests"""
+        logger.info("Serving chunked GET response")
+        
+        response = web.StreamResponse()
+        response.headers['Transfer-Encoding'] = 'chunked'
+        response.headers['Content-Type'] = 'text/plain'
+        await response.prepare(request)
+        
+        # Send data in chunks - aiohttp will handle the chunked encoding format
+        chunks = [b"Hello ", b"chunked ", b"world!"]
+        for chunk in chunks:
+            await response.write(chunk)
+        
+        await response.write_eof()
+        return response
+    
+    async def handle_chunked_post(self, request):
+        """Handle chunked POST request - echo back the data"""
+        logger.info("Handling chunked POST request")
+        
+        # Read the chunked request body
+        body = await request.read()
+        logger.info(f"Received {len(body)} bytes in chunked POST")
+        
+        return web.Response(
+            text=f"Received chunked POST: {len(body)} bytes",
+            status=200,
+            headers={'Content-Type': 'text/plain'}
+        )
+    
+    async def handle_malformed_chunked(self, request):
+        """Handle malformed chunked request - return error"""
+        logger.info("Handling malformed chunked request")
+        
+        # Read any body data
+        try:
+            body = await request.read()
+            logger.info(f"Received malformed chunked request: {len(body)} bytes")
+        except Exception as e:
+            logger.info(f"Error reading malformed chunked body: {e}")
+        
+        return web.Response(
+            text="Bad Request: Malformed chunked encoding",
+            status=400,
+            headers={'Content-Type': 'text/plain'}
+        )
+    
+    async def handle_large(self, request):
+        """Send a large response"""
+        logger.info(f"Serving large response for {request.method} {request.path}")
+        body = "X" * 100000  # 100KB
+        return web.Response(
+            text=body,
+            status=200,
+            headers={'Content-Type': 'text/plain'}
+        )
+    
+    async def handle_error(self, request):
+        """Send an error response"""
+        logger.info(f"Serving error response for {request.method} {request.path}")
+        return web.Response(
+            text="Server Error",
+            status=500,
+            headers={'Content-Type': 'text/plain'}
+        )
+    
+    async def handle_malformed(self, request):
+        """Send a malformed response"""
+        logger.info(f"Serving malformed response for {request.method} {request.path}")
+        # Return a response that's technically valid but unusual
+        return web.Response(
+            text="INVALID HTTP RESPONSE",
+            status=200,
+            headers={'Content-Type': 'text/plain', 'X-Malformed': 'true'}
+        )
+    
+    async def handle_100_continue(self, request):
+        """Handle 100-continue requests"""
+        logger.info("Handling 100-continue request")
+        
+        # aiohttp handles 100-continue automatically, so just return response
+        body = await request.read()
+        return web.Response(
+            text=f"Received body: {len(body)} bytes",
+            status=200,
+            headers={'Content-Type': 'text/plain'}
+        )
+    
+    async def handle_generic(self, request):
+        """Generic handler for any other paths"""
+        path = request.path
+        method = request.method
+        logger.info(f"Generic handler: {method} {path}")
+        
+        return web.json_response({
+            'message': 'Generic test endpoint',
+            'method': method,
+            'path': path,
+            'server': 'WebSocket Test Server with HTTP endpoints',
+            'timestamp': datetime.now().isoformat()
+        })
     
     async def start_server(self):
         """Start the server"""

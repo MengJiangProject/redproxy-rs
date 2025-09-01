@@ -11,9 +11,6 @@ import itertools
 from typing import Dict, List, Any
 from dataclasses import dataclass, field
 
-# Add the lib directory to path for TestLogger
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'lib'))
-from test_utils import TestLogger
 
 
 @dataclass
@@ -186,7 +183,7 @@ class MatrixGenerator:
             
         combinations = self.get_available_combinations(platform, features)
         
-        TestLogger.info(f"Generating matrix config for {len(combinations)} listener×connector combinations")
+        print(f"Generating matrix config for {len(combinations)} listener×connector combinations")
         
         config = {
             "listeners": [],
@@ -214,7 +211,7 @@ class MatrixGenerator:
             if all(f in features for f in c.required_features)
         ]
         
-        TestLogger.info(f"Found {len(valid_connectors)} valid connectors: {[c.name for c in valid_connectors]}")
+        print(f"Found {len(valid_connectors)} valid connectors: {[c.name for c in valid_connectors]}")
         
         for connector_config in valid_connectors:
             connector = {
@@ -225,10 +222,10 @@ class MatrixGenerator:
             connector.update(connector_config.config_template)
             
             config["connectors"].append(connector)
-            TestLogger.info(f"Added connector: {connector_config.name} ({connector_config.type})")
+            print(f"Added connector: {connector_config.name} ({connector_config.type})")
         
         # Generate listeners and rules for each combination
-        TestLogger.info(f"Generating {len(combinations)} listeners and rules...")
+        print(f"Generating {len(combinations)} listeners and rules...")
         
         for i, (listener_config, connector_config) in enumerate(combinations):
             port_offset = i * 10
@@ -236,7 +233,7 @@ class MatrixGenerator:
             # Create unique listener name
             listener_name = f"{listener_config.name}-{i}"
             
-            TestLogger.info(f"Creating listener {i+1}/{len(combinations)}: {listener_name} → {connector_config.name}")
+            print(f"Creating listener {i+1}/{len(combinations)}: {listener_name} → {connector_config.name}")
             
             # Create listener with unique port
             listener = {
@@ -313,17 +310,17 @@ class MatrixGenerator:
 
 def main():
     """Generate matrix configuration"""
-    TestLogger.info("=== RedProxy Matrix Configuration Generator ===")
+    print("=== RedProxy Matrix Configuration Generator ===")
     
     generator = MatrixGenerator()
     
     # Generate matrix config for Linux platform with all features
-    TestLogger.info("Generating matrix config for Linux platform...")
+    print("Generating matrix config for Linux platform...")
     config = generator.generate_matrix_config(platform="linux", features=["quic", "ssh"])
     
     # Save config
     config_path = generator.save_config(config)
-    TestLogger.info(f"Matrix configuration saved to: {config_path}")
+    print(f"Matrix configuration saved to: {config_path}")
     
     # Generate test matrix
     test_matrix = generator.generate_test_matrix(config)

@@ -4,6 +4,7 @@
 services:
   # Core test targets
   http-echo:
+    hostname: http-echo
     image: mendhak/http-https-echo:31
     environment:
       - HTTP_PORT=8080
@@ -11,11 +12,13 @@ services:
     networks: [test-net]
 
   target-server:
+    hostname: target-server
     image: nginx:alpine
     networks: [test-net]
 
   # WebSocket test server
   websocket-server:
+    hostname: websocket-server
     build:
       context: .
       dockerfile: Dockerfile.test-runner
@@ -33,6 +36,7 @@ services:
 
   # Upstream proxies for testing connectors
   http-proxy:
+    hostname: http-proxy
     image: ubuntu/squid:latest
     networks: [test-net]
     volumes:
@@ -41,6 +45,7 @@ services:
       test: ["NONE"]
 
   socks-proxy:
+    hostname: socks-proxy
     image: serjs/go-socks5-proxy:latest
     networks: [test-net]
     healthcheck:
@@ -48,6 +53,7 @@ services:
 
   # QUIC upstream proxy (another RedProxy instance with QUIC listener)
   quic-proxy:
+    hostname: quic-proxy
     build:
       context: ../..
       dockerfile: tests/comprehensive/Dockerfile
@@ -63,6 +69,7 @@ services:
 
   # SSH upstream proxy
   ssh-proxy:
+    hostname: ssh-proxy
     image: linuxserver/openssh-server:latest
     environment:
       - PUID=1000
@@ -71,12 +78,11 @@ services:
       - USER_PASSWORD=proxy123
       - USER_NAME=proxy
       - DOCKER_MODS=linuxserver/mods:openssh-server-ssh-tunnel
-    ports:
-      - "2222:2222"
     networks: [test-net]
 
   # Single RedProxy instance with static config
   redproxy:
+    hostname: redproxy
     build:
       context: ../..
       dockerfile: tests/comprehensive/Dockerfile
@@ -89,15 +95,18 @@ services:
     networks: [test-net]
     depends_on: [http-echo, target-server, websocket-server, http-proxy, socks-proxy, quic-proxy, ssh-proxy]
     healthcheck:
-      test: ["CMD", "curl", "-f", "--connect-timeout", "3", "--max-time", "5", "http://localhost:9090/api/metrics"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+        test: ["NONE"]
+    #   test: ["CMD", "curl", "-f", "--connect-timeout", "3", "--max-time", "5", "http://localhost:9090/api/metrics"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 3
     command: ["redproxy", "-c", "${REDPROXY_CONFIG:-/config/httpx.yaml}", "--log", "${REDPROXY_LOG_LEVEL:-info}"]
     environment:
       - RUST_LOG=info,tower_http=info,milu=warn,redproxy=trace,redproxy_rs::rules=info
+      - RUST_BACKTRACE=1
   # Test runner with environment-driven test selection
   test-runner:
+    hostname: test-runner
     build:
       context: .
       dockerfile: Dockerfile.test-runner
@@ -110,10 +119,8 @@ services:
       - ./logs:/logs:rw
       - ./reports:/reports:rw
     networks: [test-net]
-    depends_on:
-      redproxy:
-        condition: service_healthy
-
+    depends_on: 
+      - redproxy
 networks:
   test-net:
     driver: bridge
