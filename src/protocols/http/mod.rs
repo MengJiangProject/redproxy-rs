@@ -11,7 +11,8 @@ pub use http1::Http1Handler;
 /// HTTP version enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpVersion {
-    Http1,
+    Http1_0,
+    Http1_1,
     Http2,
     Http3,
 }
@@ -19,7 +20,8 @@ pub enum HttpVersion {
 impl fmt::Display for HttpVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            HttpVersion::Http1 => write!(f, "HTTP/1.1"),
+            HttpVersion::Http1_0 => write!(f, "HTTP/1.0"),
+            HttpVersion::Http1_1 => write!(f, "HTTP/1.1"),
             HttpVersion::Http2 => write!(f, "HTTP/2"),
             HttpVersion::Http3 => write!(f, "HTTP/3"),
         }
@@ -83,13 +85,13 @@ impl From<crate::common::http::HttpRequestV1> for HttpRequest {
         };
 
         let version = if request.version.starts_with("HTTP/1.") {
-            HttpVersion::Http1
+            HttpVersion::Http1_1
         } else if request.version == "HTTP/2" {
             HttpVersion::Http2
         } else if request.version == "HTTP/3" {
             HttpVersion::Http3
         } else {
-            HttpVersion::Http1 // Default fallback
+            HttpVersion::Http1_1 // Default fallback
         };
 
         let mut http_request = HttpRequest::new(method, request.resource, version);
@@ -129,17 +131,6 @@ impl HttpRequest {
         }
     }
 
-    pub fn add_header(&mut self, name: String, value: String) {
-        self.headers.push((name, value));
-    }
-
-    pub fn get_header(&self, name: &str) -> Option<&String> {
-        self.headers
-            .iter()
-            .find(|(n, _)| n.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v)
-    }
-
     pub fn is_connect(&self) -> bool {
         self.method == HttpMethod::Connect
     }
@@ -174,22 +165,52 @@ impl HttpResponse {
         }
     }
 
-    pub fn add_header(&mut self, name: String, value: String) {
-        self.headers.push((name, value));
-    }
-
-    pub fn get_header(&self, name: &str) -> Option<&String> {
-        self.headers
-            .iter()
-            .find(|(n, _)| n.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v)
-    }
-
     pub fn ok(version: HttpVersion) -> Self {
         Self::new(version, 200, "OK".to_string())
     }
 
     pub fn tunnel_established(version: HttpVersion) -> Self {
         Self::new(version, 200, "Connection established".to_string())
+    }
+}
+
+/// Trait for common HTTP message operations (requests and responses)
+pub trait HttpMessage {
+    fn get_headers_mut(&mut self) -> &mut Vec<(String, String)>;
+    fn get_headers(&self) -> &Vec<(String, String)>;
+    fn add_header(&mut self, name: String, value: String) {
+        self.get_headers_mut().push((name, value));
+    }
+    fn get_header(&self, name: &str) -> Option<&String> {
+        self.get_headers()
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v)
+    }
+    fn remove_header(&mut self, name: &str) {
+        self.get_headers_mut()
+            .retain(|(header_name, _)| !header_name.eq_ignore_ascii_case(name));
+    }
+    fn set_header(&mut self, name: String, value: String) {
+        self.remove_header(&name);
+        self.add_header(name, value);
+    }
+}
+
+impl HttpMessage for HttpRequest {
+    fn get_headers_mut(&mut self) -> &mut Vec<(String, String)> {
+        &mut self.headers
+    }
+    fn get_headers(&self) -> &Vec<(String, String)> {
+        &self.headers
+    }
+}
+
+impl HttpMessage for HttpResponse {
+    fn get_headers_mut(&mut self) -> &mut Vec<(String, String)> {
+        &mut self.headers
+    }
+    fn get_headers(&self) -> &Vec<(String, String)> {
+        &self.headers
     }
 }

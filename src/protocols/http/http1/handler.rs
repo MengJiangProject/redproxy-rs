@@ -1,12 +1,11 @@
 use anyhow::{Result, bail};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tracing::{debug, warn};
 
 use crate::context::{ContextManager, ContextRef, ContextRefOps, IOBufStream, TargetAddress};
-use crate::protocols::http::{HttpMethod, HttpRequest, HttpResponse, HttpVersion};
+use crate::protocols::http::{HttpMessage, HttpMethod, HttpRequest, HttpResponse, HttpVersion};
 
-use super::callback::{Http1ResponseCallback, HttpProxyMode};
-use super::stream::HttpClientStream;
+use super::callback::{Http1Callback, HttpProxyMode};
 
 /// HTTP/1.1 protocol handler
 #[derive(Debug, Default)]
@@ -38,8 +37,8 @@ impl Http1Handler {
 
         let uri = parts[1].to_string();
         let version = match parts[2] {
-            "HTTP/1.1" => HttpVersion::Http1,
-            "HTTP/1.0" => HttpVersion::Http1,
+            "HTTP/1.1" => HttpVersion::Http1_1,
+            "HTTP/1.0" => HttpVersion::Http1_0,
             other => bail!("Unsupported HTTP version: {}", other),
         };
 
@@ -53,8 +52,8 @@ impl Http1Handler {
         }
 
         let version = match parts[0] {
-            "HTTP/1.1" => HttpVersion::Http1,
-            "HTTP/1.0" => HttpVersion::Http1,
+            "HTTP/1.1" => HttpVersion::Http1_1,
+            "HTTP/1.0" => HttpVersion::Http1_0,
             other => bail!("Unsupported HTTP version: {}", other),
         };
 
@@ -71,31 +70,59 @@ impl Http1Handler {
         Ok((version, status_code, reason_phrase))
     }
 
-    async fn read_headers<T>(stream: &mut T) -> Result<Vec<(String, String)>>
-    where
-        T: AsyncBufReadExt + Unpin,
-    {
+    async fn read_headers(stream: &mut crate::io::IOBufStream) -> Result<Vec<(String, String)>> {
+        const MAX_HEADER_LINE_SIZE: usize = 16384; // 16KB limit per header line
+        const MAX_TOTAL_HEADERS_SIZE: usize = 65536; // 64KB total limit
+        const MAX_HEADERS_COUNT: usize = 100; // Maximum number of headers
+
         let mut headers = Vec::new();
-        let mut line = String::new();
+        let mut total_size = 0;
 
         loop {
-            line.clear();
-            let bytes_read = stream.read_line(&mut line).await?;
+            let mut line = String::new();
+
+            // Use the new limited read method from BufferedStream
+            let bytes_read = stream
+                .read_line_limited(&mut line, MAX_HEADER_LINE_SIZE)
+                .await
+                .map_err(|e| anyhow::anyhow!("Header line too large: {}", e))?;
+
             if bytes_read == 0 {
-                bail!("Unexpected end of stream");
+                break; // EOF
             }
 
-            let line = line.trim_end();
-            if line.is_empty() {
+            total_size += line.len();
+
+            // Check total size
+            if total_size > MAX_TOTAL_HEADERS_SIZE {
+                bail!(
+                    "Request headers too large: {} bytes (max {} bytes)",
+                    total_size,
+                    MAX_TOTAL_HEADERS_SIZE
+                );
+            }
+
+            // Check header count
+            if headers.len() >= MAX_HEADERS_COUNT {
+                bail!(
+                    "Too many headers: {} (max {})",
+                    headers.len() + 1,
+                    MAX_HEADERS_COUNT
+                );
+            }
+
+            let line_trimmed = line.trim_end();
+
+            if line_trimmed.is_empty() {
                 break; // End of headers
             }
 
-            if let Some(colon_pos) = line.find(':') {
-                let name = line[..colon_pos].trim().to_string();
-                let value = line[colon_pos + 1..].trim().to_string();
+            if let Some(colon_pos) = line_trimmed.find(':') {
+                let name = line_trimmed[..colon_pos].trim().to_string();
+                let value = line_trimmed[colon_pos + 1..].trim().to_string();
                 headers.push((name, value));
             } else {
-                bail!("Invalid header line: {}", line);
+                bail!("Invalid header line: {}", line_trimmed);
             }
         }
 
@@ -110,171 +137,119 @@ impl Http1Handler {
         listener_name: String,
         source: std::net::SocketAddr,
     ) -> Result<()> {
-        let mut current_stream = stream;
+        // Convert raw stream to IOBufStream immediately and use throughout
+        let mut current_stream = crate::context::make_buffered_stream(stream);
 
         // HTTP/1.1 keep-alive loop: handle multiple requests on same connection
         loop {
-            // 1. Create temporary buffered stream for reading this request
-            let mut temp_buffered = BufReader::new(BufWriter::new(current_stream));
-
-            // 2. Read next request from connection with error handling
-            let request = match self.read_request(&mut temp_buffered).await {
+            // Read request with error handling - current_stream is already buffered
+            let request = match self.read_request(&mut current_stream).await {
                 Ok(Some(req)) => req,
                 Ok(None) => {
-                    debug!("HTTP/1.1: Client closed connection");
-                    break; // Connection closed by client
+                    debug!("HTTP/1.1: Client closed connection gracefully");
+                    break;
                 }
                 Err(e) => {
-                    // HTTP parsing error - send 400 Bad Request response
                     warn!("HTTP/1.1: Request parsing error: {}", e);
-                    
-                    // Extract stream to send error response
-                    let extracted_stream = {
-                        let mut buf_writer = temp_buffered.into_inner();
-                        if let Err(flush_err) = buf_writer.flush().await {
-                            warn!("HTTP/1.1: Failed to flush before sending error response: {}", flush_err);
-                        }
-                        buf_writer.into_inner()
-                    };
-                    
-                    // Send 400 Bad Request response
-                    let mut stream_for_error = crate::context::make_buffered_stream(extracted_stream);
-                    let error_response = crate::protocols::http::HttpResponse::new(
-                        crate::protocols::http::HttpVersion::Http1,
-                        400,
-                        "Bad Request".to_string()
-                    );
-                    
-                    if let Err(send_err) = self.send_response(&mut stream_for_error, &error_response).await {
-                        warn!("HTTP/1.1: Failed to send error response: {}", send_err);
-                    }
-                    
-                    break; // Close connection after sending error response
+                    self.send_error_response_and_close(&mut current_stream, 400, "Bad Request")
+                        .await;
+                    break;
                 }
             };
 
             debug!(
-                "HTTP/1.1: Received request {} {} on keep-alive connection",
+                "HTTP/1.1: Processing request {} {}",
                 request.method, request.uri
             );
 
-            // 3. Check if client wants keep-alive
-            let should_keep_alive = self.should_keep_alive(&request);
+            // Determine proxy mode
+            let proxy_mode = if request.is_connect() {
+                HttpProxyMode::Connect
+            } else {
+                HttpProxyMode::Forward
+            };
 
-            // 4. Create context for THIS REQUEST (not connection!)
+            // Validate request before processing
+            if proxy_mode == HttpProxyMode::Forward
+                && let Err(e) = self.validate_forward_request(&request)
+            {
+                warn!("HTTP/1.1: Request validation failed: {}", e);
+                self.send_error_response_and_close(&mut current_stream, 400, "Bad Request")
+                    .await;
+                break;
+            }
+
+            // Extract target address
+            let target = match self.extract_target(&request) {
+                Ok(target) => target,
+                Err(e) => {
+                    warn!("HTTP/1.1: Failed to extract target: {}", e);
+                    self.send_error_response_and_close(&mut current_stream, 400, "Bad Request")
+                        .await;
+                    break;
+                }
+            };
+
+            // Create context for this request
             let ctx = contexts.create_context(listener_name.clone(), source).await;
 
-            // 5. Handle this single request
-            if request.is_connect() {
-                // CONNECT tunneling: pass buffered stream directly and end keep-alive loop
-                self.handle_connect_request(ctx, request, temp_buffered, &queue)
-                    .await?;
-                break; // End keep-alive loop - connection is now tunneled
-            } else {
-                // Forward proxy: extract stream and use oneshot channel for ownership transfer
-                let (completion_tx, completion_rx) =
-                    tokio::sync::oneshot::channel::<Box<dyn crate::context::IOStream>>();
+            // Create completion channel for keep-alive management
+            let (completion_tx, completion_rx) = tokio::sync::oneshot::channel();
+            let callback = Http1Callback::new(completion_tx, proxy_mode);
 
-                // Extract any buffered body data before unwrapping the BufReader
-                let buffered_body_data = {
-                    let buffer = temp_buffered.buffer();
-                    if buffer.is_empty() {
-                        None
-                    } else {
-                        Some(buffer.to_vec())
-                    }
-                };
+            // Set context data with the buffered stream directly
+            {
+                let mut ctx_guard = ctx.write().await;
+                ctx_guard.set_http_request(request);
+                ctx_guard.set_target(target);
+                ctx_guard.set_client_stream(current_stream);
+                ctx_guard.set_feature(crate::context::Feature::TcpForward);
+                ctx_guard.set_callback(callback);
+            }
 
-                // Validate forward proxy request before creating wrapper
-                if let Err(e) = self.validate_forward_request(&request) {
-                    warn!("HTTP/1.1: Forward request validation failed: {}", e);
-                    
-                    // Send error response using the extracted stream directly
-                    let extracted_stream = {
-                        let mut buf_writer = temp_buffered.into_inner();
-                        buf_writer.flush().await?;
-                        buf_writer.into_inner()
-                    };
-                    
-                    let mut error_stream = crate::context::make_buffered_stream(extracted_stream);
-                    let error_response = crate::protocols::http::HttpResponse::new(
-                        crate::protocols::http::HttpVersion::Http1,
-                        400,
-                        "Bad Request".to_string()
-                    );
-                    
-                    if let Err(send_err) = self.send_response(&mut error_stream, &error_response).await {
-                        warn!("HTTP/1.1: Failed to send error response: {}", send_err);
-                    }
-                    
-                    break; // Close connection after error response
+            // Queue for rules engine processing
+            if let Err(e) = ctx.enqueue(&queue).await {
+                warn!("HTTP/1.1: Failed to enqueue context: {}", e);
+                break;
+            }
+
+            // Wait for completion signal
+            match completion_rx.await {
+                Ok(Some(returned_stream)) => {
+                    debug!("HTTP/1.1: Request completed, stream returned for keep-alive");
+                    current_stream = returned_stream; // Reuse IOBufStream for next request
+                    continue; // Continue keep-alive loop
                 }
-
-                // Extract the original stream from buffered wrapper
-                let extracted_stream = {
-                    // Flush any pending writes
-                    let mut buf_writer = temp_buffered.into_inner();
-                    buf_writer.flush().await?;
-                    buf_writer.into_inner()
-                };
-
-                // Create wrapper that will return the stream via oneshot channel
-                let mut wrapper = HttpClientStream::new(
-                    extracted_stream,
-                    Box::new(move |stream| {
-                        let _ = completion_tx.send(stream); // Send the extracted stream back
-                    }),
-                );
-
-                // Pre-populate the wrapper with any buffered body data
-                if let Some(body_data) = buffered_body_data {
-                    debug!("HTTP/1.1: Pre-populating client stream with {} bytes of buffered body data", body_data.len());
-                    wrapper.pre_populate_read_buffer(&body_data);
+                Ok(None) => {
+                    debug!("HTTP/1.1: Request completed, no keep-alive (tunnel/error/close)");
+                    break; // End keep-alive loop
                 }
-
-                // Create buffered stream from wrapper for context
-                let wrapped_client_stream = crate::context::make_buffered_stream(wrapper);
-
-                // Handle forward request - validation already done above
-                self.handle_forward_request(ctx, request, wrapped_client_stream, &queue)
-                    .await?;
-
-                // Wait for response completion and stream return before processing next request
-                match completion_rx.await {
-                    Ok(returned_stream) => {
-                        debug!("HTTP/1.1: Request completed successfully");
-                        current_stream = returned_stream; // Get stream back for next keep-alive request
-                    }
-                    Err(_) => {
-                        warn!("HTTP/1.1: Request completion notification failed");
-                        break; // Connection likely broken
-                    }
-                }
-
-                if !should_keep_alive {
-                    debug!("HTTP/1.1: Connection close requested, ending keep-alive loop");
+                Err(_) => {
+                    debug!("HTTP/1.1: Ending keep-alive loop due to channel error");
                     break;
                 }
             }
-            // Loop continues with same TCP connection for next request
         }
 
         debug!("HTTP/1.1: Connection handling completed for {}", source);
         Ok(())
     }
 
-    pub async fn read_request<T>(&self, stream: &mut T) -> Result<Option<HttpRequest>>
-    where
-        T: AsyncBufReadExt + Unpin,
-    {
+    pub async fn read_request(
+        &self,
+        stream: &mut crate::io::IOBufStream,
+    ) -> Result<Option<HttpRequest>> {
         let mut line = String::new();
 
-        // Read request line
-        let bytes_read = stream.read_line(&mut line).await?;
+        // Read request line with the same size limit as headers
+        let bytes_read = stream
+            .read_line_limited(&mut line, 16384)
+            .await
+            .map_err(|e| anyhow::anyhow!("Request line too large: {}", e))?;
         if bytes_read == 0 {
             return Ok(None); // Connection closed
         }
- 
+
         let line = line.trim_end();
         let (method, uri, version) = Self::parse_request_line(line).await?;
 
@@ -374,7 +349,11 @@ impl Http1Handler {
         } else {
             // SOCKS/Other → HTTP: create CONNECT request from target
             let target = ctx_read.target();
-            HttpRequest::new(HttpMethod::Connect, target.to_string(), HttpVersion::Http1)
+            HttpRequest::new(
+                HttpMethod::Connect,
+                target.to_string(),
+                HttpVersion::Http1_1,
+            )
         };
 
         drop(ctx_read); // Release the lock
@@ -397,16 +376,73 @@ impl Http1Handler {
         Ok(())
     }
 
-    /// Check if client wants keep-alive connection
-    fn should_keep_alive(&self, request: &HttpRequest) -> bool {
-        match request.get_header("Connection") {
-            Some(value) if value.eq_ignore_ascii_case("close") => false,
-            Some(value) if value.eq_ignore_ascii_case("keep-alive") => true,
-            None => {
-                // HTTP/1.1 defaults to keep-alive, HTTP/1.0 defaults to close
-                matches!(request.version, HttpVersion::Http1)
+    /// Send error response and close connection
+    async fn send_error_response_and_close(
+        &self,
+        stream: &mut IOBufStream,
+        status_code: u16,
+        status_text: &str,
+    ) {
+        let error_response =
+            HttpResponse::new(HttpVersion::Http1_1, status_code, status_text.to_string());
+
+        if let Err(e) = self.send_response(stream, &error_response).await {
+            warn!("HTTP/1.1: Failed to send error response: {}", e);
+        }
+    }
+
+    /// Extract target address from HTTP request
+    fn extract_target(&self, request: &HttpRequest) -> Result<TargetAddress> {
+        if request.is_connect() {
+            // CONNECT request: target is in URI (host:port format)
+            if let Some(colon_pos) = request.uri.find(':') {
+                let host = &request.uri[..colon_pos];
+                let port_str = &request.uri[colon_pos + 1..];
+                let port: u16 = port_str.parse().map_err(|e| {
+                    anyhow::anyhow!("Failed to parse CONNECT port '{}': {}", port_str, e)
+                })?;
+                Ok(TargetAddress::DomainPort(host.to_string(), port))
+            } else {
+                Err(anyhow::anyhow!(
+                    "Invalid CONNECT target format '{}', expected 'host:port'",
+                    request.uri
+                ))
             }
-            _ => false,
+        } else {
+            // Forward proxy request
+            if request.uri.starts_with("http://") || request.uri.starts_with("https://") {
+                // Absolute URI
+                let url = url::Url::parse(&request.uri).map_err(|e| {
+                    anyhow::anyhow!("Failed to parse resource URI '{}': {}", request.uri, e)
+                })?;
+                let host = url.host_str().ok_or_else(|| {
+                    anyhow::anyhow!("Missing host in resource URI '{}'", request.uri)
+                })?;
+                let port = url.port_or_known_default().ok_or_else(|| {
+                    anyhow::anyhow!("Missing port in resource URI '{}'", request.uri)
+                })?;
+                Ok(TargetAddress::DomainPort(host.to_string(), port))
+            } else {
+                // Relative path: use Host header
+                let host_header = request.get_header("Host").ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Missing Host header for relative resource path '{}'",
+                        request.uri
+                    )
+                })?;
+
+                // Add default port if missing
+                let target_with_port = if host_header.contains(':') {
+                    host_header.clone()
+                } else {
+                    // Default to port 80 for HTTP requests
+                    format!("{}:80", host_header)
+                };
+
+                target_with_port.parse().map_err(|e| {
+                    anyhow::anyhow!("Failed to parse Host header '{}': {}", host_header, e)
+                })
+            }
         }
     }
 
@@ -418,13 +454,19 @@ impl Http1Handler {
             let url = url::Url::parse(&request.uri).map_err(|e| {
                 anyhow::anyhow!("Failed to parse resource URI '{}': {}", request.uri, e)
             })?;
-            
+
             if url.host_str().is_none() {
-                return Err(anyhow::anyhow!("Missing host in resource URI '{}'", request.uri));
+                return Err(anyhow::anyhow!(
+                    "Missing host in resource URI '{}'",
+                    request.uri
+                ));
             }
-            
+
             if url.port_or_known_default().is_none() {
-                return Err(anyhow::anyhow!("Missing port in resource URI '{}'", request.uri));
+                return Err(anyhow::anyhow!(
+                    "Missing port in resource URI '{}'",
+                    request.uri
+                ));
             }
         } else {
             // Relative path: validate Host header
@@ -434,119 +476,28 @@ impl Http1Handler {
                     request.uri
                 )
             })?;
-            
-            // Validate Host header format
-            host_header.parse::<crate::context::TargetAddress>().map_err(|e| {
-                anyhow::anyhow!("Failed to parse Host header '{}': {}", host_header, e)
-            })?;
-        }
-        
-        Ok(())
-    }
 
-    /// Handle CONNECT tunneling request
-    async fn handle_connect_request(
-        &self,
-        ctx: ContextRef,
-        request: HttpRequest,
-        stream: IOBufStream,
-        queue: &tokio::sync::mpsc::Sender<ContextRef>,
-    ) -> Result<()> {
-        // Extract target address from CONNECT request
-        let target_addr = if let Some(colon_pos) = request.uri.find(':') {
-            let host = &request.uri[..colon_pos];
-            let port_str = &request.uri[colon_pos + 1..];
-            let port: u16 = port_str.parse().map_err(|e| {
-                anyhow::anyhow!("Failed to parse CONNECT port '{}': {}", port_str, e)
-            })?;
-            TargetAddress::DomainPort(host.to_string(), port)
-        } else {
-            return Err(anyhow::anyhow!(
-                "Invalid CONNECT target format '{}', expected 'host:port'",
-                request.uri
-            ));
-        };
-
-        // Create dummy callback (no completion needed for CONNECT)
-        let (dummy_tx, _dummy_rx) = tokio::sync::oneshot::channel();
-        let callback = Http1ResponseCallback::new(dummy_tx, HttpProxyMode::Connect);
-
-        // Store request, target address, client stream, and callback in context
-        {
-            let mut ctx_guard = ctx.write().await;
-            ctx_guard.set_http_request(request);
-            ctx_guard.set_target(target_addr);
-            ctx_guard.set_client_stream(stream);
-            ctx_guard.set_feature(crate::context::Feature::TcpForward);
-            ctx_guard.set_callback(callback);
-        }
-
-        // Queue for rules engine processing
-        if let Err(e) = ctx.enqueue(queue).await {
-            warn!("HTTP/1.1: Failed to enqueue CONNECT context: {}", e);
-            return Err(e);
-        }
-
-        Ok(())
-    }
-
-    /// Handle HTTP forward proxy request
-    async fn handle_forward_request(
-        &self,
-        ctx: ContextRef,
-        request: HttpRequest,
-        wrapped_client_stream: IOBufStream,
-        queue: &tokio::sync::mpsc::Sender<ContextRef>,
-    ) -> Result<()> {
-        // Extract target address from forward proxy request
-        let target_addr =
-            if request.uri.starts_with("http://") || request.uri.starts_with("https://") {
-                // Absolute URI (e.g., "http://example.com/path")
-                let url = url::Url::parse(&request.uri).map_err(|e| {
-                    anyhow::anyhow!("Failed to parse resource URI '{}': {}", request.uri, e)
-                })?;
-                let host = url.host_str().ok_or_else(|| {
-                    anyhow::anyhow!("Missing host in resource URI '{}'", request.uri)
-                })?;
-                let port = url.port_or_known_default().ok_or_else(|| {
-                    anyhow::anyhow!("Missing port in resource URI '{}'", request.uri)
-                })?;
-                TargetAddress::DomainPort(host.to_string(), port)
+            // Validate Host header format - add default port if missing
+            let target_with_port = if host_header.contains(':') {
+                host_header.clone()
             } else {
-                // Relative path: use Host header
-                let host_header = request.get_header("Host").ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Missing Host header for relative resource path '{}'",
-                        request.uri
-                    )
-                })?;
-                host_header.parse().map_err(|e| {
-                    anyhow::anyhow!("Failed to parse Host header '{}': {}", host_header, e)
-                })?
+                // Default to port 80 for HTTP requests
+                format!("{}:80", host_header)
             };
 
-        // Create dummy callback (completion handled by wrapper)
-        let (dummy_tx, _dummy_rx) = tokio::sync::oneshot::channel();
-        let callback = Http1ResponseCallback::new(dummy_tx, HttpProxyMode::Forward);
-
-        // Store request, target address, wrapped client stream, and callback in context
-        {
-            let mut ctx_guard = ctx.write().await;
-            ctx_guard.set_http_request(request);
-            ctx_guard.set_target(target_addr);
-            ctx_guard.set_client_stream(wrapped_client_stream);
-            ctx_guard.set_feature(crate::context::Feature::TcpForward);
-            ctx_guard.set_callback(callback);
-        }
-
-        // Queue for rules engine processing
-        if let Err(e) = ctx.enqueue(queue).await {
-            warn!("HTTP/1.1: Failed to enqueue forward context: {}", e);
-            return Err(e);
+            target_with_port
+                .parse::<crate::context::TargetAddress>()
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to parse Host header '{}': {}", host_header, e)
+                })?;
         }
 
         Ok(())
     }
+
+    // This method is no longer needed - unified handling in handle_listener_connection
+
+    // This method is no longer needed - unified handling in handle_listener_connection
 }
 
 #[cfg(test)]
@@ -568,14 +519,14 @@ mod tests {
             .unwrap();
         assert_eq!(result.0, HttpMethod::Get);
         assert_eq!(result.1, "/path");
-        assert_eq!(result.2, HttpVersion::Http1);
+        assert_eq!(result.2, HttpVersion::Http1_1);
 
         let result = Http1Handler::parse_request_line("CONNECT example.com:443 HTTP/1.1")
             .await
             .unwrap();
         assert_eq!(result.0, HttpMethod::Connect);
         assert_eq!(result.1, "example.com:443");
-        assert_eq!(result.2, HttpVersion::Http1);
+        assert_eq!(result.2, HttpVersion::Http1_1);
 
         // Test invalid request line
         assert!(Http1Handler::parse_request_line("INVALID").await.is_err());
@@ -586,14 +537,14 @@ mod tests {
         let result = Http1Handler::parse_status_line("HTTP/1.1 200 OK")
             .await
             .unwrap();
-        assert_eq!(result.0, HttpVersion::Http1);
+        assert_eq!(result.0, HttpVersion::Http1_1);
         assert_eq!(result.1, 200);
         assert_eq!(result.2, "OK");
 
         let result = Http1Handler::parse_status_line("HTTP/1.1 404 Not Found")
             .await
             .unwrap();
-        assert_eq!(result.0, HttpVersion::Http1);
+        assert_eq!(result.0, HttpVersion::Http1_1);
         assert_eq!(result.1, 404);
         assert_eq!(result.2, "Not Found");
 
@@ -627,7 +578,7 @@ mod tests {
         let request = handler.read_request(&mut stream).await.unwrap().unwrap();
         assert_eq!(request.method, HttpMethod::Get);
         assert_eq!(request.uri, "/test");
-        assert_eq!(request.version, HttpVersion::Http1);
+        assert_eq!(request.version, HttpVersion::Http1_1);
         assert_eq!(request.get_header("Host").unwrap(), "example.com");
         assert_eq!(request.get_header("Connection").unwrap(), "keep-alive");
     }
@@ -639,30 +590,11 @@ mod tests {
         let handler = Http1Handler::new();
 
         let response = handler.read_response(&mut stream).await.unwrap();
-        assert_eq!(response.version, HttpVersion::Http1);
+        assert_eq!(response.version, HttpVersion::Http1_1);
         assert_eq!(response.status_code, 200);
         assert_eq!(response.reason_phrase, "OK");
         assert_eq!(response.get_header("Content-Type").unwrap(), "text/html");
         assert_eq!(response.get_header("Content-Length").unwrap(), "5");
-    }
-
-    #[test]
-    fn test_should_keep_alive() {
-        let handler = Http1Handler::new();
-
-        // Test explicit close
-        let mut request = HttpRequest::new(HttpMethod::Get, "/".to_string(), HttpVersion::Http1);
-        request.add_header("Connection".to_string(), "close".to_string());
-        assert!(!handler.should_keep_alive(&request));
-
-        // Test explicit keep-alive
-        let mut request = HttpRequest::new(HttpMethod::Get, "/".to_string(), HttpVersion::Http1);
-        request.add_header("Connection".to_string(), "keep-alive".to_string());
-        assert!(handler.should_keep_alive(&request));
-
-        // Test HTTP/1.1 default (should be keep-alive)
-        let request = HttpRequest::new(HttpMethod::Get, "/".to_string(), HttpVersion::Http1);
-        assert!(handler.should_keep_alive(&request));
     }
 
     #[test(tokio::test)]
@@ -679,14 +611,14 @@ mod tests {
     async fn test_invalid_http_version_error_handling() {
         // Test that invalid HTTP version triggers proper error response
         let handler = Http1Handler::new();
-        
+
         // Test with invalid HTTP version
         let invalid_request = "GET /test HTTP/999.999\r\nHost: example.com\r\n\r\n";
         let mut stream = make_test_stream(invalid_request.as_bytes());
-        
+
         let result = handler.read_request(&mut stream).await;
         assert!(result.is_err());
-        
+
         // Verify the error message contains information about unsupported HTTP version
         let error_msg = result.err().unwrap().to_string();
         assert!(error_msg.contains("Unsupported HTTP version"));
@@ -697,14 +629,14 @@ mod tests {
     async fn test_invalid_request_line_error_handling() {
         // Test that malformed request line triggers proper error response
         let handler = Http1Handler::new();
-        
+
         // Test with invalid request line (missing parts)
         let invalid_request = "INVALID REQUEST\r\nHost: example.com\r\n\r\n";
         let mut stream = make_test_stream(invalid_request.as_bytes());
-        
+
         let result = handler.read_request(&mut stream).await;
         assert!(result.is_err());
-        
+
         // Verify the error message contains information about invalid request line
         let error_msg = result.err().unwrap().to_string();
         assert!(error_msg.contains("Invalid request line"));

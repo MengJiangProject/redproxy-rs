@@ -16,7 +16,7 @@ use crate::{
     config::Timeouts,
     context::{ContextManager, ContextRef, IOStream},
     listeners::Listener,
-    protocols::http::{Http1Handler},
+    protocols::http::Http1Handler,
 };
 use std::ops::{Deref, DerefMut};
 
@@ -400,7 +400,7 @@ impl<S: SocketOps + Send + Sync + 'static> HttpxListener<S> {
 
         // Delegate entire connection lifecycle to the appropriate protocol handler
         match protocol_choice {
-            HttpVersion::Http1 => {
+            HttpVersion::Http1_1 | HttpVersion::Http1_0 => {
                 let handler = Http1Handler::new();
                 handler
                     .handle_listener_connection(stream, contexts, queue, self.name.clone(), source)
@@ -431,7 +431,7 @@ pub fn negotiate_http_protocol(alpn_result: Option<&str>) -> HttpVersion {
         }
         Some("http/1.1") | Some("http/1.0") => {
             tracing::debug!("ALPN negotiated HTTP/1.1: {:?}", alpn_result);
-            HttpVersion::Http1
+            HttpVersion::Http1_1
         }
         Some("h3") | Some("h3-29") => {
             tracing::debug!("ALPN negotiated HTTP/3: {:?}", alpn_result);
@@ -439,12 +439,12 @@ pub fn negotiate_http_protocol(alpn_result: Option<&str>) -> HttpVersion {
         }
         Some(other) => {
             tracing::warn!("Unknown ALPN protocol: {}, falling back to HTTP/1.1", other);
-            HttpVersion::Http1
+            HttpVersion::Http1_1
         }
         None => {
             // Fallback to HTTP/1.1 when no ALPN
             tracing::debug!("No ALPN protocol negotiated, falling back to HTTP/1.1");
-            HttpVersion::Http1
+            HttpVersion::Http1_1
         }
     }
 }
@@ -564,11 +564,11 @@ mod tests {
         // Test HTTP/1.1 negotiation
         assert_eq!(
             negotiate_http_protocol(Some("http/1.1")),
-            HttpVersion::Http1
+            HttpVersion::Http1_1
         );
         assert_eq!(
             negotiate_http_protocol(Some("http/1.0")),
-            HttpVersion::Http1
+            HttpVersion::Http1_1
         );
 
         // Test HTTP/2 negotiation
@@ -580,8 +580,11 @@ mod tests {
         assert_eq!(negotiate_http_protocol(Some("h3-29")), HttpVersion::Http3);
 
         // Test fallback behavior
-        assert_eq!(negotiate_http_protocol(Some("unknown")), HttpVersion::Http1);
-        assert_eq!(negotiate_http_protocol(None), HttpVersion::Http1);
+        assert_eq!(
+            negotiate_http_protocol(Some("unknown")),
+            HttpVersion::Http1_1
+        );
+        assert_eq!(negotiate_http_protocol(None), HttpVersion::Http1_1);
     }
 
     #[test]
@@ -596,10 +599,10 @@ mod tests {
 
         // Test ALPN negotiation returns correct protocol
         let protocol = negotiate_http_protocol(Some("http/1.1"));
-        matches!(protocol, HttpVersion::Http1);
+        matches!(protocol, HttpVersion::Http1_1);
 
         let protocol = negotiate_http_protocol(None); // No ALPN should default to HTTP/1.1
-        matches!(protocol, HttpVersion::Http1);
+        matches!(protocol, HttpVersion::Http1_1);
     }
 
     #[test]
@@ -626,11 +629,11 @@ mod tests {
         // Test that HTTP/1.1 ALPN protocols work correctly
         assert_eq!(
             negotiate_http_protocol(Some("http/1.1")),
-            HttpVersion::Http1
+            HttpVersion::Http1_1
         );
         assert_eq!(
             negotiate_http_protocol(Some("http/1.0")),
-            HttpVersion::Http1
+            HttpVersion::Http1_1
         );
 
         // Test precedence - HTTP/2 should take precedence over HTTP/1.1 when both present
@@ -639,9 +642,9 @@ mod tests {
         // Test fallback to HTTP/1.1
         assert_eq!(
             negotiate_http_protocol(Some("unknown-protocol")),
-            HttpVersion::Http1
+            HttpVersion::Http1_1
         );
-        assert_eq!(negotiate_http_protocol(None), HttpVersion::Http1);
+        assert_eq!(negotiate_http_protocol(None), HttpVersion::Http1_1);
     }
 
     #[test(tokio::test)]
@@ -737,7 +740,7 @@ mod e2e_tests {
     use crate::{
         common::socket_ops::test_utils::{MockSocketOps, StreamScript},
         context::ContextManager,
-        protocols::http::HttpVersion,
+        protocols::http::{HttpMessage, HttpVersion},
     };
     use std::sync::Arc;
     use test_log::test;
@@ -931,11 +934,11 @@ mod e2e_tests {
         // Test ALPN protocol negotiation logic
         assert_eq!(
             negotiate_http_protocol(Some("http/1.1")),
-            HttpVersion::Http1
+            HttpVersion::Http1_1
         );
         assert_eq!(
             negotiate_http_protocol(Some("http/1.0")),
-            HttpVersion::Http1
+            HttpVersion::Http1_1
         );
         assert_eq!(negotiate_http_protocol(Some("h2")), HttpVersion::Http2);
         assert_eq!(negotiate_http_protocol(Some("h2c")), HttpVersion::Http2);
@@ -943,8 +946,11 @@ mod e2e_tests {
         assert_eq!(negotiate_http_protocol(Some("h3-29")), HttpVersion::Http3);
 
         // Test fallback behavior
-        assert_eq!(negotiate_http_protocol(Some("unknown")), HttpVersion::Http1);
-        assert_eq!(negotiate_http_protocol(None), HttpVersion::Http1);
+        assert_eq!(
+            negotiate_http_protocol(Some("unknown")),
+            HttpVersion::Http1_1
+        );
+        assert_eq!(negotiate_http_protocol(None), HttpVersion::Http1_1);
     }
 
     /// Test malformed request handling data flow
@@ -953,7 +959,8 @@ mod e2e_tests {
         let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
             StreamScript::new()
                 .read(b"INVALID REQUEST WITHOUT PROPER FORMAT\r\n\r\n")
-                .build() // No write expected since parsing will fail before response
+                .write(b"HTTP/1.1 400 Bad Request\r\n\r\n") // Error response expected
+                .build()
         }));
 
         let config = HttpxListenerConfig {
@@ -1000,7 +1007,8 @@ mod e2e_tests {
                 // Also acceptable - timed out trying to parse malformed request
             }
             Ok(Ok(())) => {
-                panic!("Malformed request should not succeed");
+                // This is now the correct behavior - malformed requests get proper error responses
+                // and the connection handling succeeds (by sending 400 Bad Request)
             }
         }
     }
