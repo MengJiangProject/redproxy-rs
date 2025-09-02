@@ -4,10 +4,6 @@ pub mod http1;
 //pub mod http2;
 //pub mod http3;
 
-pub use http1::Http1Handler;
-//pub use http2::Http2Handler;
-//pub use http3::Http3Handler;
-
 /// HTTP version enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpVersion {
