@@ -1,8 +1,10 @@
-use std::net::{IpAddr, SocketAddr};
-
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
+use std::io;
+use std::net::{IpAddr, SocketAddr};
 use tokio::net::{TcpListener as TokioTcpListener, TcpSocket, UdpSocket, lookup_host};
+use tokio::time::Duration;
+use tracing::{error, warn};
 
 use crate::common::tls::{TlsClientConfig, TlsServerConfig};
 use crate::common::udp::udp_socket;
@@ -23,7 +25,7 @@ pub fn set_keepalive(stream: &tokio::net::TcpStream) -> anyhow::Result<()> {
 }
 
 #[async_trait]
-pub trait AppTcpListener: Send + Sync {
+pub trait TcpListener: Send + Sync {
     async fn accept(&self) -> Result<(Box<dyn IOStream>, SocketAddr)>;
 }
 
@@ -34,7 +36,7 @@ pub trait SocketOps: Send + Sync {
     async fn resolve(&self, host: &str) -> Result<Vec<IpAddr>>;
 
     // TCP
-    async fn tcp_listen(&self, local: SocketAddr) -> Result<Box<dyn AppTcpListener>>;
+    async fn tcp_listen(&self, local: SocketAddr) -> Result<Box<dyn TcpListener>>;
     async fn tcp_connect(
         &self,
         remote: SocketAddr,
@@ -70,10 +72,49 @@ pub struct RealTcpListener {
 }
 
 #[async_trait]
-impl AppTcpListener for RealTcpListener {
+impl TcpListener for RealTcpListener {
     async fn accept(&self) -> Result<(Box<dyn IOStream>, SocketAddr)> {
-        let (stream, addr) = self.listener.accept().await?;
-        Ok((Box::new(stream), addr))
+        loop {
+            match self.listener.accept().await {
+                Ok((stream, addr)) => {
+                    return Ok((Box::new(stream), addr));
+                }
+                Err(e) => {
+                    match e.kind() {
+                        // Transient errors - retry with minimal backoff
+                        io::ErrorKind::WouldBlock
+                        | io::ErrorKind::ConnectionAborted
+                        | io::ErrorKind::Interrupted => {
+                            warn!("Transient accept error: {}, retrying", e);
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            continue;
+                        }
+
+                        // Resource exhaustion - longer backoff before retry
+                        io::ErrorKind::OutOfMemory => {
+                            error!("Resource exhaustion during accept: {}, backing off", e);
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            continue;
+                        }
+
+                        // Fatal errors - bubble up to application
+                        io::ErrorKind::PermissionDenied
+                        | io::ErrorKind::InvalidInput
+                        | io::ErrorKind::AddrNotAvailable
+                        | io::ErrorKind::AddrInUse => {
+                            return Err(e.into());
+                        }
+
+                        // Unknown errors - be conservative, retry with backoff
+                        _ => {
+                            warn!("Unknown accept error: {}, retrying after backoff", e);
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -87,7 +128,7 @@ impl SocketOps for RealSocketOps {
         Ok(addrs)
     }
 
-    async fn tcp_listen(&self, local: SocketAddr) -> Result<Box<dyn AppTcpListener>> {
+    async fn tcp_listen(&self, local: SocketAddr) -> Result<Box<dyn TcpListener>> {
         let listener = TokioTcpListener::bind(local).await?;
         Ok(Box::new(RealTcpListener { listener }))
     }
@@ -262,7 +303,7 @@ pub mod test_utils {
     pub struct MockTcpListener;
 
     #[async_trait]
-    impl AppTcpListener for MockTcpListener {
+    impl TcpListener for MockTcpListener {
         async fn accept(&self) -> Result<(Box<dyn IOStream>, SocketAddr)> {
             let stream = default_tcp_stream();
             let addr = "127.0.0.1:12345".parse().unwrap();
@@ -337,7 +378,7 @@ pub mod test_utils {
             Ok(vec!["192.0.2.1".parse().unwrap()])
         }
 
-        async fn tcp_listen(&self, _local: SocketAddr) -> Result<Box<dyn AppTcpListener>> {
+        async fn tcp_listen(&self, _local: SocketAddr) -> Result<Box<dyn TcpListener>> {
             Ok(Box::new(MockTcpListener))
         }
 

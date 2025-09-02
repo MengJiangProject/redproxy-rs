@@ -10,7 +10,7 @@ use crate::{
     HttpVersion,
     common::{
         auth::AuthData,
-        socket_ops::{AppTcpListener, RealSocketOps, SocketOps},
+        socket_ops::{TcpListener, RealSocketOps, SocketOps},
         tls::TlsServerConfig,
     },
     config::Timeouts,
@@ -323,7 +323,7 @@ impl<S: SocketOps + Send + Sync + 'static> Listener for HttpxListener<S> {
 impl<S: SocketOps + Send + Sync + 'static> HttpxListener<S> {
     async fn accept(
         self: Arc<Self>,
-        listener: Box<dyn AppTcpListener>,
+        listener: Box<dyn TcpListener>,
         contexts: Arc<ContextManager>,
         queue: Sender<ContextRef>,
     ) {
@@ -347,7 +347,11 @@ impl<S: SocketOps + Send + Sync + 'static> HttpxListener<S> {
                     });
                 }
                 Err(e) => {
-                    error!("{} accept error: {}", self.name, e);
+                    // Only fatal errors reach here now (socket ops handles transient errors)
+                    error!(
+                        "{}: fatal accept error: {}, shutting down listener",
+                        self.name, e
+                    );
                     return;
                 }
             }

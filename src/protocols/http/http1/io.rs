@@ -1,15 +1,18 @@
-use super::handler::{expects_100_continue, prepare_client_response, should_keep_alive};
+use super::handler::{
+    expects_100_continue, prepare_client_response, read_response, send_response, should_keep_alive,
+};
 #[cfg(feature = "metrics")]
 use crate::copy::io_metrics;
 use crate::{
     config::IoParams,
     context::{ContextRef, ContextState, ContextStatistics, IOBufStream},
-    protocols::http::HttpMessage,
+    protocols::http::{HttpMessage, HttpRequest, HttpResponse},
 };
 use anyhow::{Result, anyhow, bail};
 use bytes::BytesMut;
 use std::{sync::Arc, time::Duration};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 /// Pair of streams for HTTP body forwarding  
@@ -259,7 +262,82 @@ async fn forward_chunked_body(
     Ok((src_stream, dst_stream))
 }
 
+/// Handle 100 Continue protocol flow with request body forwarding
+async fn handle_100_continue_cycle(
+    request: &HttpRequest,
+    streams: StreamPair,
+    params: &IoParams,
+    client_stats: &StatsContext,
+    idle_timeout: Duration,
+    cancellation_token: &CancellationToken,
+) -> Result<(HttpResponse, StreamPair)> {
+    let (mut client_stream, mut server_stream) = streams;
+
+    loop {
+        let response = match read_response(&mut server_stream).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                // Send error response to client when server response reading fails
+                let _ = send_error_response_and_close(
+                    &mut client_stream,
+                    502,
+                    "Bad Gateway",
+                    &format!("Failed to read server response: {}", e),
+                )
+                .await;
+                return Err(anyhow!(
+                    "Failed to read response during 100 Continue cycle: {}",
+                    e
+                ));
+            }
+        };
+
+        if response.status_code == 100 {
+            // Forward 100 Continue interim response to client
+            debug!("HTTP/1.1: Received 100 Continue, forwarding to client");
+            if let Err(e) = send_response(&mut client_stream, &response).await {
+                return Err(anyhow!("Failed to forward 100 Continue response: {}", e));
+            }
+
+            // Forward request body after 100 Continue confirmation
+            debug!("HTTP/1.1: Forwarding request body after 100 Continue");
+            let new_streams = match forward_http_body(
+                (client_stream, server_stream),
+                request,
+                params,
+                client_stats,
+                idle_timeout,
+                cancellation_token,
+            )
+            .await
+            {
+                Ok(streams) => streams,
+                Err(e) => {
+                    // For body forwarding errors, the connection is in a bad state
+                    // We can't reliably send an error response here
+                    return Err(anyhow!(
+                        "Request body forwarding failed after 100 Continue: {}",
+                        e
+                    ));
+                }
+            };
+
+            client_stream = new_streams.0;
+            server_stream = new_streams.1;
+            continue; // Read the actual response
+        } else {
+            // Final response received
+            debug!(
+                "HTTP/1.1: Received final response: {} {}",
+                response.status_code, response.reason_phrase
+            );
+            return Ok((response, (client_stream, server_stream)));
+        }
+    }
+}
+
 /// HTTP-specific IO loop that handles ONE request/response cycle
+#[allow(unused_assignments)]
 pub fn http_io_loop(
     ctx: ContextRef,
     params: &IoParams,
@@ -271,7 +349,7 @@ pub fn http_io_loop(
 
         // Setup (same pattern as copy_bidi)
         let mut ctx_lock = ctx.write().await;
-        let (client_stream, server_stream) = match ctx_lock.take_streams() {
+        let (mut client_stream, mut server_stream) = match ctx_lock.take_streams() {
             Some(streams) => streams,
             None => {
                 bail!("No streams available for HTTP IO loop");
@@ -306,12 +384,12 @@ pub fn http_io_loop(
 
         // Forward request body (headers were already sent by callback)
         // Skip body forwarding if client expects 100 Continue (body will be sent after server confirms)
-        let (mut client_stream, mut server_stream) = if expects_100_continue(&request) {
+        (client_stream, server_stream) = if expects_100_continue(&request) {
             debug!("HTTP/1.1: Skipping initial body forwarding - client expects 100 Continue");
             (client_stream, server_stream)
         } else {
             debug!("HTTP/1.1: Forwarding request body if present");
-            match forward_http_body(
+            forward_http_body(
                 (client_stream, server_stream),
                 request.as_ref(),
                 &params,
@@ -319,92 +397,38 @@ pub fn http_io_loop(
                 idle_timeout,
                 &cancellation_token,
             )
-            .await
-            {
-                Ok(streams) => streams,
-                Err(e) => {
-                    // Try to send error response to client if parsing failed
-                    if let Some(mut client_stream) = ctx.write().await.take_client_stream() {
-                        let _ = send_error_response_and_close(
-                            &mut client_stream,
-                            400,
-                            "Bad Request",
-                            &format!("Request body parsing failed: {}", e),
-                        )
-                        .await;
-                    }
-                    return Err(e);
-                }
-            }
+            .await?
         };
 
         // Read server response (handle potential 100 Continue interim responses)
         let mut response = if expects_100_continue(&request) {
-            // Client expects 100 Continue - may need to handle interim responses
             debug!("HTTP/1.1: Client expects 100 Continue, handling interim responses");
-            loop {
-                match read_response(&mut server_stream).await {
-                    Ok(resp) => {
-                        if resp.status_code == 100 {
-                            // 100 Continue interim response - forward to client and then forward body
-                            debug!(
-                                "HTTP/1.1: Received 100 Continue interim response, forwarding to client"
-                            );
-                            if let Err(e) = send_response(&mut client_stream, &resp).await {
-                                warn!("HTTP/1.1: Failed to forward 100 Continue response: {}", e);
-                                return Err(e);
-                            }
+            let (resp, streams) = handle_100_continue_cycle(
+                request.as_ref(),
+                (client_stream, server_stream),
+                &params,
+                &client_stats,
+                idle_timeout,
+                &cancellation_token,
+            )
+            .await?;
 
-                            // Now forward the request body from client to server
-                            debug!("HTTP/1.1: Forwarding request body after 100 Continue");
-                            match forward_http_body(
-                                (client_stream, server_stream),
-                                request.as_ref(),
-                                &params,
-                                &client_stats,
-                                idle_timeout,
-                                &cancellation_token,
-                            )
-                            .await
-                            {
-                                Ok((new_client_stream, new_server_stream)) => {
-                                    client_stream = new_client_stream;
-                                    server_stream = new_server_stream;
-                                }
-                                Err(e) => {
-                                    // Body parsing failed after 100 Continue - connection is in bad state
-                                    warn!(
-                                        "HTTP/1.1: Request body parsing failed after 100 Continue: {}",
-                                        e
-                                    );
-                                    return Err(e);
-                                }
-                            }
-
-                            // Continue reading for the actual response
-                            continue;
-                        } else {
-                            // This is the final response
-                            debug!(
-                                "HTTP/1.1: Received final response: {} {}",
-                                resp.status_code, resp.reason_phrase
-                            );
-                            break resp;
-                        }
-                    }
-                    Err(e) => {
-                        warn!("HTTP/1.1: Failed to read response: {}", e);
-                        return Err(e);
-                    }
-                }
-            }
+            (client_stream, server_stream) = streams;
+            resp
         } else {
             // Normal case - read single response
             match read_response(&mut server_stream).await {
                 Ok(resp) => resp,
                 Err(e) => {
-                    warn!("HTTP/1.1: Failed to read response: {}", e);
-                    return Err(e);
+                    // Send error response to client when server response reading fails
+                    let _ = send_error_response_and_close(
+                        &mut client_stream,
+                        502,
+                        "Bad Gateway",
+                        &format!("Failed to read server response: {}", e),
+                    )
+                    .await;
+                    return Err(anyhow!("Failed to read response: {}", e));
                 }
             }
         };
@@ -413,10 +437,9 @@ pub fn http_io_loop(
         prepare_client_response(&mut response, keep_alive);
 
         // Send response to client
-        if let Err(e) = send_response(&mut client_stream, &response).await {
-            warn!("HTTP/1.1: Failed to send response: {}", e);
-            return Err(e);
-        }
+        send_response(&mut client_stream, &response)
+            .await
+            .map_err(|e| anyhow!("Failed to send response: {}", e))?;
         debug!(
             "HTTP/1.1: Sent response to client: {} {}",
             response.status_code, response.reason_phrase
@@ -443,7 +466,7 @@ pub fn http_io_loop(
                 .server_bytes
                 .with_label_values(&[server_label.as_str()]),
         );
-        let (_server_stream, client_stream) = forward_http_body(
+        (server_stream, client_stream) = forward_http_body(
             (server_stream, client_stream),
             &response,
             &params,

@@ -13,7 +13,7 @@ use crate::{
     common::{
         auth::AuthData,
         into_unspecified,
-        socket_ops::{AppTcpListener, RealSocketOps, SocketOps},
+        socket_ops::{TcpListener, RealSocketOps, SocketOps},
         socks::{
             PasswordAuth, SOCKS_CMD_BIND, SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE,
             SOCKS_REPLY_GENERAL_FAILURE, SOCKS_REPLY_OK, SocksRequest, SocksResponse,
@@ -117,7 +117,7 @@ impl<S: SocketOps + Send + Sync + 'static> Listener for SocksListener<S> {
 impl<S: SocketOps + Send + Sync + 'static> SocksListener<S> {
     async fn accept(
         self: Arc<Self>,
-        listener: Box<dyn AppTcpListener>,
+        listener: Box<dyn TcpListener>,
         contexts: Arc<ContextManager>,
         timeouts: Timeouts,
         queue: Sender<ContextRef>,
