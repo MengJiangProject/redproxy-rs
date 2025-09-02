@@ -1,9 +1,10 @@
+use super::handler::{expects_100_continue, prepare_client_response, should_keep_alive};
 #[cfg(feature = "metrics")]
 use crate::copy::io_metrics;
 use crate::{
     config::IoParams,
     context::{ContextRef, ContextState, ContextStatistics, IOBufStream},
-    protocols::http::{HttpMessage, HttpRequest, HttpResponse},
+    protocols::http::HttpMessage,
 };
 use anyhow::{Result, anyhow, bail};
 use bytes::BytesMut;
@@ -266,7 +267,7 @@ pub fn http_io_loop(
     let params = params.clone();
 
     Box::pin(async move {
-        use crate::protocols::http::http1::handler::Http1Handler;
+        use crate::protocols::http::http1::handler::{read_response, send_response};
 
         // Setup (same pattern as copy_bidi)
         let mut ctx_lock = ctx.write().await;
@@ -294,8 +295,6 @@ pub fn http_io_loop(
             .ok_or_else(|| anyhow!("No connector information available"))?
             .clone();
         drop(ctx_lock);
-
-        let handler = Http1Handler::new();
 
         let client_stats = StatsContext::new(
             client_stat.clone(),
@@ -344,14 +343,14 @@ pub fn http_io_loop(
             // Client expects 100 Continue - may need to handle interim responses
             debug!("HTTP/1.1: Client expects 100 Continue, handling interim responses");
             loop {
-                match handler.read_response(&mut server_stream).await {
+                match read_response(&mut server_stream).await {
                     Ok(resp) => {
                         if resp.status_code == 100 {
                             // 100 Continue interim response - forward to client and then forward body
                             debug!(
                                 "HTTP/1.1: Received 100 Continue interim response, forwarding to client"
                             );
-                            if let Err(e) = handler.send_response(&mut client_stream, &resp).await {
+                            if let Err(e) = send_response(&mut client_stream, &resp).await {
                                 warn!("HTTP/1.1: Failed to forward 100 Continue response: {}", e);
                                 return Err(e);
                             }
@@ -401,7 +400,7 @@ pub fn http_io_loop(
             }
         } else {
             // Normal case - read single response
-            match handler.read_response(&mut server_stream).await {
+            match read_response(&mut server_stream).await {
                 Ok(resp) => resp,
                 Err(e) => {
                     warn!("HTTP/1.1: Failed to read response: {}", e);
@@ -414,7 +413,7 @@ pub fn http_io_loop(
         prepare_client_response(&mut response, keep_alive);
 
         // Send response to client
-        if let Err(e) = handler.send_response(&mut client_stream, &response).await {
+        if let Err(e) = send_response(&mut client_stream, &response).await {
             warn!("HTTP/1.1: Failed to send response: {}", e);
             return Err(e);
         }
@@ -475,7 +474,7 @@ async fn send_error_response_and_close(
     reason: &str,
     error_detail: &str,
 ) -> Result<()> {
-    use crate::protocols::http::http1::handler::Http1Handler;
+    use crate::protocols::http::http1::handler::send_response;
     use crate::protocols::http::{HttpResponse, HttpVersion};
 
     warn!(
@@ -491,106 +490,9 @@ async fn send_error_response_and_close(
     error_response.add_header("Content-Length".to_string(), "0".to_string());
     error_response.add_header("Cache-Control".to_string(), "no-cache".to_string());
 
-    let handler = Http1Handler::new();
-    handler
-        .send_response(client_stream, &error_response)
-        .await?;
+    send_response(client_stream, &error_response).await?;
 
     Ok(())
-}
-
-/// Check if client expects 100 Continue response
-pub fn expects_100_continue(request: &HttpRequest) -> bool {
-    if let Some(expect_header) = request.get_header("Expect") {
-        expect_header.to_lowercase().contains("100-continue")
-    } else {
-        false
-    }
-}
-
-/// Check if HTTP connection should stay alive based on request/response headers
-pub fn should_keep_alive(request: &HttpRequest, _response: &HttpResponse) -> bool {
-    // Check request Connection header
-    if let Some(conn) = request.get_header("Connection") {
-        return conn.to_lowercase().contains("keep-alive");
-    }
-    // Check Proxy-Connection header for compatibility with older clients
-    if let Some(proxy_conn) = request.get_header("Proxy-Connection") {
-        return proxy_conn.to_lowercase().contains("keep-alive");
-    }
-    // HTTP/1.1 defaults to keep-alive
-    true
-}
-
-/// Prepare HTTP response for sending to client
-pub fn prepare_client_response(response: &mut HttpResponse, client_keep_alive: bool) {
-    // Special handling for WebSocket upgrade responses (101 Switching Protocols)
-    if response.status_code == 101 {
-        // For WebSocket upgrades, preserve the Upgrade and Connection headers
-        // Only remove other hop-by-hop headers
-        response.remove_header("Keep-Alive");
-        response.remove_header("Proxy-Authenticate");
-        // Do NOT remove Connection or Upgrade headers for WebSocket upgrades
-        return;
-    }
-
-    // Remove server hop-by-hop headers for normal HTTP responses
-    response.remove_header("Connection");
-    response.remove_header("Keep-Alive");
-    response.remove_header("Proxy-Authenticate");
-
-    // Set client connection behavior for normal HTTP responses
-    if client_keep_alive {
-        response.set_header("Connection".to_string(), "keep-alive".to_string());
-    } else {
-        response.set_header("Connection".to_string(), "close".to_string());
-    }
-}
-
-/// Prepare HTTP request for sending to server (strip hop-by-hop headers, etc.)
-pub fn prepare_server_request(request: &mut HttpRequest, client_addr: std::net::SocketAddr) {
-    // Check if this is a WebSocket upgrade BEFORE removing headers
-    let is_websocket = request.is_websocket_upgrade();
-
-    // Remove hop-by-hop headers
-    request.remove_header("Connection");
-    request.remove_header("Keep-Alive");
-    request.remove_header("Proxy-Authorization");
-    request.remove_header("Proxy-Authenticate");
-    request.remove_header("TE");
-    request.remove_header("Trailer");
-    // Keep "Upgrade" for WebSocket support
-
-    // Add Via header for proxy identification
-    let via_value = "1.1 redproxy".to_string();
-    if let Some(existing_via) = request.get_header("Via") {
-        request.set_header(
-            "Via".to_string(),
-            format!("{}, {}", existing_via, via_value),
-        );
-    } else {
-        request.add_header("Via".to_string(), via_value);
-    }
-
-    // Add X-Forwarded-For
-    let client_ip = client_addr.ip().to_string();
-    if let Some(existing_xff) = request.get_header("X-Forwarded-For") {
-        request.set_header(
-            "X-Forwarded-For".to_string(),
-            format!("{}, {}", existing_xff, client_ip),
-        );
-    } else {
-        request.add_header("X-Forwarded-For".to_string(), client_ip);
-    }
-
-    // Handle Connection header based on request type
-    if is_websocket {
-        // WebSocket upgrade: preserve Connection: Upgrade
-        request.set_header("Connection".to_string(), "Upgrade".to_string());
-    } else {
-        // Regular HTTP: force Connection: close (no connection pooling yet)
-        request.set_header("Connection".to_string(), "close".to_string());
-    }
 }
 
 #[cfg(test)]

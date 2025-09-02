@@ -3,11 +3,8 @@ use tokio::sync::Mutex;
 use tokio::sync::oneshot::Sender;
 use tracing::{debug, trace, warn};
 
-use super::{
-    Http1Handler,
-    io::{http_io_loop, prepare_server_request},
-};
-use crate::protocols::http::{HttpResponse, HttpVersion};
+use super::{handler::prepare_server_request, io::http_io_loop};
+use crate::protocols::http::{HttpResponse, HttpVersion, http1::send_response};
 use crate::{
     context::{Context, ContextCallback, IOBufStream},
     protocols::http::HttpMessage,
@@ -54,12 +51,8 @@ impl Http1Callback {
         };
 
         // Send 200 Connection Established to client
-        let response = crate::protocols::http::HttpResponse::tunnel_established(
-            crate::protocols::http::HttpVersion::Http1_1,
-        );
-        let handler = crate::protocols::http::http1::handler::Http1Handler::new();
-
-        if let Err(e) = handler.send_response(&mut client_stream, &response).await {
+        let response = HttpResponse::tunnel_established(HttpVersion::Http1_1);
+        if let Err(e) = send_response(&mut client_stream, &response).await {
             warn!("HTTP/1.1: Failed to send CONNECT response: {}", e);
             // Cannot recover - CONNECT response partially sent or client disconnected
             self.notify_completion(None).await;
@@ -111,14 +104,15 @@ impl Http1Callback {
         let client_addr = ctx.props().source;
         prepare_server_request(&mut prepared_request, client_addr);
 
-        let handler = crate::protocols::http::http1::handler::Http1Handler::new();
         trace!(
             "HTTP/1.1: Sending request to server: {:?}",
             prepared_request
         );
-        if let Err(e) = handler
-            .send_request(&mut server_stream, &prepared_request)
-            .await
+        if let Err(e) = crate::protocols::http::http1::handler::send_request(
+            &mut server_stream,
+            &prepared_request,
+        )
+        .await
         {
             warn!("HTTP/1.1: Failed to send request headers to server: {}", e);
             self.send_error_to_client(&mut client_stream, 503, "Service Unavailable")
@@ -158,8 +152,10 @@ impl Http1Callback {
         error_response.add_header("Connection".to_string(), "close".to_string());
         error_response.add_header("Cache-Control".to_string(), "no-cache".to_string());
 
-        let handler = crate::protocols::http::http1::handler::Http1Handler::new();
-        if let Err(e) = handler.send_response(client_stream, &error_response).await {
+        if let Err(e) =
+            crate::protocols::http::http1::handler::send_response(client_stream, &error_response)
+                .await
+        {
             warn!("HTTP/1.1: Failed to send error response: {}", e);
             // Error sending error response - connection likely broken, nothing more we can do
         }
@@ -187,9 +183,8 @@ impl ContextCallback for Http1Callback {
         // Send error response if client stream is available
         if let Some(mut client_stream) = _ctx.take_client_stream() {
             let response = HttpResponse::new(HttpVersion::Http1_1, 502, "Bad Gateway".to_string());
-            let handler = Http1Handler::new();
 
-            if let Err(e) = handler.send_response(&mut client_stream, &response).await {
+            if let Err(e) = send_response(&mut client_stream, &response).await {
                 warn!("HTTP/1.1: Failed to send error response: {}", e);
             }
         }

@@ -9,145 +9,6 @@ use test_log::test;
 use tokio_test::io::Builder;
 
 #[test(tokio::test)]
-async fn test_should_keep_alive() {
-    let mut request = HttpRequest::new(
-        HttpMethod::Get,
-        "http://example.com/test".to_string(),
-        HttpVersion::Http1_1,
-    );
-    let mut response = HttpResponse::new(HttpVersion::Http1_1, 200, "OK".to_string());
-
-    // Default HTTP/1.1 should keep alive
-    assert!(should_keep_alive(&request, &response));
-
-    // Response Connection: close shoud not override request keep-alive
-    response.set_header("Connection".to_string(), "close".to_string());
-    assert!(should_keep_alive(&request, &response));
-
-    // Request Connection: keep-alive should work when response doesn't specify
-    response.remove_header("Connection");
-    request.add_header("Connection".to_string(), "keep-alive".to_string());
-    assert!(should_keep_alive(&request, &response));
-}
-
-#[test(tokio::test)]
-async fn test_should_keep_alive_proxy_connection() {
-    let mut request = HttpRequest::new(
-        HttpMethod::Get,
-        "http://example.com/test".to_string(),
-        HttpVersion::Http1_1,
-    );
-    let response = HttpResponse::new(HttpVersion::Http1_1, 200, "OK".to_string());
-
-    // Test 1: Proxy-Connection: keep-alive should keep connection alive
-    request.add_header("Proxy-Connection".to_string(), "keep-alive".to_string());
-    assert!(should_keep_alive(&request, &response));
-
-    // Test 2: Proxy-Connection: close should NOT keep connection alive
-    request.set_header("Proxy-Connection".to_string(), "close".to_string());
-    assert!(!should_keep_alive(&request, &response));
-
-    // Test 3: Connection header takes precedence over Proxy-Connection
-    request.add_header("Connection".to_string(), "keep-alive".to_string());
-    request.set_header("Proxy-Connection".to_string(), "close".to_string());
-    assert!(should_keep_alive(&request, &response));
-
-    // Test 4: Case insensitive Proxy-Connection header
-    request.remove_header("Connection");
-    request.set_header("Proxy-Connection".to_string(), "Keep-Alive".to_string());
-    assert!(should_keep_alive(&request, &response));
-
-    // Test 5: Proxy-Connection with multiple values containing keep-alive
-    request.set_header(
-        "Proxy-Connection".to_string(),
-        "upgrade, keep-alive".to_string(),
-    );
-    assert!(should_keep_alive(&request, &response));
-
-    // Test 6: Clear request for default HTTP/1.1 behavior after Proxy-Connection tests
-    request.remove_header("Proxy-Connection");
-    assert!(should_keep_alive(&request, &response));
-}
-
-#[test(tokio::test)]
-async fn test_prepare_server_request() {
-    let mut request = HttpRequest::new(
-        HttpMethod::Get,
-        "http://example.com/test".to_string(),
-        HttpVersion::Http1_1,
-    );
-
-    // Add some hop-by-hop headers
-    request.add_header("Connection".to_string(), "keep-alive".to_string());
-    request.add_header(
-        "Proxy-Authorization".to_string(),
-        "Bearer token".to_string(),
-    );
-
-    let client_addr = "192.168.1.100:12345".parse().unwrap();
-    prepare_server_request(&mut request, client_addr);
-
-    // Hop-by-hop headers should be removed
-    assert!(request.get_header("Proxy-Authorization").is_none());
-
-    // Should have Via header
-    assert!(request.get_header("Via").is_some());
-    assert_eq!(request.get_header("Via").unwrap(), "1.1 redproxy");
-
-    // Should have X-Forwarded-For
-    assert!(request.get_header("X-Forwarded-For").is_some());
-    assert_eq!(
-        request.get_header("X-Forwarded-For").unwrap(),
-        "192.168.1.100"
-    );
-
-    // Should force Connection: close
-    assert_eq!(request.get_header("Connection").unwrap(), "close");
-}
-
-#[test(tokio::test)]
-async fn test_prepare_server_request_websocket() {
-    let mut request = HttpRequest::new(
-        HttpMethod::Get,
-        "ws://example.com/websocket".to_string(),
-        HttpVersion::Http1_1,
-    );
-
-    // Add WebSocket upgrade headers
-    request.add_header("Connection".to_string(), "Upgrade".to_string());
-    request.add_header("Upgrade".to_string(), "websocket".to_string());
-    request.add_header("Sec-WebSocket-Key".to_string(), "test-key".to_string());
-    request.add_header(
-        "Proxy-Authorization".to_string(),
-        "Bearer token".to_string(),
-    );
-
-    let client_addr = "192.168.1.100:12345".parse().unwrap();
-    prepare_server_request(&mut request, client_addr);
-
-    // Hop-by-hop headers should be removed except for WebSocket-specific ones
-    assert!(request.get_header("Proxy-Authorization").is_none());
-
-    // Should have Via header
-    assert!(request.get_header("Via").is_some());
-    assert_eq!(request.get_header("Via").unwrap(), "1.1 redproxy");
-
-    // Should have X-Forwarded-For
-    assert!(request.get_header("X-Forwarded-For").is_some());
-    assert_eq!(
-        request.get_header("X-Forwarded-For").unwrap(),
-        "192.168.1.100"
-    );
-
-    // WebSocket headers should be preserved
-    assert_eq!(request.get_header("Upgrade").unwrap(), "websocket");
-    assert_eq!(request.get_header("Sec-WebSocket-Key").unwrap(), "test-key");
-
-    // Connection header should be preserved as Upgrade for WebSocket requests
-    assert_eq!(request.get_header("Connection").unwrap(), "Upgrade");
-}
-
-#[test(tokio::test)]
 async fn test_http_io_loop_functionality() {
     // Test that http_io_loop function is accessible and has correct signature
     let contexts = Arc::new(ContextManager::default());
@@ -207,36 +68,6 @@ async fn test_body_forward_context_creation() {
     assert_eq!(io_params.buffer_size, io_params.buffer_size);
     assert!(Arc::ptr_eq(&stats_ctx.stat, &client_stat));
     assert!(!cancellation_token.is_cancelled());
-}
-
-#[test]
-fn test_keep_alive_logic() {
-    // Test the keep-alive decision logic we implemented
-    let mut request = HttpRequest::new(
-        HttpMethod::Get,
-        "http://example.com/test".to_string(),
-        HttpVersion::Http1_1,
-    );
-
-    // Test 1: Default HTTP/1.1 with keep-alive response
-    let mut response = HttpResponse::new(HttpVersion::Http1_1, 200, "OK".to_string());
-    response.add_header("Connection".to_string(), "keep-alive".to_string());
-
-    let keep_alive = should_keep_alive(&request, &response);
-    assert!(
-        keep_alive,
-        "HTTP/1.1 with keep-alive response should keep connection alive"
-    );
-
-    // Test 2: Request with keep-alive, response with close
-    request.add_header("Connection".to_string(), "keep-alive".to_string());
-    response.set_header("Connection".to_string(), "close".to_string());
-
-    let keep_alive = should_keep_alive(&request, &response);
-    assert!(
-        keep_alive,
-        "Response Connection: close response should not override request keep-alive"
-    );
 }
 
 #[test(tokio::test)]
@@ -707,7 +538,7 @@ async fn test_complete_http_io_loop_cycle() {
     // Verify final state
     {
         let ctx_guard = ctx.read().await;
-    
+
         println!("Final context state: {:?}", ctx_guard.state());
         assert_eq!(
             ctx_guard.state(),
@@ -1219,7 +1050,10 @@ async fn test_forward_chunked_body() {
 async fn test_forward_content_length_body_splice_enabled() {
     // Test forward_content_length_body with splice enabled (will fall back to regular on mocks)
 
-    let io_params = IoParams {buffer_size:8192, use_splice: true };
+    let io_params = IoParams {
+        buffer_size: 8192,
+        use_splice: true,
+    };
 
     let client_stat = Arc::new(ContextStatistics::default());
     let cancellation_token = tokio_util::sync::CancellationToken::new();

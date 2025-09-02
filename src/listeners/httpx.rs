@@ -16,7 +16,7 @@ use crate::{
     config::Timeouts,
     context::{ContextManager, ContextRef, IOStream},
     listeners::Listener,
-    protocols::http::Http1Handler,
+    protocols::http::http1::handle_listener_connection,
 };
 use std::ops::{Deref, DerefMut};
 
@@ -401,9 +401,7 @@ impl<S: SocketOps + Send + Sync + 'static> HttpxListener<S> {
         // Delegate entire connection lifecycle to the appropriate protocol handler
         match protocol_choice {
             HttpVersion::Http1_1 | HttpVersion::Http1_0 => {
-                let handler = Http1Handler::new();
-                handler
-                    .handle_listener_connection(stream, contexts, queue, self.name.clone(), source)
+                handle_listener_connection(stream, contexts, queue, self.name.clone(), source)
                     .await?;
             }
             HttpVersion::Http2 => {
