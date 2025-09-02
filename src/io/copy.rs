@@ -414,7 +414,7 @@ mod tests {
         read_data: Cursor<Vec<u8>>,
         write_data: Arc<Mutex<Vec<u8>>>,
         write_error: Option<std::io::Error>,
-        max_read_size: Option<usize>, // Simulate partial reads
+        max_read_size: Option<usize>,  // Simulate partial reads
         max_write_size: Option<usize>, // Simulate partial writes
     }
 
@@ -439,7 +439,11 @@ mod tests {
             }
         }
 
-        fn with_partial_operations(mut self, max_read: Option<usize>, max_write: Option<usize>) -> Self {
+        fn with_partial_operations(
+            mut self,
+            max_read: Option<usize>,
+            max_write: Option<usize>,
+        ) -> Self {
             self.max_read_size = max_read;
             self.max_write_size = max_write;
             self
@@ -469,7 +473,7 @@ mod tests {
                     // Create a temporary smaller buffer for partial read
                     let mut temp_buf = vec![0u8; available];
                     let mut temp_read_buf = tokio::io::ReadBuf::new(&mut temp_buf);
-                    
+
                     match Pin::new(&mut self.read_data).poll_read(cx, &mut temp_read_buf) {
                         Poll::Ready(Ok(())) => {
                             let filled = temp_read_buf.filled();
@@ -504,7 +508,10 @@ mod tests {
                 buf.len()
             };
 
-            self.write_data.lock().unwrap().extend_from_slice(&buf[..write_size]);
+            self.write_data
+                .lock()
+                .unwrap()
+                .extend_from_slice(&buf[..write_size]);
             Poll::Ready(Ok(write_size))
         }
 
@@ -773,10 +780,9 @@ mod tests {
         let test_data: Vec<u8> = (0..2048).map(|i| (i % 256) as u8).collect();
 
         // Simulate partial operations: max 7 bytes per read, max 11 bytes per write
-        let src_mock = MockStream::new_reader(test_data.clone())
-            .with_partial_operations(Some(7), None);
-        let dst_mock = MockStream::new_writer()
-            .with_partial_operations(None, Some(11));
+        let src_mock =
+            MockStream::new_reader(test_data.clone()).with_partial_operations(Some(7), None);
+        let dst_mock = MockStream::new_writer().with_partial_operations(None, Some(11));
 
         let dst_data_ref = dst_mock.write_data.clone();
 
@@ -805,8 +811,8 @@ mod tests {
         let leftover_data: Vec<u8> = (0..127).map(|i| ((i * 2) % 256) as u8).collect();
 
         let buffered_src = BufferedStream::with_leftover(
-            Box::new(src_mock), 
-            bytes::Bytes::from(leftover_data.clone())
+            Box::new(src_mock),
+            bytes::Bytes::from(leftover_data.clone()),
         );
         let buffered_dst = BufferedStream::new(Box::new(dst_mock));
 
@@ -858,7 +864,11 @@ mod tests {
         let stats_data = stats_calls.lock().unwrap();
 
         // Should have multiple callback invocations due to small buffer
-        assert!(stats_data.len() > 1, "Expected multiple stat calls, got {}", stats_data.len());
+        assert!(
+            stats_data.len() > 1,
+            "Expected multiple stat calls, got {}",
+            stats_data.len()
+        );
 
         // Verify stats integrity
         let total_from_stats: usize = stats_data.iter().sum();
@@ -866,7 +876,11 @@ mod tests {
 
         // All individual transfers should be reasonable sizes (not zero, not larger than buffer)
         for &size in stats_data.iter() {
-            assert!(size > 0 && size <= 128, "Transfer size {} out of range", size);
+            assert!(
+                size > 0 && size <= 128,
+                "Transfer size {} out of range",
+                size
+            );
         }
     }
 
@@ -876,10 +890,9 @@ mod tests {
         let data_pattern: Vec<u8> = (0..3000).map(|i| ((i * 7) % 256) as u8).collect();
 
         // Different partial operation limits to create pressure
-        let src_mock = MockStream::new_reader(data_pattern.clone())
-            .with_partial_operations(Some(17), None); // Prime number for irregular patterns
-        let dst_mock = MockStream::new_writer()
-            .with_partial_operations(None, Some(23));
+        let src_mock =
+            MockStream::new_reader(data_pattern.clone()).with_partial_operations(Some(17), None); // Prime number for irregular patterns
+        let dst_mock = MockStream::new_writer().with_partial_operations(None, Some(23));
 
         let dst_data_ref = dst_mock.write_data.clone();
 
@@ -899,10 +912,9 @@ mod tests {
     async fn test_max_bytes_with_partial_operations() {
         // Test max_bytes limit with partial operations
         let large_data: Vec<u8> = (0..5000).map(|i| (i % 256) as u8).collect();
-        let src_mock = MockStream::new_reader(large_data.clone())
-            .with_partial_operations(Some(13), None);
-        let dst_mock = MockStream::new_writer()
-            .with_partial_operations(None, Some(19));
+        let src_mock =
+            MockStream::new_reader(large_data.clone()).with_partial_operations(Some(13), None);
+        let dst_mock = MockStream::new_writer().with_partial_operations(None, Some(19));
 
         let dst_data_ref = dst_mock.write_data.clone();
 
@@ -918,7 +930,7 @@ mod tests {
 
         assert_eq!(bytes_copied, max_bytes as u64);
         assert_eq!(dst_data_ref.lock().unwrap().len(), max_bytes);
-        
+
         // Verify data integrity for the transferred portion
         let written_data = dst_data_ref.lock().unwrap();
         assert_eq!(&written_data[..], &large_data[..max_bytes]);
@@ -964,10 +976,9 @@ mod tests {
         // Test very different partial operation sizes
         let test_data: Vec<u8> = (0..2000).map(|i| (i % 256) as u8).collect();
 
-        let src_mock = MockStream::new_reader(test_data.clone())
-            .with_partial_operations(Some(3), None); // Very small reads
-        let dst_mock = MockStream::new_writer()
-            .with_partial_operations(None, Some(47)); // Larger writes
+        let src_mock =
+            MockStream::new_reader(test_data.clone()).with_partial_operations(Some(3), None); // Very small reads
+        let dst_mock = MockStream::new_writer().with_partial_operations(None, Some(47)); // Larger writes
 
         let dst_data_ref = dst_mock.write_data.clone();
 
