@@ -47,7 +47,7 @@ pub struct SocksListenerConfig {
     // BIND command support
     #[serde(default)]
     allow_bind: bool,
-    #[serde(default)]
+    #[serde(default = "default_enforce_bind_address")]
     enforce_bind_address: bool,
 }
 
@@ -82,6 +82,10 @@ impl<S: SocketOps> SocksListener<S> {
 }
 
 fn default_allow_udp() -> bool {
+    true
+}
+
+fn default_enforce_bind_address() -> bool {
     true
 }
 
