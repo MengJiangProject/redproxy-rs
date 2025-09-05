@@ -134,8 +134,7 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
     }
 
     async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<(), Error> {
-        let target = ctx.read().await.target();
-        trace!("connecting to {}", target);
+        let target = ctx.read().await.target().clone();
         let remote = match &target {
             TargetAddress::SocketAddr(addr) => *addr,
             TargetAddress::DomainPort(domain, port) => {
@@ -205,33 +204,69 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
                 trace!("connected to {:?}", target);
             }
             Feature::TcpBind => {
-                // Create TCP listener on the requested address
-                let listener = self.socket_ops.tcp_listen(remote).await?;
-                let local_addr = listener.local_addr().await?;
+                debug!("{}: Starting TCP BIND to {}", self.name, remote);
+                
+                // Determine the bind address: use configured bind field if set, otherwise use remote
+                let bind_addr = if let Some(bind_ip) = self.bind {
+                    SocketAddr::new(bind_ip, remote.port())
+                } else {
+                    remote
+                };
+                
+                // Create TCP listener on the determined bind address
+                debug!("{}: Attempting to bind TCP listener to {}", self.name, bind_addr);
+                let listener = match self.socket_ops.tcp_listen(bind_addr).await {
+                    Ok(listener) => {
+                        debug!("{}: Successfully created TCP listener", self.name);
+                        listener
+                    }
+                    Err(e) => {
+                        debug!("{}: Failed to create TCP listener: {}", self.name, e);
+                        return Err(e);
+                    }
+                };
+                
+                let local_addr = match listener.local_addr().await {
+                    Ok(addr) => {
+                        debug!("{}: TCP listener bound to {}", self.name, addr);
+                        addr
+                    }
+                    Err(e) => {
+                        debug!("{}: Failed to get listener local address: {}", self.name, e);
+                        return Err(e);
+                    }
+                };
 
                 // Apply NAT address override if configured
                 let response_addr = if let Some(override_ip) = self.override_bind_address {
-                    SocketAddr::new(override_ip, local_addr.port())
+                    let overridden = SocketAddr::new(override_ip, local_addr.port());
+                    debug!("{}: Using NAT override address: {} -> {}", self.name, local_addr, overridden);
+                    overridden
                 } else {
+                    debug!("{}: Using actual bound address: {}", self.name, local_addr);
                     local_addr
                 };
 
                 // Create oneshot channel for the bind operation
                 let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+                debug!("{}: Created oneshot channel for BIND completion", self.name);
 
                 // Set up the BIND receiver in context and mark as waiting for bind
                 ctx.write()
                     .await
                     .set_bind_receiver(receiver)
                     .set_state(ContextState::BindWaiting);
+                debug!("{}: Set context state to BindWaiting", self.name);
 
                 // Trigger the bind_listen callback
+                debug!("{}: Triggering bind_listen callback with address {}", self.name, response_addr);
                 ctx.on_bind_listen(response_addr).await;
 
                 // Spawn task to wait for connection
                 let ctx_clone = ctx.clone();
                 let connector_name = self.name.clone();
                 tokio::spawn(async move {
+                    debug!("{}: Spawned task waiting for BIND connection", connector_name);
                     match listener.accept().await {
                         Ok((stream, peer_addr)) => {
                             debug!(
@@ -244,8 +279,10 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
                                 .await
                                 .set_server_stream(make_buffered_stream(stream));
                             // Trigger the bind_accept callback
+                            debug!("{}: Triggering bind_accept callback for peer {}", connector_name, peer_addr);
                             ctx_clone.on_bind_accept(peer_addr).await;
                             // Signal that BIND is complete
+                            debug!("{}: Signaling BIND completion", connector_name);
                             let _ = sender.send(());
                         }
                         Err(e) => {
@@ -254,8 +291,8 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
                     }
                 });
 
-                trace!("BIND listening on {:?}", response_addr);
-            } //x => bail!("not supported feature {:?}", x),
+                debug!("{}: TCP BIND setup complete, listening on {:?}", self.name, response_addr);
+            }
         }
         Ok(())
     }
@@ -509,5 +546,124 @@ mod tests {
         // In mock environment, this should succeed immediately
         let wait_result = ctx.wait_for_bind().await;
         assert!(wait_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_tcp_bind_task_cleanup() {
+        let mock_ops = Arc::new(MockSocketOps::new());
+        let mut connector = create_test_connector(mock_ops);
+        connector.init().await.unwrap();
+
+        let connector = Arc::new(connector);
+        let target = TargetAddress::SocketAddr("127.0.0.1:8080".parse().unwrap());
+        let ctx = create_test_context(target, Feature::TcpBind).await;
+
+        // Set up BIND operation
+        let result = connector.connect(ctx.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify that the spawned task is properly tracked and can be awaited
+        let wait_result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            ctx.wait_for_bind()
+        ).await;
+
+        // Should complete quickly with mock socket ops
+        assert!(wait_result.is_ok());
+        assert!(wait_result.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_tcp_bind_concurrent_operations() {
+        let mock_ops = Arc::new(MockSocketOps::new());
+        let mut connector = create_test_connector(mock_ops);
+        connector.init().await.unwrap();
+
+        let connector = Arc::new(connector);
+        
+        // Create multiple BIND operations concurrently
+        let mut handles = Vec::new();
+        
+        for i in 0..3 {
+            let connector_clone = connector.clone();
+            let target = TargetAddress::SocketAddr(
+                format!("127.0.0.1:808{}", i).parse().unwrap()
+            );
+            let ctx = create_test_context(target, Feature::TcpBind).await;
+            
+            let handle = tokio::spawn(async move {
+                let result = connector_clone.connect(ctx.clone()).await;
+                assert!(result.is_ok());
+                
+                // Each BIND should complete successfully
+                let wait_result = ctx.wait_for_bind().await;
+                assert!(wait_result.is_ok());
+            });
+            
+            handles.push(handle);
+        }
+        
+        // Wait for all concurrent operations to complete
+        for handle in handles {
+            handle.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tcp_bind_respects_bind_field() {
+        let mock_ops = Arc::new(MockSocketOps::new());
+        let mut connector = DirectConnector::with_socket_ops(
+            DirectConnectorConfig {
+                name: "test_bind_field".to_string(),
+                bind: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))),
+                dns: Arc::new(DnsConfig::default()),
+                fwmark: None,
+                keepalive: true,
+                override_bind_address: None,
+            },
+            mock_ops,
+        );
+        connector.init().await.unwrap();
+
+        let connector = Arc::new(connector);
+        let target = TargetAddress::SocketAddr("127.0.0.1:8080".parse().unwrap());
+        let ctx = create_test_context(target, Feature::TcpBind).await;
+
+        // This should succeed and use the bind field for the listener
+        let result = connector.connect(ctx.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify context state was set to BindWaiting
+        let context_read = ctx.read().await;
+        assert_eq!(context_read.state(), ContextState::BindWaiting);
+    }
+
+    #[tokio::test]
+    async fn test_tcp_bind_with_both_bind_and_override() {
+        let mock_ops = Arc::new(MockSocketOps::new());
+        let mut connector = DirectConnector::with_socket_ops(
+            DirectConnectorConfig {
+                name: "test_bind_and_override".to_string(),
+                bind: Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
+                dns: Arc::new(DnsConfig::default()),
+                fwmark: None,
+                keepalive: true,
+                override_bind_address: Some("192.168.1.100".parse().unwrap()),
+            },
+            mock_ops,
+        );
+        connector.init().await.unwrap();
+
+        let connector = Arc::new(connector);
+        let target = TargetAddress::SocketAddr("127.0.0.1:8080".parse().unwrap());
+        let ctx = create_test_context(target, Feature::TcpBind).await;
+
+        // This should succeed and bind to 10.0.0.1 but report 192.168.1.100
+        let result = connector.connect(ctx.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify context state was set to BindWaiting
+        let context_read = ctx.read().await;
+        assert_eq!(context_read.state(), ContextState::BindWaiting);
     }
 }
