@@ -241,6 +241,10 @@ pub trait ContextCallback: Send + Sync {
     async fn on_connect(&self, _ctx: &mut Context) {}
     async fn on_error(&self, _ctx: &mut Context, _error: Error) {}
     async fn on_finish(&self, _ctx: &mut Context) {}
+
+    // BIND-related callbacks
+    async fn on_bind_listen(&self, _ctx: &mut Context, _bind_addr: SocketAddr) {}
+    async fn on_bind_accept(&self, _ctx: &mut Context, _peer_addr: SocketAddr) {}
 }
 
 #[derive(Debug, Hash, Copy, Clone, Eq, PartialEq, Serialize, Default)]
@@ -251,6 +255,7 @@ pub enum ContextState {
     ClientRequested,
     ServerConnecting,
     Connected,
+    BindWaiting,
     ServerShutdown,
     ClientShutdown,
     Terminated,
@@ -265,6 +270,7 @@ impl ContextState {
             Self::ClientRequested => "ClientRequested",
             Self::ServerConnecting => "ServerConnecting",
             Self::Connected => "Connected",
+            Self::BindWaiting => "BindWaiting",
             Self::ClientShutdown => "ClientShutdown",
             Self::ServerShutdown => "ServerShutdown",
             Self::Terminated => "Terminated",
@@ -509,6 +515,8 @@ impl ContextManager {
             state: self.clone(),
             http_request: None,
             cancellation_token: tokio_util::sync::CancellationToken::new(),
+            // Initialize BIND fields
+            bind_task: None,
         }));
 
         // Increment atomic counter and add to alive map
@@ -647,6 +655,9 @@ impl ContextManager {
     }
 }
 
+// Type alias for the BIND task handle
+pub type BindTask = tokio::task::JoinHandle<Result<()>>;
+
 pub struct Context {
     props: Arc<ContextProps>,
     client_stream: Option<IOBufStream>,
@@ -657,6 +668,8 @@ pub struct Context {
     state: Arc<ContextManager>,
     http_request: Option<Arc<crate::common::http::HttpRequest>>,
     cancellation_token: tokio_util::sync::CancellationToken,
+    // BIND-related fields - using JoinHandle for spawned task
+    bind_task: Option<BindTask>,
 }
 
 pub type ContextRef = Arc<RwLock<Context>>;
@@ -856,6 +869,17 @@ impl Context {
     pub fn cancellation_token(&self) -> &tokio_util::sync::CancellationToken {
         &self.cancellation_token
     }
+
+    /// Set up BIND operation with a task handle for waiting
+    pub fn set_bind_task(&mut self, task: BindTask) -> &mut Self {
+        self.bind_task = Some(task);
+        self
+    }
+
+    /// Take the BIND task handle for waiting
+    pub fn take_bind_task(&mut self) -> Option<BindTask> {
+        self.bind_task.take()
+    }
 }
 
 // a set of opreations that aquires write lock
@@ -866,6 +890,10 @@ pub trait ContextRefOps {
     async fn on_error(&self, error: Error);
     async fn on_finish(&self);
     async fn to_string(&self) -> String;
+    // BIND-related operations
+    async fn on_bind_listen(&self, bind_addr: SocketAddr);
+    async fn on_bind_accept(&self, peer_addr: SocketAddr);
+    async fn wait_for_bind(&self) -> Result<()>;
 }
 
 #[async_trait]
@@ -901,6 +929,48 @@ impl ContextRefOps for ContextRef {
     }
     async fn to_string(&self) -> String {
         self.read().await.to_string()
+    }
+
+    async fn on_bind_listen(&self, bind_addr: SocketAddr) {
+        let mut inner = self.write().await;
+        inner.set_state(ContextState::BindWaiting);
+        if let Some(cb) = inner.callback.clone() {
+            cb.on_bind_listen(&mut inner, bind_addr).await
+        }
+    }
+
+    async fn on_bind_accept(&self, peer_addr: SocketAddr) {
+        let mut inner = self.write().await;
+        if let Some(cb) = inner.callback.clone() {
+            cb.on_bind_accept(&mut inner, peer_addr).await
+        }
+    }
+
+    async fn wait_for_bind(&self) -> Result<()> {
+        let (task, cancellation_token) = {
+            let mut inner = self.write().await;
+            let task = inner.take_bind_task();
+            let token = inner.cancellation_token().clone();
+            (task, token)
+        };
+
+        if let Some(task) = task {
+            // Wait for either the BIND task to complete or cancellation
+            tokio::select! {
+                result = task => {
+                    // Task completed (either success or error)
+                    result
+                        .map_err(|e| anyhow::anyhow!("BIND task panicked: {}", e))
+                        .and_then(|result| result)
+                }
+                _ = cancellation_token.cancelled() => {
+                    // Shutdown requested - abort waiting
+                    Err(anyhow::anyhow!("BIND wait cancelled during shutdown"))
+                }
+            }
+        } else {
+            Err(anyhow::anyhow!("No BIND task available"))
+        }
     }
 }
 

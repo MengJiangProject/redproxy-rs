@@ -205,6 +205,17 @@ The `socks` listener implements a SOCKS5 proxy server. This listener can be conf
 -   `overrideUdpAddress` (string, optional):
     -   *Example*: `"127.0.0.1"`.
     -   If set, this IP address will be returned to the SOCKS client in the BND.ADDR field for UDP associations, instead of the server's actual IP address. This is useful if the proxy server is behind a NAT and the external IP needs to be specified.
+-   `allowBind` (boolean, optional): Enables or disables the SOCKS BIND command support.
+    -   *Default value*: `false`.
+    -   When `true`, clients can use the SOCKS BIND command to create listening sockets for incoming connections.
+    -   When `false`, BIND requests are rejected with an appropriate SOCKS error response.
+    -   The BIND command is commonly used by FTP clients and other protocols requiring reverse connections.
+-   `enforceBindAddress` (boolean, optional): Controls whether the listener ignores client-requested bind addresses for security.
+    -   *Default value*: `true`.
+    -   Only effective when `allowBind` is `true`.
+    -   When `false`, the proxy honors the client's requested bind address and port (normal SOCKS behavior).
+    -   When `true`, the proxy ignores the client's request and forces system-allocated addresses (0.0.0.0:0 or :::0).
+    -   Setting to `true` (default) provides additional security by preventing clients from binding to specific addresses or ports.
 -   `auth` (object, optional): Configures SOCKS5 authentication.
     -   `required` (boolean):
         -   *Default value*: `false`.
@@ -227,6 +238,8 @@ listeners:
     allowUdp: true # Default
     enforceUdpClient: false
     # overrideUdpAddress: 127.0.0.1
+    allowBind: false # Default - enable to support SOCKS BIND command
+    enforceBindAddress: true # Default - force system-allocated addresses (security mode)
     auth:
       required: false # Default
       users:
@@ -364,8 +377,15 @@ connectors:
 The `direct` connector makes a direct connection to the target host.
 
 -   **`type: direct`** (or inferred if `name` is "direct")
--   `bind` (string, optional): Specifies a source IP address to bind to for outgoing connections.
+-   `bind` (string, optional): Specifies a source IP address to bind to for outgoing connections and BIND operations.
     -   *Example*: `"192.168.100.1"`
+    -   This setting affects all connection types: TCP forward, UDP forward/bind, and TCP BIND operations.
+    -   For BIND operations, if specified, creates the listening socket on this interface; otherwise uses the target address.
+-   `overrideBindAddress` (string, optional): Override the bind address reported to SOCKS clients for NAT scenarios.
+    -   *Example*: `"203.0.113.1"`
+    -   Only affects the address reported in SOCKS BIND responses, not the actual bind interface.
+    -   Useful when the proxy is behind NAT and clients need to connect to the external IP address.
+    -   The actual listener still uses the address determined by the `bind` field or target address.
 -   `dns` (object, optional): Configures DNS resolution for this connector.
     -   `servers` (string): A comma-separated list of DNS server IP addresses, optionally with port numbers (e.g., `8.8.8.8:53`). Special values like `system`, `google`, `cloudflare` might also be supported to use system resolvers or predefined public DNS servers.
         -   *Default value*: `"system"` (uses the system's configured DNS resolvers). Other special string values `"google"` and `"cloudflare"` can also be used.
@@ -385,7 +405,8 @@ Example:
 ```yaml
 connectors:
   - name: direct
-    # bind: 192.168.100.1 # Optional source IP for outgoing connections
+    # bind: 192.168.100.1 # Optional source IP for all connections and BIND operations
+    # overrideBindAddress: 203.0.113.1 # Optional NAT override for SOCKS BIND responses
     dns:
       servers: system
       # servers: 192.168.100.1:5353,1.1.1.1,8.8.8.8:53
@@ -712,7 +733,212 @@ rules:
 
 ---
 
-## 7. Access Log Configuration (`accessLog`)
+## 7. SOCKS BIND Configuration Examples
+
+The SOCKS BIND command allows clients to create listening sockets for incoming connections, commonly used by FTP clients and other protocols requiring reverse connections. This section provides practical configuration examples for different BIND scenarios.
+
+### 7.1. Basic BIND Configuration
+
+```yaml
+listeners:
+  - name: socks-with-bind
+    type: socks
+    bind: "0.0.0.0:1080"
+    allowBind: true              # Enable BIND command support
+    enforceBindAddress: false    # Allow client bind requests (less secure, but normal SOCKS behavior)
+    allowUdp: true               # Standard UDP associate support
+
+connectors:
+  - name: direct
+    type: direct
+    # Uses target address for BIND operations by default
+
+rules:
+  - target: direct               # Default rule for all requests
+```
+
+### 7.2. BIND with Interface Control
+
+```yaml
+listeners:
+  - name: socks-bind-controlled
+    type: socks
+    bind: "0.0.0.0:1081"
+    allowBind: true
+    enforceBindAddress: false
+
+connectors:
+  - name: direct-with-bind
+    type: direct
+    bind: "192.168.1.100"        # BIND operations will use this interface
+    dns:
+      servers: system
+
+rules:
+  - target: direct-with-bind
+```
+
+### 7.3. BIND with NAT Override (Recommended for NAT scenarios)
+
+```yaml
+listeners:
+  - name: socks-nat-bind
+    type: socks
+    bind: "0.0.0.0:1082"
+    allowBind: true
+    enforceBindAddress: false
+
+connectors:
+  - name: direct-nat
+    type: direct
+    bind: "192.168.1.100"                    # Internal interface for actual binding
+    overrideBindAddress: "203.0.113.50"     # External IP reported to clients
+
+rules:
+  - target: direct-nat
+```
+
+### 7.4. Multiple BIND Configurations
+
+```yaml
+listeners:
+  # Standard BIND for internal clients
+  - name: socks-internal-bind
+    type: socks
+    bind: "192.168.1.1:1080"
+    allowBind: true
+    enforceBindAddress: false
+    
+  # Strict BIND for external clients
+  - name: socks-external-bind
+    type: socks
+    bind: "0.0.0.0:1081"
+    allowBind: true
+    enforceBindAddress: true    # Force system-allocated addresses (security mode)
+    auth:
+      required: true
+      users:
+        - username: external_user
+          password: secure_pass
+
+connectors:
+  - name: direct-internal
+    type: direct
+    bind: "192.168.1.1"
+    
+  - name: direct-external
+    type: direct
+    bind: "203.0.113.50"
+    overrideBindAddress: "203.0.113.50"
+
+rules:
+  # Route internal network to internal connector
+  - filter: 'request.listener == "socks-internal-bind"'
+    target: direct-internal
+    
+  # Route external clients to external connector
+  - filter: 'request.listener == "socks-external-bind"'
+    target: direct-external
+```
+
+### 7.5. BIND with Authentication and TLS
+
+```yaml
+listeners:
+  - name: socks-secure-bind
+    type: socks
+    bind: "0.0.0.0:1443"
+    allowBind: true
+    enforceBindAddress: false
+    auth:
+      required: true
+      users:
+        - username: bind_user
+          password: bind_pass
+      cache:
+        timeout: 600
+    tls:
+      cert: socks_server.crt
+      key: socks_server.key
+      client:
+        ca: client_ca.crt
+        required: true
+
+connectors:
+  - name: direct-secure
+    type: direct
+    bind: "10.0.0.100"
+
+rules:
+  - target: direct-secure
+```
+
+### 7.6. BIND Disabled (Default Behavior)
+
+```yaml
+listeners:
+  - name: socks-no-bind
+    type: socks
+    bind: "0.0.0.0:1080"
+    allowBind: false             # BIND requests will be rejected (default)
+    allowUdp: true               # UDP associate still works
+
+connectors:
+  - name: direct
+    type: direct
+
+rules:
+  - target: direct
+```
+
+### 7.7. Advanced BIND with Load Balancing
+
+```yaml
+listeners:
+  - name: socks-lb-bind
+    type: socks
+    bind: "0.0.0.0:1080"
+    allowBind: true
+    enforceBindAddress: false
+
+connectors:
+  - name: direct-primary
+    type: direct
+    bind: "192.168.1.10"
+    
+  - name: direct-secondary
+    type: direct
+    bind: "192.168.1.20"
+    
+  - name: bind-loadbalancer
+    type: loadbalance
+    connectors: ["direct-primary", "direct-secondary"]
+    algorithm: roundRobin
+
+rules:
+  # Use load balancer for BIND operations
+  - filter: 'request.feature == "TcpBind"'
+    target: bind-loadbalancer
+    
+  # Regular connections use primary
+  - target: direct-primary
+```
+
+**Configuration Notes:**
+
+1. **Security**: Always use authentication (`auth.required: true`) for BIND-enabled listeners exposed to untrusted networks.
+
+2. **NAT Scenarios**: Use `overrideBindAddress` when the proxy is behind NAT to ensure clients connect to the correct external address.
+
+3. **Interface Selection**: The `bind` field in DirectConnector now consistently affects all operations including TCP BIND.
+
+4. **Address Control**: Setting `enforceBindAddress: true` (default) forces system-allocated addresses for security. Setting to `false` honors client bind requests.
+
+5. **Protocol Support**: BIND currently supports TCP connections. UDP BIND operations depend on the connector's UDP capabilities.
+
+---
+
+## 8. Access Log Configuration (`accessLog`)
 
 The entire `accessLog` section is optional. The `accessLog` section configures how and where access logs are written.
 

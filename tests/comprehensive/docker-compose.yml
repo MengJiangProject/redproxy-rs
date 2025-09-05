@@ -29,6 +29,19 @@ services:
     healthcheck:
       test: ["NONE"]
 
+  # Mock SOCKS server for BIND testing (using Python script from test-runner)
+  mock-socks-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-runner
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    volumes:
+      - ./scripts:/scripts:ro
+    networks: [test-net]
+    command: ["python3", "/scripts/mock_socks_server.py"]
+
   # QUIC upstream proxy (another RedProxy instance with QUIC listener)
   quic-proxy:
     build:
@@ -77,6 +90,8 @@ services:
       timeout: 5s
       retries: 3
     command: ["redproxy", "-c", "${REDPROXY_CONFIG:-/config/base.yaml}"]
+    environment:
+      - RUST_LOG=redproxy=debug,hyper=warn
 
   # Test runner with environment-driven test selection
   test-runner:
