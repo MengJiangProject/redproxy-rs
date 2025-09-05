@@ -241,7 +241,7 @@ pub trait ContextCallback: Send + Sync {
     async fn on_connect(&self, _ctx: &mut Context) {}
     async fn on_error(&self, _ctx: &mut Context, _error: Error) {}
     async fn on_finish(&self, _ctx: &mut Context) {}
-    
+
     // BIND-related callbacks
     async fn on_bind_listen(&self, _ctx: &mut Context, _bind_addr: SocketAddr) {}
     async fn on_bind_accept(&self, _ctx: &mut Context, _peer_addr: SocketAddr) {}
@@ -872,7 +872,7 @@ impl Context {
         self.bind_receiver = Some(receiver);
         self
     }
-    
+
     /// Take the BIND receiver for waiting
     pub fn take_bind_receiver(&mut self) -> Option<tokio::sync::oneshot::Receiver<()>> {
         self.bind_receiver.take()
@@ -927,7 +927,7 @@ impl ContextRefOps for ContextRef {
     async fn to_string(&self) -> String {
         self.read().await.to_string()
     }
-    
+
     async fn on_bind_listen(&self, bind_addr: SocketAddr) {
         let mut inner = self.write().await;
         inner.set_state(ContextState::BindWaiting);
@@ -935,22 +935,24 @@ impl ContextRefOps for ContextRef {
             cb.on_bind_listen(&mut inner, bind_addr).await
         }
     }
-    
+
     async fn on_bind_accept(&self, peer_addr: SocketAddr) {
         let mut inner = self.write().await;
         if let Some(cb) = inner.callback.clone() {
             cb.on_bind_accept(&mut inner, peer_addr).await
         }
     }
-    
+
     async fn wait_for_bind(&self) -> Result<()> {
         let receiver = {
             let mut inner = self.write().await;
             inner.take_bind_receiver()
         };
-        
+
         if let Some(receiver) = receiver {
-            receiver.await.map_err(|_| anyhow::anyhow!("BIND operation cancelled"))
+            receiver
+                .await
+                .map_err(|_| anyhow::anyhow!("BIND operation cancelled"))
         } else {
             Err(anyhow::anyhow!("No BIND receiver available"))
         }

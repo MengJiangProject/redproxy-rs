@@ -13,8 +13,8 @@ use crate::{
         into_unspecified,
         socket_ops::{RealSocketOps, SocketOps},
         socks::{
-            PasswordAuth, SOCKS_CMD_BIND, SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE, SOCKS_REPLY_OK, SocksRequest,
-            SocksResponse, frames::setup_udp_session,
+            PasswordAuth, SOCKS_CMD_BIND, SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE,
+            SOCKS_REPLY_OK, SocksRequest, SocksResponse, frames::setup_udp_session,
         },
         tls::TlsClientConfig,
     },
@@ -102,7 +102,12 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for SocksConnector<S
 
     fn features(&self) -> &[Feature] {
         if self.version == 5 {
-            &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind, Feature::TcpBind]
+            &[
+                Feature::TcpForward,
+                Feature::UdpForward,
+                Feature::UdpBind,
+                Feature::TcpBind,
+            ]
         } else {
             // SOCKS4 supports CONNECT and BIND, but not UDP
             &[Feature::TcpForward, Feature::TcpBind]
@@ -201,16 +206,20 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for SocksConnector<S
             ctx.write().await.set_state(ContextState::BindWaiting);
             // Notify that BIND is ready - the server stream is already set for SOCKS protocol
             ctx.on_bind_listen(bind_addr).await;
-            
-            // Set up receiver to wait for second SOCKS response  
+
+            // Set up receiver to wait for second SOCKS response
             let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
             ctx.write().await.set_bind_receiver(receiver);
-            
+
             // Spawn task to read second SOCKS response
             tokio::spawn(async move {
                 // Take the server stream temporarily to read the second response
-                let mut server_stream = ctx.write().await.take_server_stream().expect("server stream should be set");
-                
+                let mut server_stream = ctx
+                    .write()
+                    .await
+                    .take_server_stream()
+                    .expect("server stream should be set");
+
                 match SocksResponse::read_from(&mut server_stream).await {
                     Ok(resp2) => {
                         if resp2.cmd == SOCKS_REPLY_OK {
@@ -334,11 +343,7 @@ mod tests {
     }
 
     // SOCKS5 BIND protocol stream builder for complete tests (both responses)
-    fn socks5_bind_stream(
-        target_host: &str,
-        target_port: u16,
-        auth: Option<(&str, &str)>,
-    ) -> Mock {
+    fn socks5_bind_stream(target_host: &str, target_port: u16, auth: Option<(&str, &str)>) -> Mock {
         let mut script = StreamScript::new();
 
         if let Some((username, password)) = auth {
@@ -379,7 +384,6 @@ mod tests {
             .read(&[0x00, 0x5a, 0x1F, 0x90, 192, 168, 1, 100]) // First response: bound address
             .build()
     }
-
 
     fn create_test_connector<S: SocketOps>(
         server: String,
@@ -423,7 +427,12 @@ mod tests {
         assert_eq!(connector.name(), "test_socks");
         assert_eq!(
             connector.features(),
-            &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind, Feature::TcpBind]
+            &[
+                Feature::TcpForward,
+                Feature::UdpForward,
+                Feature::UdpBind,
+                Feature::TcpBind
+            ]
         );
         assert_eq!(connector.version, 5);
 
@@ -686,7 +695,7 @@ mod tests {
         // The spawned task will read the second response and signal completion
         let wait_result = ctx.wait_for_bind().await;
         assert!(wait_result.is_ok());
-        
+
         // Give a moment for cleanup after the BIND completes
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }

@@ -451,16 +451,13 @@ impl ProxyServer {
 
         // Handle BIND operations that need to wait for incoming connections
         if let ContextState::BindWaiting = ctx.read().await.state()
-            && let Err(e) = ctx.wait_for_bind().await {
-                warn!(
-                    "BIND operation failed: {} \nctx: {}",
-                    e,
-                    props.to_string()
-                );
-                ctx.on_error(anyhow!("{}", e)).await;
-                return;
-            }
-        
+            && let Err(e) = ctx.wait_for_bind().await
+        {
+            warn!("BIND operation failed: {} \nctx: {}", e, props.to_string());
+            ctx.on_error(anyhow!("{}", e)).await;
+            return;
+        }
+
         ctx.on_connect().await;
         match copy_bidi(ctx.clone(), &self.io_params).await {
             Err(e) => {

@@ -86,7 +86,7 @@ impl AppTcpListener for RealTcpListener {
         let (stream, addr) = self.listener.accept().await?;
         Ok((Box::new(stream), addr))
     }
-    
+
     async fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.listener.local_addr()?)
     }
@@ -275,7 +275,7 @@ pub mod test_utils {
             let addr = "127.0.0.1:12345".parse().unwrap();
             Ok((Box::new(stream), addr))
         }
-        
+
         async fn local_addr(&self) -> Result<SocketAddr> {
             Ok("127.0.0.1:8080".parse().unwrap())
         }
