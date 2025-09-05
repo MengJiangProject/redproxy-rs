@@ -253,58 +253,66 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
                     local_addr
                 };
 
-                // Create oneshot channel for the bind operation
-                let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
-                debug!("{}: Created oneshot channel for BIND completion", self.name);
-
-                // Set up the BIND receiver in context and mark as waiting for bind
-                ctx.write()
-                    .await
-                    .set_bind_receiver(receiver)
-                    .set_state(ContextState::BindWaiting);
-                debug!("{}: Set context state to BindWaiting", self.name);
-
-                // Trigger the bind_listen callback
+                // Trigger the bind_listen callback immediately
                 debug!(
                     "{}: Triggering bind_listen callback with address {}",
                     self.name, response_addr
                 );
                 ctx.on_bind_listen(response_addr).await;
 
-                // Spawn task to wait for connection
+                // Spawn a task for the BIND accept operation
                 let ctx_clone = ctx.clone();
                 let connector_name = self.name.clone();
-                tokio::spawn(async move {
+                let cancellation_token = ctx.read().await.cancellation_token().clone();
+
+                let bind_task = tokio::spawn(async move {
+                    debug!("{}: Waiting for BIND connection", connector_name);
+
+                    // Accept incoming connection with cancellation support
+                    let accept_result = tokio::select! {
+                        result = listener.accept() => result,
+                        _ = cancellation_token.cancelled() => {
+                            debug!("{}: BIND operation cancelled during shutdown", connector_name);
+                            return Err(anyhow::anyhow!("BIND operation cancelled"));
+                        }
+                    };
+
+                    let (stream, peer_addr) = accept_result.map_err(|e| {
+                        debug!("{}: BIND accept failed: {}", connector_name, e);
+                        anyhow::anyhow!("BIND accept failed: {}", e)
+                    })?;
+
                     debug!(
-                        "{}: Spawned task waiting for BIND connection",
-                        connector_name
+                        "{}: BIND accepted connection from {}",
+                        connector_name, peer_addr
                     );
-                    match listener.accept().await {
-                        Ok((stream, peer_addr)) => {
-                            debug!(
-                                "{}: BIND accepted connection from {}",
-                                connector_name, peer_addr
-                            );
-                            // Set the server stream in context
-                            ctx_clone
-                                .write()
-                                .await
-                                .set_server_stream(make_buffered_stream(stream));
-                            // Trigger the bind_accept callback
-                            debug!(
-                                "{}: Triggering bind_accept callback for peer {}",
-                                connector_name, peer_addr
-                            );
-                            ctx_clone.on_bind_accept(peer_addr).await;
-                            // Signal that BIND is complete
-                            debug!("{}: Signaling BIND completion", connector_name);
-                            let _ = sender.send(());
-                        }
-                        Err(e) => {
-                            debug!("{}: BIND accept failed: {}", connector_name, e);
-                        }
-                    }
+
+                    // Set the server stream in context
+                    ctx_clone
+                        .write()
+                        .await
+                        .set_server_stream(make_buffered_stream(stream));
+
+                    // Trigger the bind_accept callback
+                    debug!(
+                        "{}: Triggering bind_accept callback for peer {}",
+                        connector_name, peer_addr
+                    );
+                    ctx_clone.on_bind_accept(peer_addr).await;
+
+                    debug!("{}: BIND operation completed successfully", connector_name);
+                    Ok(())
                 });
+
+                // Set up the BIND task handle in context and mark as waiting for bind
+                ctx.write()
+                    .await
+                    .set_bind_task(bind_task)
+                    .set_state(ContextState::BindWaiting);
+                debug!(
+                    "{}: Set context state to BindWaiting with task handle",
+                    self.name
+                );
 
                 debug!(
                     "{}: TCP BIND setup complete, listening on {:?}",

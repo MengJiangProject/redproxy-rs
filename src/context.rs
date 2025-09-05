@@ -516,7 +516,7 @@ impl ContextManager {
             http_request: None,
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             // Initialize BIND fields
-            bind_receiver: None,
+            bind_task: None,
         }));
 
         // Increment atomic counter and add to alive map
@@ -655,6 +655,9 @@ impl ContextManager {
     }
 }
 
+// Type alias for the BIND task handle
+pub type BindTask = tokio::task::JoinHandle<Result<()>>;
+
 pub struct Context {
     props: Arc<ContextProps>,
     client_stream: Option<IOBufStream>,
@@ -665,8 +668,8 @@ pub struct Context {
     state: Arc<ContextManager>,
     http_request: Option<Arc<crate::common::http::HttpRequest>>,
     cancellation_token: tokio_util::sync::CancellationToken,
-    // BIND-related fields - only what we need for waiting
-    bind_receiver: Option<tokio::sync::oneshot::Receiver<()>>,
+    // BIND-related fields - using JoinHandle for spawned task
+    bind_task: Option<BindTask>,
 }
 
 pub type ContextRef = Arc<RwLock<Context>>;
@@ -867,15 +870,15 @@ impl Context {
         &self.cancellation_token
     }
 
-    /// Set up BIND operation with oneshot receiver for waiting
-    pub fn set_bind_receiver(&mut self, receiver: tokio::sync::oneshot::Receiver<()>) -> &mut Self {
-        self.bind_receiver = Some(receiver);
+    /// Set up BIND operation with a task handle for waiting
+    pub fn set_bind_task(&mut self, task: BindTask) -> &mut Self {
+        self.bind_task = Some(task);
         self
     }
 
-    /// Take the BIND receiver for waiting
-    pub fn take_bind_receiver(&mut self) -> Option<tokio::sync::oneshot::Receiver<()>> {
-        self.bind_receiver.take()
+    /// Take the BIND task handle for waiting
+    pub fn take_bind_task(&mut self) -> Option<BindTask> {
+        self.bind_task.take()
     }
 }
 
@@ -944,17 +947,29 @@ impl ContextRefOps for ContextRef {
     }
 
     async fn wait_for_bind(&self) -> Result<()> {
-        let receiver = {
+        let (task, cancellation_token) = {
             let mut inner = self.write().await;
-            inner.take_bind_receiver()
+            let task = inner.take_bind_task();
+            let token = inner.cancellation_token().clone();
+            (task, token)
         };
 
-        if let Some(receiver) = receiver {
-            receiver
-                .await
-                .map_err(|_| anyhow::anyhow!("BIND operation cancelled"))
+        if let Some(task) = task {
+            // Wait for either the BIND task to complete or cancellation
+            tokio::select! {
+                result = task => {
+                    // Task completed (either success or error)
+                    result
+                        .map_err(|e| anyhow::anyhow!("BIND task panicked: {}", e))
+                        .and_then(|result| result)
+                }
+                _ = cancellation_token.cancelled() => {
+                    // Shutdown requested - abort waiting
+                    Err(anyhow::anyhow!("BIND wait cancelled during shutdown"))
+                }
+            }
         } else {
-            Err(anyhow::anyhow!("No BIND receiver available"))
+            Err(anyhow::anyhow!("No BIND task available"))
         }
     }
 }
