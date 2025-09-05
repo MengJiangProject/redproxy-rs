@@ -205,16 +205,19 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
             }
             Feature::TcpBind => {
                 debug!("{}: Starting TCP BIND to {}", self.name, remote);
-                
+
                 // Determine the bind address: use configured bind field if set, otherwise use remote
                 let bind_addr = if let Some(bind_ip) = self.bind {
                     SocketAddr::new(bind_ip, remote.port())
                 } else {
                     remote
                 };
-                
+
                 // Create TCP listener on the determined bind address
-                debug!("{}: Attempting to bind TCP listener to {}", self.name, bind_addr);
+                debug!(
+                    "{}: Attempting to bind TCP listener to {}",
+                    self.name, bind_addr
+                );
                 let listener = match self.socket_ops.tcp_listen(bind_addr).await {
                     Ok(listener) => {
                         debug!("{}: Successfully created TCP listener", self.name);
@@ -225,7 +228,7 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
                         return Err(e);
                     }
                 };
-                
+
                 let local_addr = match listener.local_addr().await {
                     Ok(addr) => {
                         debug!("{}: TCP listener bound to {}", self.name, addr);
@@ -240,7 +243,10 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
                 // Apply NAT address override if configured
                 let response_addr = if let Some(override_ip) = self.override_bind_address {
                     let overridden = SocketAddr::new(override_ip, local_addr.port());
-                    debug!("{}: Using NAT override address: {} -> {}", self.name, local_addr, overridden);
+                    debug!(
+                        "{}: Using NAT override address: {} -> {}",
+                        self.name, local_addr, overridden
+                    );
                     overridden
                 } else {
                     debug!("{}: Using actual bound address: {}", self.name, local_addr);
@@ -259,14 +265,20 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
                 debug!("{}: Set context state to BindWaiting", self.name);
 
                 // Trigger the bind_listen callback
-                debug!("{}: Triggering bind_listen callback with address {}", self.name, response_addr);
+                debug!(
+                    "{}: Triggering bind_listen callback with address {}",
+                    self.name, response_addr
+                );
                 ctx.on_bind_listen(response_addr).await;
 
                 // Spawn task to wait for connection
                 let ctx_clone = ctx.clone();
                 let connector_name = self.name.clone();
                 tokio::spawn(async move {
-                    debug!("{}: Spawned task waiting for BIND connection", connector_name);
+                    debug!(
+                        "{}: Spawned task waiting for BIND connection",
+                        connector_name
+                    );
                     match listener.accept().await {
                         Ok((stream, peer_addr)) => {
                             debug!(
@@ -279,7 +291,10 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
                                 .await
                                 .set_server_stream(make_buffered_stream(stream));
                             // Trigger the bind_accept callback
-                            debug!("{}: Triggering bind_accept callback for peer {}", connector_name, peer_addr);
+                            debug!(
+                                "{}: Triggering bind_accept callback for peer {}",
+                                connector_name, peer_addr
+                            );
                             ctx_clone.on_bind_accept(peer_addr).await;
                             // Signal that BIND is complete
                             debug!("{}: Signaling BIND completion", connector_name);
@@ -291,7 +306,10 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
                     }
                 });
 
-                debug!("{}: TCP BIND setup complete, listening on {:?}", self.name, response_addr);
+                debug!(
+                    "{}: TCP BIND setup complete, listening on {:?}",
+                    self.name, response_addr
+                );
             }
         }
         Ok(())
@@ -563,10 +581,8 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify that the spawned task is properly tracked and can be awaited
-        let wait_result = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            ctx.wait_for_bind()
-        ).await;
+        let wait_result =
+            tokio::time::timeout(std::time::Duration::from_millis(100), ctx.wait_for_bind()).await;
 
         // Should complete quickly with mock socket ops
         assert!(wait_result.is_ok());
@@ -580,29 +596,27 @@ mod tests {
         connector.init().await.unwrap();
 
         let connector = Arc::new(connector);
-        
+
         // Create multiple BIND operations concurrently
         let mut handles = Vec::new();
-        
+
         for i in 0..3 {
             let connector_clone = connector.clone();
-            let target = TargetAddress::SocketAddr(
-                format!("127.0.0.1:808{}", i).parse().unwrap()
-            );
+            let target = TargetAddress::SocketAddr(format!("127.0.0.1:808{}", i).parse().unwrap());
             let ctx = create_test_context(target, Feature::TcpBind).await;
-            
+
             let handle = tokio::spawn(async move {
                 let result = connector_clone.connect(ctx.clone()).await;
                 assert!(result.is_ok());
-                
+
                 // Each BIND should complete successfully
                 let wait_result = ctx.wait_for_bind().await;
                 assert!(wait_result.is_ok());
             });
-            
+
             handles.push(handle);
         }
-        
+
         // Wait for all concurrent operations to complete
         for handle in handles {
             handle.await.unwrap();
