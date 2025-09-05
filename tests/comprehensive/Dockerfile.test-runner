@@ -20,6 +20,7 @@ ENV UV_PROJECT_ENVIRONMENT=/home/testuser/.venv
 COPY --chown=testuser:testuser scripts/pyproject.toml scripts/uv.lock* /home/testuser/project/
 WORKDIR /home/testuser/project
 RUN uv sync
+RUN ln -sf /scripts/tests /home/testuser/project/tests
 
 # Keep working directory in project for uv commands
 

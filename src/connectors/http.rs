@@ -392,9 +392,9 @@ mod tests {
         // Add an HTTP request to the context (simulating HTTP forward proxy scenario)
         {
             let mut ctx_lock = ctx.write().await;
-            let http_request = crate::common::http::HttpRequest::new("GET", "/")
+            let http_request = crate::common::http::HttpRequestV1::new("GET", "/")
                 .with_header("Host", "httpbin.org");
-            ctx_lock.set_http_request(http_request);
+            ctx_lock.set_http_request_v1(http_request);
         }
 
         // Connect should still use CONNECT tunneling because force_connect = true
@@ -704,9 +704,9 @@ udpProtocol: "rfc9298"
         // Add an HTTP request to the context
         {
             let mut ctx_lock = ctx.write().await;
-            let http_request = crate::common::http::HttpRequest::new("GET", "/")
+            let http_request = crate::common::http::HttpRequestV1::new("GET", "/")
                 .with_header("Host", "httpbin.org");
-            ctx_lock.set_http_request(http_request);
+            ctx_lock.set_http_request_v1(http_request);
         }
 
         // Connect should use HTTP forward proxy (no CONNECT tunneling)

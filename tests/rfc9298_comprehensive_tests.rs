@@ -5,7 +5,7 @@ use tokio::io::duplex;
 use tokio::time::timeout;
 
 use redproxy_rs::common::frames::{Frame, rfc9298_frames_from_stream};
-use redproxy_rs::common::http::HttpRequest;
+use redproxy_rs::common::http::HttpRequestV1;
 use redproxy_rs::common::http_proxy::{
     generate_rfc9298_uri_from_template, is_websocket_upgrade, parse_rfc9298_uri_template,
 };
@@ -107,7 +107,7 @@ async fn test_frame_encoding_consistency_with_project_implementation() {
 #[test]
 fn test_connect_udp_detection() {
     // Test RFC 9298 connect-udp upgrade detection (should NOT be detected as WebSocket)
-    let rfc9298_request = HttpRequest::new("GET", "/.well-known/masque/udp/host/port/")
+    let rfc9298_request = HttpRequestV1::new("GET", "/.well-known/masque/udp/host/port/")
         .with_header("Connection", "Upgrade")
         .with_header("Upgrade", "connect-udp");
 
@@ -117,7 +117,7 @@ fn test_connect_udp_detection() {
     );
 
     // Test actual WebSocket upgrade (should be detected)
-    let websocket_request = HttpRequest::new("GET", "/websocket")
+    let websocket_request = HttpRequestV1::new("GET", "/websocket")
         .with_header("Connection", "Upgrade")
         .with_header("Upgrade", "websocket");
 
@@ -127,7 +127,7 @@ fn test_connect_udp_detection() {
     );
 
     // Test mixed case
-    let mixed_case_request = HttpRequest::new("GET", "/.well-known/masque/udp/host/port/")
+    let mixed_case_request = HttpRequestV1::new("GET", "/.well-known/masque/udp/host/port/")
         .with_header("Connection", "upgrade")
         .with_header("Upgrade", "Connect-UDP");
 

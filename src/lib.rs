@@ -10,7 +10,9 @@ pub mod config;
 pub mod connectors;
 pub mod context;
 pub mod copy;
+pub mod io;
 pub mod listeners;
+pub mod protocols;
 pub mod rules;
 pub mod server;
 
@@ -23,3 +25,6 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub use config::Config;
 pub use context::{Context, ContextRef, TargetAddress};
 pub use server::ProxyServer;
+
+// Re-export HTTP protocol types for convenience
+pub use protocols::http::{HttpMethod, HttpRequest, HttpResponse, HttpVersion};

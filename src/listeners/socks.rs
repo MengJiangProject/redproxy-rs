@@ -13,7 +13,7 @@ use crate::{
     common::{
         auth::AuthData,
         into_unspecified,
-        socket_ops::{AppTcpListener, RealSocketOps, SocketOps, Stream},
+        socket_ops::{TcpListener, RealSocketOps, SocketOps},
         socks::{
             PasswordAuth, SOCKS_CMD_BIND, SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE,
             SOCKS_REPLY_GENERAL_FAILURE, SOCKS_REPLY_OK, SocksRequest, SocksResponse,
@@ -23,7 +23,7 @@ use crate::{
     },
     config::Timeouts,
     context::{
-        Context, ContextCallback, ContextManager, ContextRef, ContextRefOps, Feature,
+        Context, ContextCallback, ContextManager, ContextRef, ContextRefOps, Feature, IOStream,
         make_buffered_stream,
     },
     listeners::Listener,
@@ -117,7 +117,7 @@ impl<S: SocketOps + Send + Sync + 'static> Listener for SocksListener<S> {
 impl<S: SocketOps + Send + Sync + 'static> SocksListener<S> {
     async fn accept(
         self: Arc<Self>,
-        listener: Box<dyn AppTcpListener>,
+        listener: Box<dyn TcpListener>,
         contexts: Arc<ContextManager>,
         timeouts: Timeouts,
         queue: Sender<ContextRef>,
@@ -160,7 +160,7 @@ impl<S: SocketOps + Send + Sync + 'static> SocksListener<S> {
 
     async fn handshake(
         self: Arc<Self>,
-        socket: Box<dyn Stream>,
+        socket: Box<dyn IOStream>,
         source: SocketAddr,
         contexts: Arc<ContextManager>,
         timeouts: Timeouts,
@@ -180,7 +180,7 @@ impl<S: SocketOps + Send + Sync + 'static> SocksListener<S> {
             .unwrap_or_else(|e| warn!("set_keepalive failed: {}", e));
 
         let mut socket = if let Some(tls_config) = &self.tls {
-            let stream = self
+            let (stream, _alpn) = self
                 .socket_ops
                 .tls_handshake_server(socket, tls_config)
                 .await?;
