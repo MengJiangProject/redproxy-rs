@@ -385,3 +385,262 @@ impl ContextCallback for Callback {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::socket_ops::{test_utils::MockSocketOps, SocketOps};
+    use crate::context::{ContextManager, Feature, TargetAddress};
+    use crate::config::Timeouts;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+    
+    fn create_test_listener<S: SocketOps>(socket_ops: Arc<S>, allow_bind: bool, enforce_bind_address: bool) -> SocksListener<S> {
+        SocksListener::new(
+            SocksListenerConfig {
+                name: "test_socks".to_string(),
+                bind: "127.0.0.1:1080".parse().unwrap(),
+                tls: None,
+                auth: AuthData::default(),
+                allow_udp: true,
+                enforce_udp_client: false,
+                override_udp_address: None,
+                allow_bind,
+                enforce_bind_address,
+            },
+            socket_ops,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_socks5_bind_request_allowed() {
+        use crate::common::socket_ops::test_utils::StreamScript;
+        
+        // Create mock stream that sends SOCKS5 BIND request
+        // Note: We don't expect specific response writes because they're handled by callbacks
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            StreamScript::new()
+                // SOCKS5 handshake
+                .read(&[0x05, 0x01, 0x00])  // Version 5, 1 method, no auth
+                .write(&[0x05, 0x00])       // Version 5, accept no auth
+                
+                // BIND request: VER CMD RSV ATYP DST.ADDR DST.PORT
+                .read(&[
+                    0x05,              // Version 5  
+                    0x02,              // BIND command
+                    0x00,              // Reserved
+                    0x01,              // IPv4
+                    192, 168, 1, 100,  // 192.168.1.100
+                    0x1F, 0x90         // Port 8080 (0x1F90)
+                ])
+                .build()
+        }));
+        
+        let listener = Arc::new(create_test_listener(mock_ops.clone(), true, false));
+        let (tx, mut rx) = mpsc::channel(10);
+        let ctx_manager = Arc::new(ContextManager::default());
+        let timeouts = Timeouts::default();
+        
+        // Simulate handshake with BIND request
+        let client_addr: std::net::SocketAddr = "127.0.0.1:54321".parse().unwrap();
+        let socket = Box::new((mock_ops.stream_builder)());
+        
+        let result = listener.handshake(socket, client_addr, ctx_manager, timeouts, tx.clone()).await;
+        assert!(result.is_ok(), "SOCKS5 BIND handshake should succeed when allowed");
+        
+        // Verify context was created with TcpBind feature
+        let ctx_ref = rx.recv().await.expect("Should receive context");
+        let ctx = ctx_ref.read().await;
+        assert_eq!(ctx.feature(), Feature::TcpBind, "Context should have TcpBind feature");
+        
+        // Verify target address matches BIND request
+        let target = ctx.target();
+        if let TargetAddress::SocketAddr(addr) = target {
+            assert_eq!(addr.ip(), "192.168.1.100".parse::<std::net::IpAddr>().unwrap());
+            assert_eq!(addr.port(), 8080);
+        } else {
+            panic!("Expected SocketAddr target");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_socks5_bind_request_denied() {
+        use crate::common::socket_ops::test_utils::StreamScript;
+        
+        // Create mock stream for BIND rejection - expect error response from callback
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            StreamScript::new()
+                // SOCKS5 handshake
+                .read(&[0x05, 0x01, 0x00])  
+                .write(&[0x05, 0x00])         
+                
+                // BIND request
+                .read(&[
+                    0x05,              // Version 5  
+                    0x02,              // BIND command
+                    0x00,              // Reserved
+                    0x01,              // IPv4
+                    192, 168, 1, 100,  // 192.168.1.100
+                    0x1F, 0x90         // Port 8080
+                ])
+                
+                // Expect error response from callback (general failure)
+                .write(&[
+                    0x05,              // Version 5
+                    0x01,              // General failure (not command not supported)
+                    0x00,              // Reserved  
+                    0x01,              // IPv4
+                    0, 0, 0, 0,        // 0.0.0.0
+                    0x00, 0x00         // Port 0
+                ])
+                .build()
+        }));
+        
+        let listener = Arc::new(create_test_listener(mock_ops.clone(), false, false)); // BIND disabled
+        let (tx, mut rx) = mpsc::channel(10);
+        let ctx_manager = Arc::new(ContextManager::default());
+        let timeouts = Timeouts::default();
+        
+        let client_addr: std::net::SocketAddr = "127.0.0.1:54321".parse().unwrap();
+        let socket = Box::new((mock_ops.stream_builder)());
+        
+        let result = listener.handshake(socket, client_addr, ctx_manager, timeouts, tx).await;
+        // Should complete the handshake but reject BIND (no context enqueued)
+        assert!(result.is_ok(), "Should handle BIND rejection gracefully");
+        
+        // Verify no context was enqueued since BIND was rejected
+        match tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await {
+            Err(_) => {
+                // Timeout occurred - this is what we expect (no context sent)
+            }
+            Ok(None) => {
+                // Channel closed without sending anything - also acceptable
+            }
+            Ok(Some(ctx)) => {
+                panic!("Context was unexpectedly enqueued when BIND should be denied: {:?}", ctx);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_socks5_bind_with_enforce_address() {
+        use crate::common::socket_ops::test_utils::StreamScript;
+        
+        // Test that enforce_bind_address forces system allocation
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            StreamScript::new()
+                .read(&[0x05, 0x01, 0x00])  
+                .write(&[0x05, 0x00])         
+                
+                // Client requests specific address
+                .read(&[
+                    0x05, 0x02, 0x00, 0x01,    // SOCKS5 BIND IPv4
+                    192, 168, 1, 100,          // Requested: 192.168.1.100
+                    0x1F, 0x90                 // Port 8080
+                ])
+                
+                .build()
+        }));
+        
+        let listener = Arc::new(create_test_listener(mock_ops.clone(), true, true)); // enforce_bind_address = true
+        let (tx, mut rx) = mpsc::channel(10);
+        let ctx_manager = Arc::new(ContextManager::default());
+        let timeouts = Timeouts::default();
+        
+        let client_addr: std::net::SocketAddr = "127.0.0.1:54321".parse().unwrap();
+        let socket = Box::new((mock_ops.stream_builder)());
+        
+        let result = listener.handshake(socket, client_addr, ctx_manager, timeouts, tx).await;
+        assert!(result.is_ok());
+        
+        let ctx_ref = rx.recv().await.expect("Should receive context");
+        let ctx = ctx_ref.read().await;
+        assert_eq!(ctx.feature(), Feature::TcpBind);
+        
+        // Target should be system-allocated address (0.0.0.0:0), not client request
+        if let TargetAddress::SocketAddr(addr) = ctx.target() {
+            assert_eq!(addr.ip(), "0.0.0.0".parse::<std::net::IpAddr>().unwrap());
+            assert_eq!(addr.port(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_socks4_bind_request() {
+        use crate::common::socket_ops::test_utils::StreamScript;
+        
+        // Test SOCKS4 BIND support
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            StreamScript::new()
+                // SOCKS4 BIND request: VER CMD DSTPORT DSTIP USERID
+                .read(&[
+                    0x04,              // Version 4
+                    0x02,              // BIND command  
+                    0x1F, 0x90,        // Port 8080
+                    192, 168, 1, 100,  // IP 192.168.1.100
+                    0x00               // Empty userid (null terminated)
+                ])
+                
+                .build()
+        }));
+        
+        let listener = Arc::new(create_test_listener(mock_ops.clone(), true, false));
+        let (tx, mut rx) = mpsc::channel(10);
+        let ctx_manager = Arc::new(ContextManager::default());
+        let timeouts = Timeouts::default();
+        
+        let client_addr: std::net::SocketAddr = "127.0.0.1:54321".parse().unwrap();
+        let socket = Box::new((mock_ops.stream_builder)());
+        
+        let result = listener.handshake(socket, client_addr, ctx_manager, timeouts, tx).await;
+        assert!(result.is_ok(), "SOCKS4 BIND should succeed");
+        
+        let ctx_ref = rx.recv().await.expect("Should receive context");
+        let ctx = ctx_ref.read().await;
+        assert_eq!(ctx.feature(), Feature::TcpBind, "SOCKS4 should support BIND");
+        
+        if let TargetAddress::SocketAddr(addr) = ctx.target() {
+            assert_eq!(addr.ip(), "192.168.1.100".parse::<std::net::IpAddr>().unwrap());
+            assert_eq!(addr.port(), 8080);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_socks5_bind_ipv6() {
+        use crate::common::socket_ops::test_utils::StreamScript;
+        
+        // Test SOCKS5 BIND with IPv6 address
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            StreamScript::new()
+                .read(&[0x05, 0x01, 0x00])  
+                .write(&[0x05, 0x00])         
+                
+                // BIND request with IPv6  
+                .read(&[
+                    0x05, 0x02, 0x00, 0x04, // SOCKS5 BIND IPv6
+                    0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // 2001:db8::1
+                    0x1F, 0x90 // Port 8080
+                ])
+                
+                .build()
+        }));
+        
+        let listener = Arc::new(create_test_listener(mock_ops.clone(), true, false));
+        let (tx, mut rx) = mpsc::channel(10);
+        let ctx_manager = Arc::new(ContextManager::default());
+        let timeouts = Timeouts::default();
+        
+        let client_addr: std::net::SocketAddr = "127.0.0.1:54321".parse().unwrap();
+        let socket = Box::new((mock_ops.stream_builder)());
+        
+        let result = listener.handshake(socket, client_addr, ctx_manager, timeouts, tx).await;
+        assert!(result.is_ok(), "SOCKS5 BIND with IPv6 should succeed");
+        
+        let ctx_ref = rx.recv().await.expect("Should receive context");
+        let ctx = ctx_ref.read().await;
+        
+        if let TargetAddress::SocketAddr(addr) = ctx.target() {
+            assert_eq!(addr.ip(), "2001:db8::1".parse::<std::net::IpAddr>().unwrap());
+            assert_eq!(addr.port(), 8080);
+        }
+    }
+}

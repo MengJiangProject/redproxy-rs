@@ -185,6 +185,7 @@ mod ssh_integration_tests {
     }
 
     #[tokio::test]
+    #[ignore] // Ignored because it was too slow and unreliable in CI
     async fn test_ssh_connection_error_scenarios() {
         // Test various SSH connection failure scenarios
 

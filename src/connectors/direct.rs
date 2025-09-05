@@ -317,7 +317,7 @@ mod tests {
     use crate::{
         common::socket_ops::{SocketOps, test_utils::MockSocketOps},
         connectors::Connector,
-        context::{ContextManager, Feature, TargetAddress},
+        context::{ContextManager, ContextState, Feature, TargetAddress},
     };
     use std::net::{Ipv4Addr, SocketAddr};
 
@@ -423,9 +423,78 @@ mod tests {
 
         // Test basic connector interface
         assert_eq!(connector.name(), "test");
-        assert_eq!(connector.features().len(), 3);
+        assert_eq!(connector.features().len(), 4);
         assert!(connector.has_feature(Feature::TcpForward));
         assert!(connector.has_feature(Feature::UdpForward));
         assert!(connector.has_feature(Feature::UdpBind));
+        assert!(connector.has_feature(Feature::TcpBind));
+    }
+
+    #[tokio::test]
+    async fn test_tcp_bind_success() {
+        let mock_ops = Arc::new(MockSocketOps::new());
+        let mut connector = create_test_connector(mock_ops);
+        connector.init().await.unwrap();
+
+        let connector = Arc::new(connector);
+        let target = TargetAddress::SocketAddr("127.0.0.1:8080".parse().unwrap());
+        let ctx = create_test_context(target, Feature::TcpBind).await;
+
+        // This should succeed and set up BIND operation
+        let result = connector.connect(ctx.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify context state was set to BindWaiting
+        let context_read = ctx.read().await;
+        assert_eq!(context_read.state(), ContextState::BindWaiting);
+    }
+
+    #[tokio::test]
+    async fn test_tcp_bind_with_override_address() {
+        let mock_ops = Arc::new(MockSocketOps::new());
+        let mut connector = DirectConnector::with_socket_ops(
+            DirectConnectorConfig {
+                name: "test_override".to_string(),
+                bind: None,
+                dns: Arc::new(DnsConfig::default()),
+                fwmark: None,
+                keepalive: true,
+                override_bind_address: Some("192.168.1.100".parse().unwrap()),
+            },
+            mock_ops,
+        );
+        connector.init().await.unwrap();
+
+        let connector = Arc::new(connector);
+        let target = TargetAddress::SocketAddr("127.0.0.1:8080".parse().unwrap());
+        let ctx = create_test_context(target, Feature::TcpBind).await;
+
+        // This should succeed with address override
+        let result = connector.connect(ctx.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify context state was set to BindWaiting
+        let context_read = ctx.read().await;
+        assert_eq!(context_read.state(), ContextState::BindWaiting);
+    }
+
+    #[tokio::test]
+    async fn test_tcp_bind_wait_for_connection() {
+        let mock_ops = Arc::new(MockSocketOps::new());
+        let mut connector = create_test_connector(mock_ops);
+        connector.init().await.unwrap();
+
+        let connector = Arc::new(connector);
+        let target = TargetAddress::SocketAddr("127.0.0.1:8080".parse().unwrap());
+        let ctx = create_test_context(target, Feature::TcpBind).await;
+
+        // Set up BIND operation
+        let result = connector.connect(ctx.clone()).await;
+        assert!(result.is_ok());
+
+        // Simulate waiting for BIND connection (this would normally wait for actual connection)
+        // In mock environment, this should succeed immediately
+        let wait_result = ctx.wait_for_bind().await;
+        assert!(wait_result.is_ok());
     }
 }
