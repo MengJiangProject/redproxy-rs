@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Error, Result, bail};
+use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ use crate::{
         into_unspecified,
         socket_ops::{RealSocketOps, SocketOps},
     },
-    context::{ContextRef, Feature, TargetAddress, make_buffered_stream},
+    context::{ContextRef, ContextRefOps, ContextState, Feature, TargetAddress, make_buffered_stream},
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -31,6 +31,8 @@ pub struct DirectConnectorConfig {
     fwmark: Option<u32>,
     #[serde(default = "default_keepalive")]
     keepalive: bool,
+    #[serde(default)]
+    override_bind_address: Option<IpAddr>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -121,7 +123,7 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
     }
 
     fn features(&self) -> &[Feature] {
-        &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
+        &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind, Feature::TcpBind]
     }
 
     async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<(), Error> {
@@ -195,7 +197,52 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
                 }
                 trace!("connected to {:?}", target);
             }
-            x => bail!("not supported feature {:?}", x),
+            Feature::TcpBind => {
+                // Create TCP listener on the requested address
+                let listener = self.socket_ops.tcp_listen(remote).await?;
+                let local_addr = listener.local_addr().await?;
+                
+                // Apply NAT address override if configured
+                let response_addr = if let Some(override_ip) = self.override_bind_address {
+                    SocketAddr::new(override_ip, local_addr.port())
+                } else {
+                    local_addr
+                };
+                
+                // Create oneshot channel for the bind operation
+                let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+                
+                // Set up the BIND receiver in context and mark as waiting for bind
+                ctx.write().await
+                    .set_bind_receiver(receiver)
+                    .set_state(ContextState::BindWaiting);
+                
+                // Trigger the bind_listen callback
+                ctx.on_bind_listen(response_addr).await;
+                
+                // Spawn task to wait for connection
+                let ctx_clone = ctx.clone();
+                let connector_name = self.name.clone();
+                tokio::spawn(async move {
+                    match listener.accept().await {
+                        Ok((stream, peer_addr)) => {
+                            debug!("{}: BIND accepted connection from {}", connector_name, peer_addr);
+                            // Set the server stream in context
+                            ctx_clone.write().await.set_server_stream(make_buffered_stream(stream));
+                            // Trigger the bind_accept callback
+                            ctx_clone.on_bind_accept(peer_addr).await;
+                            // Signal that BIND is complete
+                            let _ = sender.send(());
+                        }
+                        Err(e) => {
+                            debug!("{}: BIND accept failed: {}", connector_name, e);
+                        }
+                    }
+                });
+                
+                trace!("BIND listening on {:?}", response_addr);
+            }
+            //x => bail!("not supported feature {:?}", x),
         }
         Ok(())
     }
@@ -282,6 +329,7 @@ mod tests {
                 dns: Arc::new(DnsConfig::default()),
                 fwmark: None,
                 keepalive: true,
+                override_bind_address: None,
             },
             socket_ops,
         )
@@ -352,6 +400,7 @@ mod tests {
                 dns: Arc::new(DnsConfig::default()),
                 fwmark: None,
                 keepalive: true,
+                override_bind_address: None,
             },
             mock_ops,
         );

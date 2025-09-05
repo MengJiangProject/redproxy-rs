@@ -24,7 +24,7 @@ use crate::{
     config::Timeouts,
     context::{
         Context, ContextCallback, ContextManager, ContextRef, ContextRefOps, Feature,
-        make_buffered_stream,
+        TargetAddress, make_buffered_stream,
     },
     listeners::Listener,
 };
@@ -44,6 +44,11 @@ pub struct SocksListenerConfig {
     enforce_udp_client: bool,
     #[serde(default)]
     override_udp_address: Option<IpAddr>,
+    // BIND command support
+    #[serde(default)]
+    allow_bind: bool,
+    #[serde(default)]
+    enforce_bind_address: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -220,8 +225,49 @@ impl<S: SocketOps + Send + Sync + 'static> SocksListener<S> {
                 ctx.enqueue(&queue).await?;
             }
             SOCKS_CMD_BIND => {
-                ctx.on_error(anyhow!("not supported")).await;
-                debug!("not supported cmd: {:?}", request.cmd);
+                if !self.allow_bind {
+                    ctx.on_error(anyhow!("BIND command not allowed")).await;
+                    debug!("bind not allowed");
+                    return Ok(());
+                }
+                
+                // Process target address based on listener policy
+                // BIND operations must use SocketAddr, resolve domains first if needed
+                let bind_addr = match request.target {
+                    TargetAddress::SocketAddr(addr) => addr,
+                    TargetAddress::DomainPort(domain, port) => {
+                        // For BIND, we can't use domains, must resolve or reject
+                        ctx.on_error(anyhow!("BIND does not support domain addresses: {}:{}", domain, port)).await;
+                        debug!("BIND rejected domain address: {}:{}", domain, port);
+                        return Ok(());
+                    },
+                    _ => {
+                        ctx.on_error(anyhow!("Invalid BIND target address")).await;
+                        debug!("BIND rejected invalid address type");
+                        return Ok(());
+                    }
+                };
+                
+                let final_target = if self.enforce_bind_address {
+                    // Enforce mode: force system-assigned address and port, ignore client request
+                    // Use appropriate unspecified address based on client's requested address family
+                    let unspecified_addr = if bind_addr.is_ipv6() {
+                        SocketAddr::new("::".parse::<std::net::Ipv6Addr>().unwrap().into(), 0)
+                    } else {
+                        SocketAddr::new("0.0.0.0".parse::<std::net::Ipv4Addr>().unwrap().into(), 0)
+                    };
+                    unspecified_addr.into()
+                } else {
+                    // Normal mode: honor client's requested address
+                    bind_addr.into()
+                };
+                
+                ctx.write()
+                    .await
+                    .set_target(final_target)
+                    .set_feature(Feature::TcpBind);
+                
+                ctx.enqueue(&queue).await?;
             }
             SOCKS_CMD_UDP_ASSOCIATE => {
                 if !self.allow_udp {
@@ -306,6 +352,36 @@ impl ContextCallback for Callback {
         };
         if let Some(e) = resp.write_to(socket.unwrap()).await.err() {
             warn!("failed to send response: {}", e)
+        }
+    }
+
+    async fn on_bind_listen(&self, ctx: &mut Context, bind_addr: SocketAddr) {
+        let version = self.version;
+        let cmd = SOCKS_REPLY_OK;
+        let target = bind_addr.into();
+        let socket = ctx.borrow_client_stream();
+        let resp = SocksResponse {
+            version,
+            cmd,
+            target,
+        };
+        if let Some(e) = resp.write_to(socket.unwrap()).await.err() {
+            warn!("failed to send BIND listen response: {}", e)
+        }
+    }
+
+    async fn on_bind_accept(&self, ctx: &mut Context, peer_addr: SocketAddr) {
+        let version = self.version;
+        let cmd = SOCKS_REPLY_OK;
+        let target = peer_addr.into();
+        let socket = ctx.borrow_client_stream();
+        let resp = SocksResponse {
+            version,
+            cmd,
+            target,
+        };
+        if let Some(e) = resp.write_to(socket.unwrap()).await.err() {
+            warn!("failed to send BIND accept response: {}", e)
         }
     }
 }

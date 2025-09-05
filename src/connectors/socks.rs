@@ -6,19 +6,19 @@ use std::{
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tracing::trace;
+use tracing::{trace, warn};
 
 use crate::{
     common::{
         into_unspecified,
         socket_ops::{RealSocketOps, SocketOps},
         socks::{
-            PasswordAuth, SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE, SOCKS_REPLY_OK, SocksRequest,
+            PasswordAuth, SOCKS_CMD_BIND, SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE, SOCKS_REPLY_OK, SocksRequest,
             SocksResponse, frames::setup_udp_session,
         },
         tls::TlsClientConfig,
     },
-    context::{ContextRef, Feature, make_buffered_stream},
+    context::{ContextRef, ContextRefOps, ContextState, Feature, make_buffered_stream},
 };
 
 use super::ConnectorRef;
@@ -101,7 +101,12 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for SocksConnector<S
     }
 
     fn features(&self) -> &[Feature] {
-        &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
+        if self.version == 5 {
+            &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind, Feature::TcpBind]
+        } else {
+            // SOCKS4 supports CONNECT and BIND, but not UDP
+            &[Feature::TcpForward, Feature::TcpBind]
+        }
     }
 
     async fn init(&mut self) -> Result<()> {
@@ -148,7 +153,8 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for SocksConnector<S
         let cmd = match feature {
             Feature::UdpBind | Feature::UdpForward => SOCKS_CMD_UDP_ASSOCIATE,
             Feature::TcpForward => SOCKS_CMD_CONNECT,
-            _ => bail!("unknown supported feature: {:?}", feature),
+            Feature::TcpBind => SOCKS_CMD_BIND,
+            //_ => bail!("unknown supported feature: {:?}", feature),
         };
         let auth = self
             .auth
@@ -183,6 +189,50 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for SocksConnector<S
                 .await
                 .context("setup_udp_session")?;
             ctx.write().await.set_server_frames(frames);
+        } else if feature == Feature::TcpBind {
+            let mut bind_addr = resp
+                .target
+                .as_socket_addr()
+                .ok_or_else(|| anyhow::anyhow!("bad bind address from SOCKS server"))?;
+            if bind_addr.ip().is_unspecified() {
+                bind_addr = std::net::SocketAddr::new(remote.ip(), bind_addr.port());
+            }
+            // Set state to BindWaiting - SOCKS BIND needs to wait for second response
+            ctx.write().await.set_state(ContextState::BindWaiting);
+            // Notify that BIND is ready - the server stream is already set for SOCKS protocol
+            ctx.on_bind_listen(bind_addr).await;
+            
+            // Set up receiver to wait for second SOCKS response  
+            let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+            ctx.write().await.set_bind_receiver(receiver);
+            
+            // Spawn task to read second SOCKS response
+            tokio::spawn(async move {
+                // Take the server stream temporarily to read the second response
+                let mut server_stream = ctx.write().await.take_server_stream().expect("server stream should be set");
+                
+                match SocksResponse::read_from(&mut server_stream).await {
+                    Ok(resp2) => {
+                        if resp2.cmd == SOCKS_REPLY_OK {
+                            // Extract peer address from second response
+                            if let Some(peer_addr) = resp2.target.as_socket_addr() {
+                                trace!("SOCKS BIND accepted connection from {}", peer_addr);
+                                // Set the server stream back in context
+                                ctx.write().await.set_server_stream(server_stream);
+                                // Trigger the bind_accept callback
+                                ctx.on_bind_accept(peer_addr).await;
+                                // Signal that BIND is complete
+                                let _ = sender.send(());
+                            }
+                        } else {
+                            warn!("SOCKS BIND second response failed: {:?}", resp2.cmd);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to read second SOCKS BIND response: {}", e);
+                    }
+                }
+            });
         }
         Ok(())
     }
