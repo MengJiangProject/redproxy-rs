@@ -32,6 +32,7 @@ help:
 	@echo "  test-security       - Security and error handling tests"
 	@echo "  test-performance    - Concurrency and performance tests"
 	@echo "  test-matrix         - Test all listener×connector combinations"
+	@echo "  test-bind           - SOCKS BIND functionality tests"
 	@echo "  test-all            - Run all test suites"
 	@echo "  clean               - Stop all services and clean up"
 
@@ -91,8 +92,14 @@ test-performance: $(RUNNER_IMAGE) $(REDPROXY_IMAGE)
 	docker-compose run --rm test-runner uv run --frozen /scripts/test_performance.py
 	@echo "Performance tests completed"
 
+# BIND functionality tests
+test-bind: $(RUNNER_IMAGE) $(REDPROXY_IMAGE)
+	@echo "Running BIND functionality tests..."
+	REDPROXY_CONFIG=/config/bind-test.yaml docker-compose run --rm test-runner uv run --frozen /scripts/test_bind.py
+	@echo "BIND tests completed"
+
 # Run all tests (can be parallelized with make -j)
-test-all: test-matrix test-security test-performance
+test-all: test-matrix test-security test-performance test-bind
 	@echo "All comprehensive tests completed successfully!"
 
 # Cleanup
