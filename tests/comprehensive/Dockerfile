@@ -12,11 +12,11 @@ FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 
 # Build dependencies - this is the caching Docker layer!
-RUN cargo chef cook --recipe-path recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build application
 COPY . .
-RUN cargo build --all-features
+RUN cargo build --release --all-features
 
 # Runtime stage - use Debian to match test runner
 FROM debian:stable-slim
@@ -36,7 +36,7 @@ RUN groupadd -g ${GID} redproxy 2>/dev/null || true
 RUN useradd -u ${UID} -g ${GID} -m -s /bin/false redproxy 2>/dev/null || true
 
 # Copy binary
-COPY --from=builder /app/target/debug/redproxy-rs /usr/local/bin/redproxy
+COPY --from=builder /app/target/release/redproxy-rs /usr/local/bin/redproxy
 
 USER ${UID}:${GID}
 WORKDIR /
