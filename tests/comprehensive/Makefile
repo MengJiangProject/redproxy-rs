@@ -120,11 +120,16 @@ test-httpx: $(RUNNER_IMAGE) $(REDPROXY_IMAGE) output-dirs
 		$(ARGS)
 	@echo "HttpX listener tests completed - reports generated in ./reports/"
 
-# BIND functionality tests (keeping old style for now)
-test-bind: $(RUNNER_IMAGE) $(REDPROXY_IMAGE)
-	@echo "Running BIND functionality tests..."
-	REDPROXY_CONFIG=/config/bind-test.yaml docker-compose run --rm test-runner uv run --frozen /scripts/test_bind.py
-	@echo "BIND tests completed"
+# BIND functionality tests - NEW PYTEST FORMAT
+test-bind: $(RUNNER_IMAGE) $(REDPROXY_IMAGE) output-dirs
+	@echo "Running BIND functionality tests (pytest)..."
+	REDPROXY_CONFIG=/config/bind-test.yaml docker-compose run --rm test-runner \
+		uv run --frozen pytest tests/bind \
+		--html=/reports/bind-report.html --self-contained-html \
+		--junitxml=/reports/bind-junit.xml \
+		--json-report --json-report-file=/reports/bind.json \
+		$(ARGS)
+	@echo "BIND tests completed - reports generated in ./reports/"
 
 # Run all tests (can be parallelized with make -j)
 test-all: test-matrix test-security test-performance test-bind
