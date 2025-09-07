@@ -15,7 +15,6 @@ use crate::{
     config::{self, IoParams, Timeouts},
     connectors::{self, ConnectorRegistry},
     context::{ContextManager, ContextRef, ContextRefOps, ContextState},
-    copy::copy_bidi,
     listeners::{self, Listener},
     rules::{self, RulesManager},
 };
@@ -459,15 +458,19 @@ impl ProxyServer {
         }
 
         ctx.on_connect().await;
-        match copy_bidi(ctx.clone(), &self.io_params).await {
+
+        let io_loop = ctx.read().await.io_loop();
+        let io_result = io_loop(ctx.clone(), &self.io_params).await;
+
+        match io_result {
             Err(e) => {
                 warn!(
-                    "error in io thread: {} \ncause: {:?} \nctx: {}",
+                    "ctx: {}\n error in io thread: {} \nbacktrace: \n{}",
                     e,
-                    e.source(),
+                    e.backtrace(),
                     props.to_string()
                 );
-                ctx.on_error(anyhow!("{}", e)).await;
+                ctx.on_error(e).await;
             }
             Ok(_) => {
                 ctx.write().await.set_state(ContextState::Terminated);

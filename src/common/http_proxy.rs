@@ -892,12 +892,9 @@ struct HttpForwardCallback;
 impl ContextCallback for HttpForwardCallback {
     async fn on_connect(&self, ctx: &mut Context) {
         let client_stream = match ctx.take_client_stream() {
-            Ok(stream) => stream,
-            Err(e) => {
-                warn!(
-                    "HttpForwardCallback::on_connect: failed to take client stream: {}",
-                    e
-                );
+            Some(stream) => stream,
+            None => {
+                warn!("HttpForwardCallback::on_connect: failed to take client stream");
                 return;
             }
         };
@@ -947,7 +944,7 @@ impl ContextCallback for HttpForwardCallback {
     async fn on_error(&self, ctx: &mut Context, error: Error) {
         warn!("HttpForwardCallback::on_error: {}", error);
         match ctx.take_client_stream() {
-            Ok(mut socket) => {
+            Some(mut socket) => {
                 let error_message = format!("Error: {}\r\nCause: {:?}", error, error.source());
                 if let Err(e) =
                     send_error_response(&mut socket, 503, "Service Unavailable", &error_message)
@@ -956,11 +953,8 @@ impl ContextCallback for HttpForwardCallback {
                     warn!("Failed to send error response to client: {}", e);
                 }
             }
-            Err(e) => {
-                warn!(
-                    "HttpForwardCallback::on_error: Failed to take client stream: {}",
-                    e
-                );
+            None => {
+                warn!("HttpForwardCallback::on_connect: failed to take client stream");
             }
         }
     }
@@ -976,12 +970,9 @@ impl ContextCallback for FrameChannelCallback {
     async fn on_connect(&self, ctx: &mut Context) {
         tracing::trace!("on_connect callback: id={} ctx={}", self.session_id, ctx);
         let mut stream = match ctx.take_client_stream() {
-            Ok(stream) => stream,
-            Err(e) => {
-                warn!(
-                    "FrameChannelCallback::on_connect: failed to take client stream: {}",
-                    e
-                );
+            Some(stream) => stream,
+            None => {
+                warn!("FrameChannelCallback::on_connect: failed to take client stream");
                 return;
             }
         };
@@ -1031,12 +1022,9 @@ impl ContextCallback for Rfc9298Callback {
 
         // Now that downstream connection succeeded, send the RFC 9298 upgrade response
         let mut stream = match ctx.take_client_stream() {
-            Ok(stream) => stream,
-            Err(e) => {
-                warn!(
-                    "Rfc9298Callback::on_connect: failed to take client stream: {}",
-                    e
-                );
+            Some(stream) => stream,
+            None => {
+                warn!("Rfc9298Callback::on_connect: failed to take client stream");
                 return;
             }
         };

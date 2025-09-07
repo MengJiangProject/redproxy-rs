@@ -154,7 +154,7 @@ mod tests {
 
                     // Send error response directly since connection failed
                     let mut ctx_write_guard = ctx_ref.write().await;
-                    if let Ok(mut client_stream) = ctx_write_guard.take_client_stream() {
+                    if let Some(mut client_stream) = ctx_write_guard.take_client_stream() {
                         let response = HttpResponse::new(503, "Service Unavailable")
                             .with_header("Content-Type", "text/plain")
                             .with_header("Connection", "close");
@@ -211,8 +211,14 @@ bind: "{}"
                 eprintln!("Listener exited with error: {}", e);
             }
         });
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        loop {
+            if let Ok(stream) = TcpStream::connect(listener_addr_socket).await {
+                drop(stream);
+                break;
+            }
+            eprintln!("Waiting for listener to start accepting connections...");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
 
         (context_manager, listener_addr_socket, ctx_receiver)
     }
@@ -266,7 +272,7 @@ bind: "{}"
             .await
             .unwrap();
         client_stream.flush().await.unwrap();
-
+        client_stream.shutdown().await.unwrap();
         let mut response_buf = Vec::new();
         match tokio::time::timeout(
             Duration::from_secs(2),
@@ -359,7 +365,7 @@ bind: "{}"
             .await
             .unwrap();
         client_stream.flush().await.unwrap();
-
+        client_stream.shutdown().await.unwrap();
         let mut response_buf = Vec::new();
         match tokio::time::timeout(
             Duration::from_secs(2),
@@ -593,7 +599,7 @@ bind: "{}"
 
         let mut client_stream = TcpStream::connect(proxy_addr).await.unwrap();
         let request_str = format!(
-            "GET http://{}/chunked HTTP/1.1\r\nHost: {}\r\n\r\n",
+            "GET http://{}/chunked HTTP/1.1\r\nHost: {}\r\nConnection: closed\r\n\r\n",
             mock_server_addr, mock_server_addr
         );
         client_stream
@@ -601,10 +607,11 @@ bind: "{}"
             .await
             .unwrap();
         client_stream.flush().await.unwrap();
+        client_stream.shutdown().await.unwrap();
 
         let mut response_buf = Vec::new();
         match tokio::time::timeout(
-            Duration::from_secs(3),
+            Duration::from_secs(5),
             client_stream.read_to_end(&mut response_buf),
         )
         .await
@@ -745,7 +752,7 @@ bind: "{}"
             .await
             .unwrap();
         client_stream.flush().await.unwrap();
-
+        client_stream.shutdown().await.unwrap();
         let mut response_buf = Vec::new();
         match tokio::time::timeout(
             Duration::from_secs(2),
@@ -884,7 +891,7 @@ bind: "{}"
                 .await
                 .unwrap();
             client_stream.flush().await.unwrap();
-
+            client_stream.shutdown().await.unwrap();
             let mut response_buf = Vec::new();
             match tokio::time::timeout(
                 Duration::from_secs(5),
@@ -1045,7 +1052,7 @@ bind: "{}"
             .await
             .unwrap();
         client_stream.flush().await.unwrap();
-
+        client_stream.shutdown().await.unwrap();
         let mut response_buf = Vec::new();
         match tokio::time::timeout(
             Duration::from_secs(5),
