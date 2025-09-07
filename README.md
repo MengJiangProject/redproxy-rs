@@ -16,14 +16,14 @@ A high-performance proxy routing tool written in Rust. It can translate between 
 | SOCKS v5 | [RFC 1928](https://tools.ietf.org/html/rfc1928) | UserPassword/NoAuth, mTLS | CONNECT, BIND, UDP ASSOCIATE | Full feature support |
 | QUIC | [RFC 9000](https://tools.ietf.org/html/rfc9000) | Basic Auth, mTLS | HTTP/1 over QUIC | QUIC as transport protocols only, not http3 |
 | SSH Tunnels | [RFC 4254](https://tools.ietf.org/html/rfc4254) | SSH keys, passwords | Port forwarding | Secure tunneling |
-| TPROXY | - | None | Transparent proxy | iptables REDIRECT |
+| TPROXY | - | - | Transparent proxy | iptables REDIRECT |
 | Reverse Proxy | - | - | General reverse proxy (TCP&UDP) | - |
 
 ### Connectors (Outbound Protocols)
 
 | Protocol | RFC Specification | Authentication | Features | Notes |
 |----------|-------------------|----------------|----------|-------|
-| Direct TCP | - | None | Direct connections | Configurable bind address, fwmark on linux |
+| Direct TCP | - | - | Direct connections | Configurable bind address, fwmark on linux |
 | HTTP CONNECT | [RFC 7231](https://tools.ietf.org/html/rfc7231) | Basic Auth, mTLS | Proxy tunneling | Standard HTTP proxy |
 | HTTP Forward | [RFC 7230-7237](https://tools.ietf.org/html/rfc7230) | Basic Auth, mTLS | GET, POST, PUT, DELETE | Full HTTP methods |
 | SOCKS v4 | [RFC 1080](https://tools.ietf.org/html/rfc1080) | UserPassword/NoAuth, mTLS | CONNECT, BIND | Legacy protocol |
@@ -31,7 +31,7 @@ A high-performance proxy routing tool written in Rust. It can translate between 
 | SOCKS v5 | [RFC 1928](https://tools.ietf.org/html/rfc1928) | UserPassword/NoAuth, mTLS | CONNECT, BIND, UDP ASSOCIATE | Full feature support |
 | QUIC | [RFC 9000](https://tools.ietf.org/html/rfc9000) | Basic Auth, mTLS | HTTP/1 over QUIC | QUIC as transport protocols only, not http3 |
 | SSH Tunnels | [RFC 4254](https://tools.ietf.org/html/rfc4254) | SSH keys, passwords | Port forwarding | Secure tunneling |
-| Load Balancing | - | Inherited | Multiple algorithms | Round-robin, random, hash |
+| Load Balancing | - | - | Multiple algorithms | Round-robin, random, hash |
 
 ## RFC Implementations
 
