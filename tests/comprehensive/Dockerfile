@@ -25,8 +25,6 @@ FROM debian:stable-slim
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
-    gdb lldb \
-    lsof \
     && rm -rf /var/lib/apt/lists/*
 
 # Create user with dynamic UID/GID
