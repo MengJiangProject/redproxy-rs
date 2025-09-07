@@ -52,7 +52,6 @@ A high-performance proxy routing tool written in Rust. It can translate between 
 ## Key Features
 
 - **Multi-Protocol Translation**: Convert between different proxy protocols seamlessly
-- **SOCKS BIND Support**: Full SOCKS BIND command implementation for FTP active mode and similar protocols
 - **Security**: mTLS support, authentication, loop prevention, timeout protection
 - **Performance**: Zero-copy optimizations, Linux splice() syscall, graceful shutdown
 - **Observability**: Prometheus metrics, structured JSON logging, embedded web console
