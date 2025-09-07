@@ -36,15 +36,50 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          use_sticky_comment: true
+          additional_permissions: |
+            actions: read
+
           prompt: |
-            Please review this pull request and provide feedback on:
-            - Code quality and best practices
-            - Potential bugs or issues
-            - Performance considerations
-            - Security concerns
-            - Test coverage
+            Review this pull request with Linus Torvalds' engineering standards. Be direct, technical, and uncompromising about code quality.
             
-            Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
+            Focus on fundamental issues:
+            - **Data structures and algorithms** - "Bad programmers worry about code. Good programmers worry about data structures."
+            - **Complexity elimination** - If it needs >3 levels of indentation, it's broken
+            - **Special cases** - Good code has no special cases, only elegant general solutions  
+            - **Performance implications** - Real-world impact, not theoretical optimization
+            - **Breaking changes** - Never break existing functionality or APIs
+            - **Security vulnerabilities** - Actual threats, not paranoid fantasies
+            
+            Be ruthlessly honest about:
+            - Overengineered solutions to simple problems
+            - Unnecessary abstractions and indirection layers
+            - Code that's "clever" instead of clear
+            - Missing error handling or edge cases
+            - Poor naming and unclear interfaces
+            
+            Use the repository's CLAUDE.md for context. If code is bad, explain WHY it's bad and what the correct approach should be.
+
+            **Output Format:**
+            For each significant issue found, provide:
+            1. **Problem Statement** - What's wrong and why it violates good engineering
+            2. **Impact Analysis** - Real consequences (performance, maintainability, bugs)
+            3. **Concrete Solution** - Specific steps to fix it properly
+            4. **Todo Checklist** - Actionable items the developer can immediately work on
+
+            End with a prioritized **Improvement Roadmap** todo list:
+            ```
+            ## Improvement Roadmap
+            ### Critical (Fix Now)
+            - [ ] [Specific actionable item with file:line reference]
+            - [ ] [Another critical fix]
+            
+            ### Important (Next)
+            - [ ] [Important but not blocking item]
+            
+            ### Nice to Have (Later)
+            - [ ] [Minor improvements]
+            ```
 
             Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
           
