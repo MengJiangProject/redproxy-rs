@@ -169,5 +169,4 @@ mod tests {
         assert_eq!(buffered.write_pending_size(), 0);
         assert!(buffered.is_safe_to_unwrap());
     }
-
 }

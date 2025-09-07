@@ -280,10 +280,9 @@ impl BidirectionalCopy {
         let mut final_a_to_b = total_a_to_b;
         let mut final_b_to_a = total_b_to_a;
 
-
         let mut a_eof = false;
         let mut b_eof = false;
-        // Main splice loop (similar to copy.rs copy_half) 
+        // Main splice loop (similar to copy.rs copy_half)
         loop {
             if a_eof && b_eof {
                 break;
@@ -353,7 +352,7 @@ mod tests {
         read_data: Arc<Mutex<Cursor<Vec<u8>>>>,
         write_data: Arc<Mutex<Vec<u8>>>,
         _id: String,
-        max_read_size: Option<usize>, // Simulate partial reads
+        max_read_size: Option<usize>,  // Simulate partial reads
         max_write_size: Option<usize>, // Simulate partial writes
         write_error: Option<std::io::Error>,
     }
@@ -370,7 +369,11 @@ mod tests {
             }
         }
 
-        fn with_partial_operations(mut self, max_read: Option<usize>, max_write: Option<usize>) -> Self {
+        fn with_partial_operations(
+            mut self,
+            max_read: Option<usize>,
+            max_write: Option<usize>,
+        ) -> Self {
             self.max_read_size = max_read;
             self.max_write_size = max_write;
             self
@@ -395,7 +398,7 @@ mod tests {
             buf: &mut tokio::io::ReadBuf<'_>,
         ) -> Poll<std::io::Result<()>> {
             let mut cursor = self.read_data.lock().unwrap();
-            
+
             // Simulate partial reads if configured
             if let Some(max_size) = self.max_read_size {
                 let available = buf.remaining().min(max_size);
@@ -403,7 +406,7 @@ mod tests {
                     // Create a temporary smaller buffer for partial read
                     let mut temp_buf = vec![0u8; available];
                     let mut temp_read_buf = tokio::io::ReadBuf::new(&mut temp_buf);
-                    
+
                     match Pin::new(&mut *cursor).poll_read(cx, &mut temp_read_buf) {
                         Poll::Ready(Ok(())) => {
                             let filled = temp_read_buf.filled();
@@ -438,7 +441,10 @@ mod tests {
                 buf.len()
             };
 
-            self.write_data.lock().unwrap().extend_from_slice(&buf[..write_size]);
+            self.write_data
+                .lock()
+                .unwrap()
+                .extend_from_slice(&buf[..write_size]);
             Poll::Ready(Ok(write_size))
         }
 
@@ -759,12 +765,12 @@ mod tests {
         let leftover_b: Vec<u8> = (0..315).map(|i| ((i * 3) % 256) as u8).collect();
 
         let buffered_a = BufferedStream::with_leftover(
-            Box::new(stream_a), 
-            bytes::Bytes::from(leftover_a.clone())
+            Box::new(stream_a),
+            bytes::Bytes::from(leftover_a.clone()),
         );
         let buffered_b = BufferedStream::with_leftover(
-            Box::new(stream_b), 
-            bytes::Bytes::from(leftover_b.clone())
+            Box::new(stream_b),
+            bytes::Bytes::from(leftover_b.clone()),
         );
 
         let copy_op = BidirectionalCopy::new(buffered_a, buffered_b).buffer_size(128);
@@ -858,8 +864,16 @@ mod tests {
         let b_to_a_calls = stats_b_to_a.lock().unwrap();
 
         // Should have multiple callback invocations due to small buffer
-        assert!(a_to_b_calls.len() > 1, "Expected multiple A->B stat calls, got {}", a_to_b_calls.len());
-        assert!(b_to_a_calls.len() > 1, "Expected multiple B->A stat calls, got {}", b_to_a_calls.len());
+        assert!(
+            a_to_b_calls.len() > 1,
+            "Expected multiple A->B stat calls, got {}",
+            a_to_b_calls.len()
+        );
+        assert!(
+            b_to_a_calls.len() > 1,
+            "Expected multiple B->A stat calls, got {}",
+            b_to_a_calls.len()
+        );
 
         // Verify stats integrity
         let total_a_to_b: usize = a_to_b_calls.iter().sum();
@@ -870,10 +884,18 @@ mod tests {
 
         // All individual transfers should be reasonable sizes (not zero, not larger than buffer)
         for &size in a_to_b_calls.iter() {
-            assert!(size > 0 && size <= 128, "A->B transfer size {} out of range", size);
+            assert!(
+                size > 0 && size <= 128,
+                "A->B transfer size {} out of range",
+                size
+            );
         }
         for &size in b_to_a_calls.iter() {
-            assert!(size > 0 && size <= 128, "B->A transfer size {} out of range", size);
+            assert!(
+                size > 0 && size <= 128,
+                "B->A transfer size {} out of range",
+                size
+            );
         }
     }
 
@@ -908,7 +930,7 @@ mod tests {
         assert_eq!(&*write_data_a.lock().unwrap(), &data_pattern_b);
     }
 
-    #[tokio::test] 
+    #[tokio::test]
     async fn test_empty_and_tiny_streams() {
         // Test edge cases with very small or empty data
         let empty_data: Vec<u8> = vec![];

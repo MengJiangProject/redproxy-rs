@@ -211,7 +211,7 @@ bind: "{}"
                 eprintln!("Listener exited with error: {}", e);
             }
         });
-        loop{
+        loop {
             if let Ok(stream) = TcpStream::connect(listener_addr_socket).await {
                 drop(stream);
                 break;
