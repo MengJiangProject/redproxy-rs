@@ -189,7 +189,7 @@ impl<S: SocketOps + Send + Sync + 'static> SocksListener<S> {
             .unwrap_or_else(|e| warn!("set_keepalive failed: {}", e));
 
         let mut socket = if let Some(tls_config) = &self.tls {
-            let stream = self
+            let (stream, _alpn) = self
                 .socket_ops
                 .tls_handshake_server(socket, tls_config)
                 .await?;

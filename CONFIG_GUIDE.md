@@ -167,6 +167,15 @@ To enable HTTPS, add a `tls` object to the listener configuration.
         -   `ca` (string): Path to the Certificate Authority (CA) certificate file used to verify client certificates (e.g., `ca.crt`).
         -   `required` (boolean, optional): If `true`, clients must present a valid certificate signed by the specified CA. If `false` or omitted, client certificates are requested but not strictly required for the connection.
             -   *Default value*: `false` (when the `client` block is present).
+    -   `protocol` (object, optional, added in *v0.11.0*): TLS protocol version configuration.
+        -   `tls_1_2` (boolean, optional): Enable TLS 1.2 support. *Default*: `true`
+        -   `tls_1_3` (boolean, optional): Enable TLS 1.3 support. *Default*: `true`
+    -   `security` (object, optional, added in *v0.11.0*): Advanced TLS security options.
+        -   `sni` (object, optional): Server Name Indication configuration.
+            -   `enable` (boolean, optional): Enable SNI support. *Default*: `false`
+            -   `certificates` (object, optional): Map of hostnames to certificate configurations.
+        -   `ocsp_stapling` (boolean, optional): Enable OCSP stapling for certificate validation. *Default*: `false`
+        -   `require_sni` (boolean, optional): Require SNI extension from clients. *Default*: `false`
 
 Examples:
 
@@ -186,6 +195,29 @@ listeners:
       client:
         ca: ca.crt
         required: true # Example showing strict requirement
+
+  # Advanced HTTPS listener with SNI support
+  - name: https-sni
+    type: http
+    bind: 0.0.0.0:8443
+    tls:
+      cert: default.crt  # Default certificate
+      key: default.key
+      protocol:
+        tls_1_3: true    # Enable only TLS 1.3
+        tls_1_2: false   # Disable TLS 1.2
+      security:
+        sni:
+          enable: true
+          certificates:
+            "example.com":
+              cert: "example.com.crt"
+              key: "example.com.key"
+            "api.example.com":
+              cert: "api.example.com.crt" 
+              key: "api.example.com.key"
+        ocsp_stapling: true
+        require_sni: true
 ```
 
 ---

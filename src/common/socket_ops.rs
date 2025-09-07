@@ -66,7 +66,7 @@ pub trait SocketOps: Send + Sync {
         &self,
         stream: Box<dyn Stream>,
         tls_config: &TlsServerConfig,
-    ) -> Result<Box<dyn Stream>>;
+    ) -> Result<(Box<dyn Stream>, Option<String>)>;
 
     // Socket Options
     async fn set_keepalive(&self, stream: &dyn Stream, enable: bool) -> Result<()>;
@@ -165,13 +165,21 @@ impl SocketOps for RealSocketOps {
         &self,
         stream: Box<dyn Stream>,
         tls_config: &TlsServerConfig,
-    ) -> Result<Box<dyn Stream>> {
+    ) -> Result<(Box<dyn Stream>, Option<String>)> {
         let tls_acceptor = tls_config.acceptor()?;
         let tls_stream = tls_acceptor
             .accept(stream)
             .await
             .context("TLS handshake failed")?;
-        Ok(Box::new(tls_stream))
+
+        // Extract ALPN protocol before boxing
+        let alpn_protocol = tls_stream
+            .get_ref()
+            .1
+            .alpn_protocol()
+            .map(|bytes| String::from_utf8_lossy(bytes).to_string());
+
+        Ok((Box::new(tls_stream), alpn_protocol))
     }
 
     async fn set_keepalive(&self, stream: &dyn Stream, enable: bool) -> Result<()> {
@@ -392,8 +400,9 @@ pub mod test_utils {
             &self,
             stream: Box<dyn Stream>,
             _tls_config: &TlsServerConfig,
-        ) -> Result<Box<dyn Stream>> {
-            Ok(stream)
+        ) -> Result<(Box<dyn Stream>, Option<String>)> {
+            // For mock, return stream with no ALPN (simulates cleartext)
+            Ok((stream, None))
         }
 
         async fn set_keepalive(&self, _stream: &dyn Stream, _enable: bool) -> Result<()> {
