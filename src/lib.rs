@@ -10,6 +10,7 @@ pub mod config;
 pub mod connectors;
 pub mod context;
 pub mod copy;
+pub mod io;
 pub mod listeners;
 pub mod rules;
 pub mod server;

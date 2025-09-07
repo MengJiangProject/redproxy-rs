@@ -1,14 +1,19 @@
-use crate::{access_log::AccessLog, common::frames::FrameIO};
+use crate::{
+    access_log::AccessLog,
+    common::frames::FrameIO,
+    config::IoParams,
+    copy::copy_bidi,
+};
 use anyhow::{Context as AnyhowContext, Error, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize, de::Visitor, ser::SerializeStruct};
 use std::{
-    any::Any,
     collections::{HashMap, LinkedList},
     fmt::{Debug, Display},
     io::{Error as IoError, Result as IoResult},
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     ops::DerefMut,
+    pin::Pin,
     str::FromStr,
     sync::{
         Arc, Mutex as StdMutex, Weak,
@@ -17,11 +22,12 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite, BufReader, BufWriter},
     net::lookup_host,
     sync::{Mutex, Notify, RwLock, mpsc::Sender},
 };
 use tracing::{error, trace, warn};
+
+pub use crate::io::*; //re-export for compatibility
 
 #[derive(Debug)]
 pub struct InvalidAddress;
@@ -211,31 +217,6 @@ impl UnixTimestamp for SystemTime {
     }
 }
 
-#[allow(dead_code)]
-pub trait IOStream: AsyncRead + AsyncWrite + Send + Sync + Unpin {
-    fn as_any(&self) -> &dyn Any;
-    fn into_any(self: Box<Self>) -> Box<dyn Any>;
-}
-
-impl<T> IOStream for T
-where
-    T: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
-{
-    // used to check if underlying stream is TcpStream, since specialization is unstable, we have to use dyn Any instead.
-    // TODO: should use specialization when it's ready.
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-}
-pub type IOBufStream = BufReader<BufWriter<Box<dyn IOStream>>>;
-
-pub fn make_buffered_stream<T: IOStream + 'static>(stream: T) -> IOBufStream {
-    BufReader::new(BufWriter::new(Box::new(stream)))
-}
-
 #[async_trait]
 pub trait ContextCallback: Send + Sync {
     async fn on_connect(&self, _ctx: &mut Context) {}
@@ -407,6 +388,14 @@ impl ContextStatistics {
         let now = SystemTime::now().unix_timestamp();
         now - last_read > timeout.as_millis() as u64
     }
+
+    pub fn sent_bytes(&self) -> usize {
+        self.read_bytes.load(Ordering::Relaxed)
+    }
+
+    pub fn sent_frames(&self) -> usize {
+        self.read_frames.load(Ordering::Relaxed)
+    }
 }
 
 #[cfg(feature = "metrics")]
@@ -512,11 +501,12 @@ impl ContextManager {
             client_frames: None,
             server_frames: None,
             callback: None,
-            state: self.clone(),
+            manager: self.clone(),
             http_request: None,
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             // Initialize BIND fields
             bind_task: None,
+            io_loop: copy_bidi,
         }));
 
         // Increment atomic counter and add to alive map
@@ -658,6 +648,14 @@ impl ContextManager {
 // Type alias for the BIND task handle
 pub type BindTask = tokio::task::JoinHandle<Result<()>>;
 
+/// IO loop function signature - same as copy_bidi
+pub type IOLoopFn = fn(
+    ContextRef,
+    &IoParams,
+) -> Pin<
+    Box<dyn futures_util::Future<Output = std::result::Result<(), anyhow::Error>> + Send>,
+>;
+
 pub struct Context {
     props: Arc<ContextProps>,
     client_stream: Option<IOBufStream>,
@@ -665,11 +663,12 @@ pub struct Context {
     client_frames: Option<FrameIO>,
     server_frames: Option<FrameIO>,
     callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
-    state: Arc<ContextManager>,
+    manager: Arc<ContextManager>,
     http_request: Option<Arc<crate::common::http::HttpRequest>>,
     cancellation_token: tokio_util::sync::CancellationToken,
     // BIND-related fields - using JoinHandle for spawned task
     bind_task: Option<BindTask>,
+    io_loop: IOLoopFn,
 }
 
 pub type ContextRef = Arc<RwLock<Context>>;
@@ -715,10 +714,8 @@ impl Context {
         self.client_stream.as_mut()
     }
 
-    pub fn take_client_stream(&mut self) -> Result<IOBufStream, anyhow::Error> {
-        self.client_stream
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("Client stream already taken or not available"))
+    pub fn take_client_stream(&mut self) -> Option<IOBufStream> {
+        self.client_stream.take()
     }
 
     pub fn take_server_stream(&mut self) -> Option<IOBufStream> {
@@ -880,6 +877,17 @@ impl Context {
     pub fn take_bind_task(&mut self) -> Option<BindTask> {
         self.bind_task.take()
     }
+
+    /// Set the IO loop function for this context
+    pub fn set_io_loop(&mut self, io_loop: IOLoopFn) -> &mut Self {
+        self.io_loop = io_loop;
+        self
+    }
+
+    /// Get the IO loop function, or None if using default copy_bidi
+    pub fn io_loop(&self) -> IOLoopFn {
+        self.io_loop
+    }
 }
 
 // a set of opreations that aquires write lock
@@ -979,16 +987,16 @@ impl Drop for Context {
         trace!("Context dropped: {}", self);
 
         // Decrement atomic counter immediately
-        self.state.alive_count.fetch_sub(1, Ordering::Relaxed);
+        self.manager.alive_count.fetch_sub(1, Ordering::Relaxed);
 
-        if let Ok(mut gc_list) = self.state.gc_list.lock() {
+        if let Ok(mut gc_list) = self.manager.gc_list.lock() {
             gc_list.push(self.props.clone());
         } else {
             error!("Failed to acquire GC list lock during context drop");
         }
 
         // Notify waiters that a context has been dropped
-        self.state.termination_notify.notify_waiters();
+        self.manager.termination_notify.notify_waiters();
     }
 }
 
