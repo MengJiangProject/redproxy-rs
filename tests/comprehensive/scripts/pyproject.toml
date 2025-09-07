@@ -1,12 +1,84 @@
 [project]
-name = "test_scripts"
+name = "redproxy-test-suite"
 version = "0.1.0"
-description = "Add your description here"
+description = "Comprehensive test suite for redproxy-rs using pytest"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    # Core testing framework
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-timeout>=2.1.0",
+    "pytest-xdist>=3.0.0",
+    "pytest-html>=3.1.0",
+    "pytest-json-report>=1.5.0",
+    "pytest-mock>=3.10.0",
+    
+    # Network testing utilities
+    "pytest-httpserver>=1.0.0",
     "httpx[socks]>=0.25.0",
+    "aiohttp>=3.9.0",
+    "websockets>=11.0.0",
+    
+    # Protocol support
     "pyyaml>=6.0",
     "aioquic>=0.9.0",
     "asyncssh>=2.14.0",
+    
+    # Utilities
+    "aiofiles>=23.0.0",
+    "trustme>=1.0.0",  # TLS certificate generation
+]
+
+[tool.pytest.ini_options]
+# Basic configuration
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Async support
+asyncio_mode = "auto"
+
+# Timeouts (global defaults)
+timeout = 60
+timeout_method = "thread"
+
+# Markers for test categorization
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "matrix: marks tests as protocol matrix tests", 
+    "security: marks tests as security-focused tests",
+    "performance: marks tests as performance tests",
+    "http: marks tests as HTTP protocol tests",
+    "socks: marks tests as SOCKS protocol tests", 
+    "quic: marks tests as QUIC protocol tests",
+    "ssh: marks tests as SSH-related tests",
+    "connect: marks tests as CONNECT tunneling tests",
+    "destructive: marks tests as destructive/error handling tests",
+    "bind: marks tests as SOCKS BIND functionality tests",
+    "ipv6: marks tests as IPv6 protocol tests",
+]
+
+# Output and reporting
+addopts = [
+    "-ra",                    # Show summary of all test results
+    "--strict-markers",       # Treat unregistered markers as errors
+    "--strict-config",        # Treat config errors as errors
+    "--tb=short",            # Shorter traceback format
+    "-v",                    # Verbose output
+]
+
+# Logging
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+# Warnings
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
 ]

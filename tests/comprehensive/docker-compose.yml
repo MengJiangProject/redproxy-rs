@@ -4,6 +4,7 @@
 services:
   # Core test targets
   http-echo:
+    hostname: http-echo
     image: mendhak/http-https-echo:31
     environment:
       - HTTP_PORT=8080
@@ -11,11 +12,31 @@ services:
     networks: [test-net]
 
   target-server:
+    hostname: target-server
     image: nginx:alpine
     networks: [test-net]
 
+  # WebSocket test server
+  websocket-server:
+    hostname: websocket-server
+    build:
+      context: .
+      dockerfile: Dockerfile.test-runner
+    networks: [test-net]
+    volumes:
+      - ./scripts:/scripts:ro
+    command: ["uv", "run", "--frozen", "/scripts/websocket_server.py"]
+    environment:
+      - PORT=9998
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9998/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   # Upstream proxies for testing connectors
   http-proxy:
+    hostname: http-proxy
     image: ubuntu/squid:latest
     networks: [test-net]
     volumes:
@@ -24,6 +45,7 @@ services:
       test: ["NONE"]
 
   socks-proxy:
+    hostname: socks-proxy
     image: serjs/go-socks5-proxy:latest
     networks: [test-net]
     healthcheck:
@@ -44,6 +66,7 @@ services:
 
   # QUIC upstream proxy (another RedProxy instance with QUIC listener)
   quic-proxy:
+    hostname: quic-proxy
     build:
       context: ../..
       dockerfile: tests/comprehensive/Dockerfile
@@ -59,6 +82,7 @@ services:
 
   # SSH upstream proxy
   ssh-proxy:
+    hostname: ssh-proxy
     image: linuxserver/openssh-server:latest
     environment:
       - PUID=1000
@@ -67,12 +91,11 @@ services:
       - USER_PASSWORD=proxy123
       - USER_NAME=proxy
       - DOCKER_MODS=linuxserver/mods:openssh-server-ssh-tunnel
-    ports:
-      - "2222:2222"
     networks: [test-net]
 
   # Single RedProxy instance with static config
   redproxy:
+    hostname: redproxy
     build:
       context: ../..
       dockerfile: tests/comprehensive/Dockerfile
@@ -85,16 +108,19 @@ services:
     networks: [test-net]
     depends_on: [http-echo, target-server, http-proxy, socks-proxy, quic-proxy, ssh-proxy]
     healthcheck:
-      test: ["CMD", "curl", "-f", "--connect-timeout", "3", "--max-time", "5", "http://localhost:9090/api/metrics"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    command: ["redproxy", "-c", "${REDPROXY_CONFIG:-/config/base.yaml}"]
+      test: ["NONE"]
+    #   test: ["CMD", "curl", "-f", "--connect-timeout", "3", "--max-time", "5", "http://localhost:9090/api/metrics"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 3
+    command: ["redproxy", "-c", "${REDPROXY_CONFIG:-/config/httpx.yaml}", "--log", "${REDPROXY_LOG_LEVEL:-info}"]
     environment:
-      - RUST_LOG=redproxy=debug,hyper=warn
+      - RUST_LOG=info,tower_http=info,milu=warn,redproxy=trace,redproxy_rs::rules=info
+      - RUST_BACKTRACE=1
 
   # Test runner with environment-driven test selection
   test-runner:
+    hostname: test-runner
     build:
       context: .
       dockerfile: Dockerfile.test-runner
@@ -107,17 +133,9 @@ services:
       - ./logs:/logs:rw
       - ./reports:/reports:rw
     networks: [test-net]
-    depends_on:
-      redproxy:
-        condition: service_healthy
+    depends_on: 
+      - redproxy
 
 networks:
   test-net:
     driver: bridge
-
-# Usage Examples:
-# TEST_SUITE=protocols docker-compose up test-runner
-# TEST_SUITE=http-forward docker-compose up test-runner
-# TEST_SUITE=security VERBOSE=true docker-compose up test-runner  
-# TEST_SUITE=performance docker-compose up test-runner
-# Or use Makefile: make test-protocols, make test-http-forward, make test-security, make test-performance
