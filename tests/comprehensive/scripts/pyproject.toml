@@ -58,6 +58,8 @@ markers = [
     "ssh: marks tests as SSH-related tests",
     "connect: marks tests as CONNECT tunneling tests",
     "destructive: marks tests as destructive/error handling tests",
+    "bind: marks tests as SOCKS BIND functionality tests",
+    "ipv6: marks tests as IPv6 protocol tests",
 ]
 
 # Output and reporting

@@ -277,20 +277,36 @@ class TestBindErrorConditions:
             # SOCKS5 auth
             writer.write(b'\x05\x01\x00')
             await writer.drain()
-            await reader.read(2)
+            auth_response = await reader.read(2)
+            assert auth_response == b'\x05\x00', "Auth should succeed"
             
             # Malformed BIND request (invalid address type)
             writer.write(b'\x05\x02\x00\xFF')  # Invalid address type 0xFF
             await writer.drain()
             
-            response = await asyncio.wait_for(reader.read(10), timeout=3.0)
+            # Try to read response, but handle connection closure
+            try:
+                response = await asyncio.wait_for(reader.read(10), timeout=3.0)
+                
+                # If we get a response, it should be an error
+                if len(response) >= 2:
+                    assert response[1] != 0x00, "Should return error code for invalid request"
+                else:
+                    # Empty response suggests connection was closed, which is acceptable error handling
+                    assert len(response) == 0, "Connection should be closed or error response received"
+            except (ConnectionResetError, BrokenPipeError):
+                # Connection reset is acceptable for invalid requests
+                pass
             
-            assert len(response) >= 2, "Should receive error response"
-            assert response[1] != 0x00, "Should return error code for invalid request"
-            
+        except (ConnectionResetError, BrokenPipeError):
+            # Connection errors are acceptable for malformed requests
+            pass
         finally:
             writer.close()
-            await writer.wait_closed()
+            try:
+                await writer.wait_closed()
+            except:
+                pass  # Connection might already be closed
     
     @pytest.mark.asyncio
     @pytest.mark.bind

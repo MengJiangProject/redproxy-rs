@@ -122,7 +122,7 @@ test-httpx: $(RUNNER_IMAGE) $(REDPROXY_IMAGE) output-dirs
 
 # BIND functionality tests - NEW PYTEST FORMAT
 test-bind: $(RUNNER_IMAGE) $(REDPROXY_IMAGE) output-dirs
-	@echo "Running BIND functionality tests (pytest)..."
+	@echo "Running BIND functionality tests..."
 	REDPROXY_CONFIG=/config/bind-test.yaml docker-compose run --rm test-runner \
 		uv run --frozen pytest tests/bind \
 		--html=/reports/bind-report.html --self-contained-html \
