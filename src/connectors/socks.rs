@@ -205,11 +205,19 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for SocksConnector<S
             // Notify that BIND is ready - the server stream is already set for SOCKS protocol
             ctx.on_bind_listen(bind_addr).await;
 
-            // Spawn a task to wait for second SOCKS response
+            // Get the idle timeout from context
+            let idle_timeout = ctx.read().await.idle_timeout();
+
+            // Spawn a task to wait for second SOCKS response with timeout
             let ctx_clone = ctx.clone();
             let cancellation_token = ctx.read().await.cancellation_token().clone();
 
             let bind_task = tokio::spawn(async move {
+                trace!(
+                    "SOCKS BIND waiting for second response with timeout {:?}",
+                    idle_timeout
+                );
+
                 // Take the server stream temporarily to read the second response
                 let mut server_stream = ctx_clone
                     .write()
@@ -217,10 +225,16 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for SocksConnector<S
                     .take_server_stream()
                     .ok_or_else(|| anyhow::anyhow!("server stream should be set"))?;
 
-                // Read the second SOCKS BIND response with cancellation support
+                // Read the second SOCKS BIND response with both timeout and cancellation support
                 let resp2 = tokio::select! {
                     result = SocksResponse::read_from(&mut server_stream) => {
                         result.map_err(|e| anyhow::anyhow!("Failed to read second SOCKS BIND response: {}", e))?
+                    }
+                    _ = tokio::time::sleep(idle_timeout) => {
+                        // Put the stream back before returning
+                        ctx_clone.write().await.set_server_stream(server_stream);
+                        trace!("SOCKS BIND operation timed out after {:?}", idle_timeout);
+                        return Err(anyhow::anyhow!("SOCKS BIND timed out after {:?}", idle_timeout));
                     }
                     _ = cancellation_token.cancelled() => {
                         // Put the stream back before returning

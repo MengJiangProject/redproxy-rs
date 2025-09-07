@@ -9,6 +9,10 @@ accessLog:
   path: "/logs/bind-test-access.log"
   format: "json"
 
+# Configure short timeout for BIND timeout testing
+timeouts:
+  idle: 3  # Short 3-second timeout for testing
+
 listeners:
   - name: http
     type: http
@@ -35,6 +39,11 @@ listeners:
   - name: socks-bind-override
     type: socks
     bind: "0.0.0.0:1085"
+    allowBind: true
+    enforceBindAddress: false
+  - name: socks-bind-timeout
+    type: socks
+    bind: "0.0.0.0:1086"
     allowBind: true
     enforceBindAddress: false
 
