@@ -2404,9 +2404,9 @@ dependencies = [
 
 [[package]]
 name = "quinn"
-version = "0.11.9"
+version = "0.11.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9e20a958963c291dc322d98411f541009df2ced7b5a4f2bd52337638cfccf20"
+checksum = "d95dd123970f7c6b3fa3fb77ee76f9e5b95ad5ec88e3c6e6ec4d01f1b4db7be3"
 dependencies = [
  "bytes",
  "cfg_aliases",
