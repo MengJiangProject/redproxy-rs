@@ -23,7 +23,7 @@ A high-performance proxy routing tool written in Rust. It can translate between 
 
 | Protocol | RFC Specification | Authentication | Features | Notes |
 |----------|-------------------|----------------|----------|-------|
-| Direct TCP | - | None | Direct connections | Configurable bind address |
+| Direct TCP | - | None | Direct connections | Configurable bind address, fwmark on linux |
 | HTTP CONNECT | [RFC 7231](https://tools.ietf.org/html/rfc7231) | Basic Auth, mTLS | Proxy tunneling | Standard HTTP proxy |
 | HTTP Forward | [RFC 7230-7237](https://tools.ietf.org/html/rfc7230) | Basic Auth, mTLS | GET, POST, PUT, DELETE | Full HTTP methods |
 | SOCKS v4 | [RFC 1080](https://tools.ietf.org/html/rfc1080) | UserPassword/NoAuth, mTLS | CONNECT, BIND | Legacy protocol |
