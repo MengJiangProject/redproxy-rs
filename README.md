@@ -40,7 +40,6 @@ A high-performance proxy routing tool written in Rust. It can translate between 
 - **[RFC 1928](https://tools.ietf.org/html/rfc1928)** - SOCKS Protocol Version 5 (including BIND command)
 - **[RFC 1929](https://tools.ietf.org/html/rfc1929)** - Username/Password Authentication for SOCKS V5
 - **[RFC 7230-7237](https://tools.ietf.org/html/rfc7230)** - HTTP/1.1 specification
-- **[RFC 7540](https://tools.ietf.org/html/rfc7540)** - HTTP/2 protocol
 - **[RFC 9000](https://tools.ietf.org/html/rfc9000)** - QUIC transport protocol
 - **[RFC 4254](https://tools.ietf.org/html/rfc4254)** - SSH Connection Protocol
 
