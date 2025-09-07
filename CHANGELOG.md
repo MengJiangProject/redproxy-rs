@@ -5,49 +5,80 @@ All notable changes to redproxy-rs will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 0.10.0
+## [0.10.0] - 2025-09-07
 
 ### Added
-- Graceful shutdown system with SIGTERM/SIGINT/CTRL+C signal handling
-- Configurable shutdown timeouts (`shutdownConnection`, `shutdownListener`) in config
-- Nix development environment with direnv support
-- Default devShell with complete Rust toolchain (cargo, rustc, clippy, rustfmt, rust-src)
+- **🔧 SOCKS BIND Support**: Complete SOCKS BIND command implementation for both SOCKS4 and SOCKS5 (#218, #420)
+  - Direct TCP BIND operations with configurable bind addresses  
+  - SOCKS proxy BIND with upstream server support
+  - Timeout protection to prevent resource exhaustion attacks
+  - NAT address override functionality for complex network scenarios
+  - Comprehensive test coverage including timeout validation
+- **🌐 HTTP/HTTPS Enhancements**: 
+  - RFC 9298 Proxying UDP in HTTP protocol support (#406)
+  - HTTP authentication support for connectors and listeners (#405)
+  - Enhanced WebSocket detection with proper header parsing
+  - HTTP forward proxy implementation with WebSocket support (#404)
+  - HTTP loop prevention system with configurable hop limits
+- **🔒 SSH Tunnel Support**: Full SSH tunneling for both listeners and connectors with key authentication
+- **🧪 Comprehensive Test Suite**: Docker-based integration testing with matrix protocol validation
+- **⚡ Performance Optimizations**: Zero-copy buffer operations and splice() syscall support on Linux
+- **🛡️ Graceful Shutdown System**: SIGTERM/SIGINT/CTRL+C signal handling with configurable timeouts
+- **🏗️ Development Environment**: Nix flake with direnv support and complete Rust toolchain
 
 ### Changed
-- Server now shuts down gracefully when receiving termination signals
-- **Major Refactoring**: Refactored main.rs for improved testability and maintainability
-- **Architecture**: Refactored connector architecture with improved socket abstraction
-- **Testing**: Enhanced connector testing framework and socket operations testing
-- **Performance**: Improved LoadBalanceConnector dependency injection with OnceLock
-- **Modernization**: Replaced lazy_static with std::sync::OnceLock throughout codebase
-- **Memory**: Optimized buffer allocation for zero-copy performance improvement
-- **Error Handling**: Migrated from easy_error to anyhow for improved error handling
-- **Code Quality**: Refactored GlobalState to eliminate God Object anti-pattern
-- Modernized Rust code with let-chains pattern matching for cleaner nested conditions
-- Improved TPROXY listener error handling with proper error chains (`.source()` vs deprecated `.cause`)
-- Updated flake.lock with latest Nix dependencies
-- Code formatting and minor improvements
+- **🏗️ Architecture Overhaul**: Major refactoring of main.rs and connector architecture for improved testability
+- **🔧 Modernization**: 
+  - Replaced lazy_static with std::sync::OnceLock throughout codebase
+  - Updated to Rust Edition 2024 with modern language features
+  - Migrated from easy_error to anyhow for improved error handling
+  - Replaced trust-dns-resolver with hickory-resolver for DNS
+  - Replaced serde_yaml with serde_yaml_ng for better YAML handling
+- **⚡ Performance Improvements**:
+  - Zero-copy buffer allocation optimizations
+  - Enhanced LoadBalanceConnector with OnceLock dependency injection
+  - Linux splice() syscall integration for high-performance data transfer
+- **🛡️ Security & Reliability**:
+  - Improved error context messages across connectors and listeners
+  - Enhanced HTTP loop detection algorithms
+  - Better connection cleanup during server shutdown
+  - Timeout-based resource protection for BIND operations
 
 ### Removed
-- **Safety**: Eliminated dangerous panic! calls in production code
-- **Stability**: Eliminated dangerous unwrap() calls to prevent production crashes
-- Unused `NoAuth` struct from SOCKS implementation (superseded by `PasswordAuth` for better client compatibility)
+- **🚫 Safety Improvements**: Eliminated all dangerous panic!() and unwrap() calls in production code
+- **🧹 Code Cleanup**: Removed unused NoAuth struct from SOCKS implementation
+- **📦 Deprecated Dependencies**: Removed legacy error handling and DNS resolver libraries
 
 ### Fixed
-- Improved connection cleanup during server shutdown
-- HTTP test reliability issues
-- Socket operations and connector testing edge cases
-- Windows build compatibility issues
-- Cross-compilation setup and CI workflow improvements
-- Import path for `set_keepalive` function in TPROXY listener
-- Unused parameter warnings in TPROXY TCP accept method
-- Added missing Debug derives for internal structs
+- **🔧 Build & Compatibility**:
+  - Windows build compatibility issues resolved
+  - Cross-compilation setup and CI workflow improvements
+  - Import path corrections for TPROXY listener functions
+  - Missing Debug derives added for internal structs
+- **🧪 Testing & Reliability**:
+  - HTTP test reliability and stability improvements
+  - Socket operations and connector testing edge cases
+  - Docker layer caching for comprehensive test suite
+  - Permission errors in comprehensive test infrastructure
+- **⚡ Performance & Memory**:
+  - Connection cleanup during graceful server shutdown
+  - Buffer allocation optimizations for zero-copy operations
+  - Eliminated unused parameter warnings across codebase
+
+### Security
+- **🛡️ Resource Protection**: BIND operations now have configurable timeouts to prevent resource exhaustion attacks
+- **🔒 Authentication**: Enhanced HTTP authentication support with proper credential handling  
+- **🌐 Loop Prevention**: Comprehensive HTTP proxy loop detection prevents infinite request cycles
+- **⚡ Memory Safety**: Eliminated all panic!() and unwrap() calls that could cause crashes in production
 
 ### Dependencies
-- Updated Rust edition to 2024
-- Bumped major dependencies: tokio, rustls, clap, serde, and others
-- Replaced trust-dns-resolver with hickory-resolver for DNS handling
-- Replaced serde_yaml with serde_yaml_ng for improved YAML handling
+- **📦 Major Updates**: Updated to Rust Edition 2024 with modern language features
+- **🔄 Library Migration**: 
+  - `trust-dns-resolver` → `hickory-resolver` (better DNS handling)
+  - `serde_yaml` → `serde_yaml_ng` (improved YAML parsing) 
+  - `easy_error` → `anyhow` (better error context)
+  - `lazy_static` → `std::sync::OnceLock` (standard library solution)
+- **⬆️ Version Bumps**: tokio 1.47+, rustls 0.23+, clap 4.5+, and 50+ other dependency updates
 
 ## [0.9.0] - 2022-10-28
 
