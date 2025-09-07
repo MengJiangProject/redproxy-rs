@@ -1,0 +1,83 @@
+# RedProxy configuration for comprehensive BIND functionality testing
+# Based on base.yaml with BIND support enabled
+
+# Enable debug logging to see BIND operations
+log:
+  level: "debug"
+
+accessLog:
+  path: "/logs/bind-test-access.log"
+  format: "json"
+
+# Configure short timeout for BIND timeout testing
+timeouts:
+  idle: 3  # Short 3-second timeout for testing
+
+listeners:
+  - name: http
+    type: http
+    bind: "0.0.0.0:8800"
+  - name: socks-bind-allowed
+    type: socks
+    bind: "0.0.0.0:1081" 
+    allowBind: true
+    enforceBindAddress: false
+  - name: socks-bind-denied
+    type: socks
+    bind: "0.0.0.0:1082"
+    allowBind: false
+  - name: socks-bind-enforce
+    type: socks
+    bind: "0.0.0.0:1083"
+    allowBind: true
+    enforceBindAddress: true
+  - name: socks-ipv6-test
+    type: socks
+    bind: "[::]:1084"
+    allowBind: true
+    enforceBindAddress: false
+  - name: socks-bind-override
+    type: socks
+    bind: "0.0.0.0:1085"
+    allowBind: true
+    enforceBindAddress: false
+  - name: socks-bind-timeout
+    type: socks
+    bind: "0.0.0.0:1086"
+    allowBind: true
+    enforceBindAddress: false
+
+connectors:
+  - name: direct
+    type: direct
+  - name: direct-with-override
+    type: direct
+    overrideBindAddress: "192.168.1.100"
+  - name: upstream-http
+    type: http
+    server: "http-proxy"
+    port: 3128
+  - name: upstream-socks
+    type: socks
+    server: "socks-proxy"
+    port: 1080
+
+rules:
+  # Use override connector for requests from the override listener
+  - filter: 'request.listener == "socks-bind-override"'
+    target: direct-with-override
+    
+  # Direct connection for HTTP Echo
+  - filter: 'request.target.host == "http-echo"'
+    target: direct
+  
+  # Direct connection for target server
+  - filter: 'request.target.host == "target-server"'
+    target: direct
+      
+  # Default to direct
+  - filter: "true"
+    target: direct
+
+metrics:
+  bind: "0.0.0.0:9090"

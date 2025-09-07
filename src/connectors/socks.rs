@@ -13,12 +13,12 @@ use crate::{
         into_unspecified,
         socket_ops::{RealSocketOps, SocketOps},
         socks::{
-            PasswordAuth, SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE, SOCKS_REPLY_OK, SocksRequest,
-            SocksResponse, frames::setup_udp_session,
+            PasswordAuth, SOCKS_CMD_BIND, SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE,
+            SOCKS_REPLY_OK, SocksRequest, SocksResponse, frames::setup_udp_session,
         },
         tls::TlsClientConfig,
     },
-    context::{ContextRef, Feature, make_buffered_stream},
+    context::{ContextRef, ContextRefOps, ContextState, Feature, make_buffered_stream},
 };
 
 use super::ConnectorRef;
@@ -101,7 +101,17 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for SocksConnector<S
     }
 
     fn features(&self) -> &[Feature] {
-        &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
+        if self.version == 5 {
+            &[
+                Feature::TcpForward,
+                Feature::UdpForward,
+                Feature::UdpBind,
+                Feature::TcpBind,
+            ]
+        } else {
+            // SOCKS4 supports CONNECT and BIND, but not UDP
+            &[Feature::TcpForward, Feature::TcpBind]
+        }
     }
 
     async fn init(&mut self) -> Result<()> {
@@ -148,7 +158,8 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for SocksConnector<S
         let cmd = match feature {
             Feature::UdpBind | Feature::UdpForward => SOCKS_CMD_UDP_ASSOCIATE,
             Feature::TcpForward => SOCKS_CMD_CONNECT,
-            _ => bail!("unknown supported feature: {:?}", feature),
+            Feature::TcpBind => SOCKS_CMD_BIND,
+            //_ => bail!("unknown supported feature: {:?}", feature),
         };
         let auth = self
             .auth
@@ -183,6 +194,87 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for SocksConnector<S
                 .await
                 .context("setup_udp_session")?;
             ctx.write().await.set_server_frames(frames);
+        } else if feature == Feature::TcpBind {
+            let mut bind_addr = resp
+                .target
+                .as_socket_addr()
+                .ok_or_else(|| anyhow::anyhow!("bad bind address from SOCKS server"))?;
+            if bind_addr.ip().is_unspecified() {
+                bind_addr = std::net::SocketAddr::new(remote.ip(), bind_addr.port());
+            }
+            // Notify that BIND is ready - the server stream is already set for SOCKS protocol
+            ctx.on_bind_listen(bind_addr).await;
+
+            // Get the idle timeout from context
+            let idle_timeout = ctx.read().await.idle_timeout();
+
+            // Spawn a task to wait for second SOCKS response with timeout
+            let ctx_clone = ctx.clone();
+            let cancellation_token = ctx.read().await.cancellation_token().clone();
+
+            let bind_task = tokio::spawn(async move {
+                trace!(
+                    "SOCKS BIND waiting for second response with timeout {:?}",
+                    idle_timeout
+                );
+
+                // Take the server stream temporarily to read the second response
+                let mut server_stream = ctx_clone
+                    .write()
+                    .await
+                    .take_server_stream()
+                    .ok_or_else(|| anyhow::anyhow!("server stream should be set"))?;
+
+                // Read the second SOCKS BIND response with both timeout and cancellation support
+                let resp2 = tokio::select! {
+                    result = SocksResponse::read_from(&mut server_stream) => {
+                        result.map_err(|e| anyhow::anyhow!("Failed to read second SOCKS BIND response: {}", e))?
+                    }
+                    _ = tokio::time::sleep(idle_timeout) => {
+                        // Put the stream back before returning
+                        ctx_clone.write().await.set_server_stream(server_stream);
+                        trace!("SOCKS BIND operation timed out after {:?}", idle_timeout);
+                        return Err(anyhow::anyhow!("SOCKS BIND timed out after {:?}", idle_timeout));
+                    }
+                    _ = cancellation_token.cancelled() => {
+                        // Put the stream back before returning
+                        ctx_clone.write().await.set_server_stream(server_stream);
+                        trace!("SOCKS BIND operation cancelled during shutdown");
+                        return Err(anyhow::anyhow!("SOCKS BIND cancelled"));
+                    }
+                };
+
+                if resp2.cmd != SOCKS_REPLY_OK {
+                    // Put the stream back on error
+                    ctx_clone.write().await.set_server_stream(server_stream);
+                    return Err(anyhow::anyhow!(
+                        "SOCKS BIND second response failed: {:?}",
+                        resp2.cmd
+                    ));
+                }
+
+                // Extract peer address from second response
+                let peer_addr = resp2.target.as_socket_addr().ok_or_else(|| {
+                    anyhow::anyhow!("Invalid peer address in SOCKS BIND response")
+                })?;
+
+                trace!("SOCKS BIND accepted connection from {}", peer_addr);
+
+                // Set the server stream back in context
+                ctx_clone.write().await.set_server_stream(server_stream);
+
+                // Trigger the bind_accept callback
+                ctx_clone.on_bind_accept(peer_addr).await;
+
+                trace!("SOCKS BIND operation completed successfully");
+                Ok(())
+            });
+
+            // Set state to BindWaiting with the task handle
+            ctx.write()
+                .await
+                .set_bind_task(bind_task)
+                .set_state(ContextState::BindWaiting);
         }
         Ok(())
     }
@@ -197,7 +289,7 @@ mod tests {
             test_utils::{MockSocketOps, StreamScript},
         },
         connectors::Connector,
-        context::{ContextManager, Feature, TargetAddress},
+        context::{ContextManager, ContextState, Feature, TargetAddress},
     };
     use std::net::SocketAddr;
     use tokio_test::io::Mock;
@@ -248,6 +340,84 @@ mod tests {
             .build()
     }
 
+    // SOCKS5 BIND protocol stream builder for setup-only tests (first response only)
+    fn socks5_bind_setup_stream(
+        target_host: &str,
+        target_port: u16,
+        auth: Option<(&str, &str)>,
+    ) -> Mock {
+        let mut script = StreamScript::new();
+
+        if let Some((username, password)) = auth {
+            // SOCKS5 with username/password auth
+            script = script
+                .write(&[0x05, 0x02, 0x00, 0x02]) // Version 5, 2 methods, no-auth + username/password
+                .read(&[0x05, 0x02]) // Version 5, username/password selected
+                .write(&[0x01, username.len() as u8]) // Auth version, username length
+                .write(username.as_bytes())
+                .write(&[password.len() as u8])
+                .write(password.as_bytes())
+                .read(&[0x01, 0x00]); // Auth success
+        } else {
+            // SOCKS5 without auth
+            script = script
+                .write(&[0x05, 0x01, 0x00]) // Version 5, 1 method, no auth
+                .read(&[0x05, 0x00]); // Version 5, no auth selected
+        }
+
+        // SOCKS5 BIND request and first response only
+        script = script
+            .write(&[0x05, 0x02, 0x00, 0x03, target_host.len() as u8]) // Version, BIND, reserved, domain name type, hostname length
+            .write(target_host.as_bytes())
+            .write(&[(target_port >> 8) as u8, (target_port & 0xFF) as u8]) // Port in network byte order
+            .read(&[0x05, 0x00, 0x00, 0x01, 192, 168, 1, 100, 0x1F, 0x90]); // First response: bound address (192.168.1.100:8080)
+
+        script.build()
+    }
+
+    // SOCKS5 BIND protocol stream builder for complete tests (both responses)
+    fn socks5_bind_stream(target_host: &str, target_port: u16, auth: Option<(&str, &str)>) -> Mock {
+        let mut script = StreamScript::new();
+
+        if let Some((username, password)) = auth {
+            // SOCKS5 with username/password auth
+            script = script
+                .write(&[0x05, 0x02, 0x00, 0x02]) // Version 5, 2 methods, no-auth + username/password
+                .read(&[0x05, 0x02]) // Version 5, username/password selected
+                .write(&[0x01, username.len() as u8]) // Auth version, username length
+                .write(username.as_bytes())
+                .write(&[password.len() as u8])
+                .write(password.as_bytes())
+                .read(&[0x01, 0x00]); // Auth success
+        } else {
+            // SOCKS5 without auth
+            script = script
+                .write(&[0x05, 0x01, 0x00]) // Version 5, 1 method, no auth
+                .read(&[0x05, 0x00]); // Version 5, no auth selected
+        }
+
+        // SOCKS5 BIND request and responses
+        script = script
+            .write(&[0x05, 0x02, 0x00, 0x03, target_host.len() as u8]) // Version, BIND, reserved, domain name type, hostname length
+            .write(target_host.as_bytes())
+            .write(&[(target_port >> 8) as u8, (target_port & 0xFF) as u8]) // Port in network byte order
+            .read(&[0x05, 0x00, 0x00, 0x01, 192, 168, 1, 100, 0x1F, 0x90]) // First response: bound address (192.168.1.100:8080)
+            .read(&[0x05, 0x00, 0x00, 0x01, 192, 168, 1, 200, 0x27, 0x10]); // Second response: peer address (192.168.1.200:10000)
+
+        script.build()
+    }
+
+    // SOCKS4 BIND protocol stream builder for setup-only tests (first response only)
+    fn socks4_bind_setup_stream(target_ip: [u8; 4], target_port: u16) -> Mock {
+        StreamScript::new()
+            .write(&[0x04, 0x02]) // Version 4, BIND
+            .write(&[(target_port >> 8) as u8, (target_port & 0xFF) as u8]) // Port
+            .write(&target_ip) // IP address
+            .write(&[0x00]) // Empty user ID
+            .read(&[0x00, 0x5a, 0x1F, 0x90, 192, 168, 1, 100]) // First response: bound address
+            .build()
+    }
+
     fn create_test_connector<S: SocketOps>(
         server: String,
         port: u16,
@@ -290,7 +460,12 @@ mod tests {
         assert_eq!(connector.name(), "test_socks");
         assert_eq!(
             connector.features(),
-            &[Feature::TcpForward, Feature::UdpForward, Feature::UdpBind]
+            &[
+                Feature::TcpForward,
+                Feature::UdpForward,
+                Feature::UdpBind,
+                Feature::TcpBind
+            ]
         );
         assert_eq!(connector.version, 5);
 
@@ -432,10 +607,129 @@ mod tests {
         assert!(features.contains(&Feature::TcpForward));
         assert!(features.contains(&Feature::UdpForward));
         assert!(features.contains(&Feature::UdpBind));
+        assert!(features.contains(&Feature::TcpBind));
     }
 
     #[tokio::test]
     async fn test_default_socks_version() {
         assert_eq!(default_socks_version(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_socks5_bind_connection_success() {
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            socks5_bind_setup_stream("httpbin.org", 8080, None)
+        }));
+        let connector = Arc::new(create_test_connector(
+            "192.0.2.15".to_string(),
+            1080,
+            5,
+            None,
+            None,
+            mock_ops,
+        ));
+
+        let target = TargetAddress::DomainPort("httpbin.org".to_string(), 8080);
+        let ctx = create_test_context(target, Feature::TcpBind).await;
+
+        // This should succeed with mock socket ops
+        let result = connector.connect(ctx.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify context state was set to BindWaiting
+        let context_read = ctx.read().await;
+        assert_eq!(context_read.state(), ContextState::BindWaiting);
+
+        // Verify context was updated correctly with mock addresses
+        assert_eq!(context_read.local_addr().to_string(), "127.0.0.1:12345");
+        assert_eq!(context_read.server_addr().to_string(), "192.0.2.1:80");
+    }
+
+    #[tokio::test]
+    async fn test_socks4_bind_connection_success() {
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            socks4_bind_setup_stream([192, 168, 1, 100], 8080)
+        }));
+        let connector = Arc::new(create_test_connector(
+            "192.0.2.16".to_string(),
+            1080,
+            4,
+            None,
+            None,
+            mock_ops,
+        ));
+
+        // SOCKS4 supports IP addresses for BIND
+        let target = TargetAddress::SocketAddr("192.168.1.100:8080".parse().unwrap());
+        let ctx = create_test_context(target, Feature::TcpBind).await;
+
+        // This should succeed with mock socket ops
+        let result = connector.connect(ctx.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify context state was set to BindWaiting
+        let context_read = ctx.read().await;
+        assert_eq!(context_read.state(), ContextState::BindWaiting);
+    }
+
+    #[tokio::test]
+    async fn test_socks5_bind_with_auth() {
+        let auth = SocksAuthData {
+            username: "binduser".to_string(),
+            password: "bindpass".to_string(),
+        };
+
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            socks5_bind_setup_stream("httpbin.org", 8080, Some(("binduser", "bindpass")))
+        }));
+        let connector = Arc::new(create_test_connector(
+            "192.0.2.17".to_string(),
+            1080,
+            5,
+            Some(auth.clone()),
+            None,
+            mock_ops,
+        ));
+
+        // Test BIND with authentication
+        let target = TargetAddress::DomainPort("httpbin.org".to_string(), 8080);
+        let ctx = create_test_context(target, Feature::TcpBind).await;
+
+        let result = connector.connect(ctx.clone()).await;
+        assert!(result.is_ok());
+
+        // Verify context state was set to BindWaiting
+        let context_read = ctx.read().await;
+        assert_eq!(context_read.state(), ContextState::BindWaiting);
+    }
+
+    #[tokio::test]
+    async fn test_socks_connector_bind_wait() {
+        let mock_ops = Arc::new(MockSocketOps::new_with_builder(|| {
+            socks5_bind_stream("httpbin.org", 8080, None)
+        }));
+        let connector = Arc::new(create_test_connector(
+            "192.0.2.18".to_string(),
+            1080,
+            5,
+            None,
+            None,
+            mock_ops,
+        ));
+
+        let target = TargetAddress::DomainPort("httpbin.org".to_string(), 8080);
+        let ctx = create_test_context(target, Feature::TcpBind).await;
+
+        // Set up BIND operation
+        let result = connector.connect(ctx.clone()).await;
+        assert!(result.is_ok());
+
+        // Wait for the spawned task to process both SOCKS responses
+        // The spawned task will read the second response and signal completion
+        let wait_result = ctx.wait_for_bind().await;
+        assert!(wait_result.is_ok());
+
+        // Give a moment for cleanup after the BIND completes
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 }

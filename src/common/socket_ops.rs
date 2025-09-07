@@ -35,6 +35,7 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'st
 #[async_trait]
 pub trait AppTcpListener: Send + Sync {
     async fn accept(&self) -> Result<(Box<dyn Stream>, SocketAddr)>;
+    async fn local_addr(&self) -> Result<SocketAddr>;
 }
 
 // Clean, low-level socket abstraction equivalent to Tokio socket library
@@ -84,6 +85,10 @@ impl AppTcpListener for RealTcpListener {
     async fn accept(&self) -> Result<(Box<dyn Stream>, SocketAddr)> {
         let (stream, addr) = self.listener.accept().await?;
         Ok((Box::new(stream), addr))
+    }
+
+    async fn local_addr(&self) -> Result<SocketAddr> {
+        Ok(self.listener.local_addr()?)
     }
 }
 
@@ -269,6 +274,10 @@ pub mod test_utils {
             let stream = default_tcp_stream();
             let addr = "127.0.0.1:12345".parse().unwrap();
             Ok((Box::new(stream), addr))
+        }
+
+        async fn local_addr(&self) -> Result<SocketAddr> {
+            Ok("127.0.0.1:8080".parse().unwrap())
         }
     }
 
