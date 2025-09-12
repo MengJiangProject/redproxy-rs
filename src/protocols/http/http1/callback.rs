@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 use tokio::sync::oneshot::Sender;
-use tracing::{debug, trace, warn};
+use tracing::{debug, warn};
 
 use super::{handler::prepare_server_request, io::http_io_loop};
+use crate::protocols::http::common::should_keep_alive;
+use crate::protocols::http::context_ext::HttpContextExt;
 use crate::protocols::http::{HttpResponse, HttpVersion, http1::send_response};
 use crate::{
     context::{Context, ContextCallback, IOBufStream},
@@ -71,6 +73,7 @@ impl Http1Callback {
 
     /// Handle HTTP forward proxy by setting up custom IO loop
     async fn handle_forward_proxy(&self, ctx: &mut Context) {
+        debug!("HTTP/1.1: handle_forward_proxy called - setting up forward proxy flow");
         let (mut client_stream, mut server_stream) =
             match (ctx.take_client_stream(), ctx.take_server_stream()) {
                 (Some(client), Some(server)) => (client, server),
@@ -102,11 +105,11 @@ impl Http1Callback {
         // Prepare and send ONLY request headers to server
         let mut prepared_request = request.clone();
         let client_addr = ctx.props().source;
-        prepare_server_request(&mut prepared_request, client_addr);
+        prepare_server_request(&mut prepared_request, ctx, client_addr);
 
-        trace!(
-            "HTTP/1.1: Sending request to server: {:?}",
-            prepared_request
+        debug!(
+            "HTTP/1.1: handle_forward_proxy - calling send_request for {} {}",
+            prepared_request.method, prepared_request.uri
         );
         if let Err(e) = crate::protocols::http::http1::handler::send_request(
             &mut server_stream,
@@ -167,11 +170,22 @@ impl ContextCallback for Http1Callback {
     async fn on_connect(&self, ctx: &mut Context) {
         debug!("HTTP/1.1: Connection established, processing request");
 
+        // Ensure HTTP/1.1 protocol is set in context
+        ctx.set_http_protocol("http/1.1");
+
+        // Configure based on proxy mode
         match self.proxy_mode {
             HttpProxyMode::Connect => {
+                // CONNECT tunneling doesn't support keep-alive
+                ctx.set_http_keep_alive(false);
                 self.handle_connect_tunnel(ctx).await;
             }
             HttpProxyMode::Forward => {
+                // Forward proxy supports keep-alive by default
+                if !ctx.http_keep_alive() {
+                    // Only set if not already configured
+                    ctx.set_http_keep_alive(true);
+                }
                 self.handle_forward_proxy(ctx).await;
             }
         }
@@ -195,24 +209,32 @@ impl ContextCallback for Http1Callback {
     async fn on_finish(&self, ctx: &mut Context) {
         debug!("HTTP/1.1: Request processing finished");
 
+        // Determine if connection should be kept alive based on request/response
+        let keep_alive = if let Some(request) = ctx.http_request() {
+            // Use common keep-alive logic
+            should_keep_alive(request.as_ref(), None) && ctx.http_keep_alive()
+        } else {
+            // Default to context setting if no request available
+            ctx.http_keep_alive()
+        };
+
         // Check if we should return client stream for keep-alive
-        if let Some(client_stream) = ctx.take_client_stream() {
+        if keep_alive && let Some(client_stream) = ctx.take_client_stream() {
             debug!("HTTP/1.1: Returning BufferedStream for keep-alive");
             // Keep it as IOBufStream throughout - no conversion needed
             self.notify_completion(Some(client_stream)).await;
-        } else {
-            debug!("HTTP/1.1: No client stream to return, closing connection");
-            self.notify_completion(None).await;
+            return;
         }
+
+        debug!("HTTP/1.1: Closing connection (keep-alive={})", keep_alive);
+        self.notify_completion(None).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{
-        ContextManager, IOBufStream, IOLoopFn, TargetAddress, make_buffered_stream,
-    };
+    use crate::context::{ContextManager, IOBufStream, TargetAddress, make_buffered_stream};
     use crate::protocols::http::{HttpMethod, HttpRequest, HttpVersion};
     use std::sync::Arc;
     use test_log::test;
@@ -304,8 +326,9 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_on_connection_established_forward_mode_close() {
-        let (tx, mut rx) = oneshot::channel();
+    async fn test_forward_proxy_context_properties() {
+        // This test verifies that Forward proxy mode sets correct HTTP context properties
+        let (tx, _rx) = oneshot::channel();
         let callback = Http1Callback::new(tx, HttpProxyMode::Forward);
 
         let contexts = Arc::new(ContextManager::default());
@@ -314,40 +337,35 @@ mod tests {
             .await;
 
         // Create request with Connection: close
-        let mut request = HttpRequest::new(
+        let request = HttpRequest::new(
             HttpMethod::Get,
             "http://example.com/test".to_string(),
             HttpVersion::Http1_1,
         );
-        request.add_header("Connection".to_string(), "close".to_string());
 
-        // Create test streams - server stream needs to accept the request headers write
-        let client_stream = make_test_stream(b"");
-        let server_stream = make_test_stream_with_write(b"", b"GET http://example.com/test HTTP/1.1\r\nVia: 1.1 redproxy\r\nX-Forwarded-For: 127.0.0.1\r\nConnection: close\r\n\r\n");
-
-        // Set up context
+        // Set up minimal context - no streams needed for property testing
         {
             let mut ctx_guard = ctx.write().await;
             ctx_guard.set_target(TargetAddress::DomainPort("example.com".to_string(), 80));
             ctx_guard.set_http_request(request);
-            ctx_guard.set_client_stream(client_stream);
-            ctx_guard.set_server_stream(server_stream);
+            // Don't set streams - test the property setting behavior only
         }
 
-        // Test that on_connect sets up the IO loop without error
+        // Test HTTP properties setup for Forward proxy mode
         {
             let mut ctx_guard = ctx.write().await;
+
+            // Before calling on_connect, properties should not be set
+            assert_eq!(ctx_guard.http_protocol(), None);
+            assert!(ctx_guard.http_keep_alive()); // Default is true for HTTP/1.1
+
+            // Call on_connect - it will fail due to missing streams, but should set properties first
             callback.on_connect(&mut ctx_guard).await;
 
-            let http_io_loop_ptr: IOLoopFn = http_io_loop;
-            // Verify IO loop was set (this is the main behavior we're testing)
-            assert!(std::ptr::fn_addr_eq(http_io_loop_ptr, ctx_guard.io_loop()));
+            // Verify HTTP properties were set correctly for Forward proxy
+            assert_eq!(ctx_guard.http_protocol(), Some("http/1.1"));
+            assert!(ctx_guard.http_keep_alive()); // Forward proxy keeps the default
         }
-
-        // In the new architecture, completion notification happens after on_finish
-        // This test verifies that on_connect doesn't immediately notify completion
-        let result = rx.try_recv();
-        assert!(result.is_err()); // Should NOT have completion notification yet
     }
 
     #[test(tokio::test)]

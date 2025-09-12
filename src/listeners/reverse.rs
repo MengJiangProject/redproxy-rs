@@ -11,7 +11,7 @@ use tracing::{debug, error, info, warn};
 
 use super::Listener;
 use crate::common::frames::Frame;
-use crate::common::socket_ops::{TcpListener, RealSocketOps, SocketOps};
+use crate::common::socket_ops::{RealSocketOps, SocketOps, TcpListener};
 use crate::common::udp::{self, setup_udp_session};
 use crate::config::Timeouts;
 use crate::context::ContextManager;

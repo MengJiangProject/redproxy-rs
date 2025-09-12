@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Error, Result, bail};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use serde::{Deserialize, Serialize};

@@ -13,7 +13,7 @@ use crate::{
     common::{
         auth::AuthData,
         into_unspecified,
-        socket_ops::{TcpListener, RealSocketOps, SocketOps},
+        socket_ops::{RealSocketOps, SocketOps, TcpListener},
         socks::{
             PasswordAuth, SOCKS_CMD_BIND, SOCKS_CMD_CONNECT, SOCKS_CMD_UDP_ASSOCIATE,
             SOCKS_REPLY_GENERAL_FAILURE, SOCKS_REPLY_OK, SocksRequest, SocksResponse,

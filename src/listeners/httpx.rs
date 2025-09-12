@@ -10,7 +10,7 @@ use crate::{
     HttpVersion,
     common::{
         auth::AuthData,
-        socket_ops::{TcpListener, RealSocketOps, SocketOps},
+        socket_ops::{RealSocketOps, SocketOps, TcpListener},
         tls::TlsServerConfig,
     },
     config::Timeouts,

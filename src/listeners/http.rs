@@ -8,7 +8,7 @@ use tracing::{error, info, warn};
 
 use crate::common::auth::AuthData;
 use crate::common::http_proxy::http_forward_proxy_handshake;
-use crate::common::socket_ops::{TcpListener, RealSocketOps, SocketOps};
+use crate::common::socket_ops::{RealSocketOps, SocketOps, TcpListener};
 use crate::common::tls::TlsServerConfig;
 use crate::config::Timeouts;
 use crate::context::ContextManager;

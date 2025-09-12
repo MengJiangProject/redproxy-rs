@@ -2,7 +2,10 @@ use anyhow::{Result, bail};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tracing::{debug, warn};
 
-use crate::context::{ContextManager, ContextRef, ContextRefOps, IOBufStream, TargetAddress};
+use crate::context::{ContextManager, ContextRef, ContextRefOps, IOBufStream};
+use crate::protocols::http::common::{
+    add_proxy_headers, extract_target_from_request, set_connection_headers,
+};
 use crate::protocols::http::{HttpMessage, HttpMethod, HttpRequest, HttpResponse, HttpVersion};
 
 use super::callback::{Http1Callback, HttpProxyMode};
@@ -171,8 +174,8 @@ pub async fn handle_listener_connection(
             break;
         }
 
-        // Extract target address
-        let target = match extract_target(&request) {
+        // Extract target address using common infrastructure
+        let target = match extract_target_from_request(&request) {
             Ok(target) => target,
             Err(e) => {
                 warn!("HTTP/1.1: Failed to extract target: {}", e);
@@ -240,6 +243,8 @@ pub async fn read_request(stream: &mut crate::io::IOBufStream) -> Result<Option<
     }
 
     let line = line.trim_end();
+    debug!("HTTP/1.1: Parsing request line: '{}'", line);
+
     let (method, uri, version) = parse_request_line(line).await?;
 
     // Parse headers
@@ -250,11 +255,32 @@ pub async fn read_request(stream: &mut crate::io::IOBufStream) -> Result<Option<
         request.add_header(name, value);
     }
 
+    // Validate Host header for HTTP/1.1 requests
+    if request.version == HttpVersion::Http1_1 {
+        let mut host_found = false;
+        for (name, value) in &request.headers {
+            if name.to_lowercase() == "host" {
+                host_found = true;
+                if value.trim().is_empty() {
+                    bail!("Empty Host header in HTTP/1.1 request");
+                }
+                break;
+            }
+        }
+        if !host_found {
+            bail!("Missing Host header in HTTP/1.1 request");
+        }
+    }
+
     Ok(Some(request))
 }
 
 /// Send HTTP request to stream
 pub async fn send_request(stream: &mut IOBufStream, request: &HttpRequest) -> Result<()> {
+    debug!(
+        "HTTP/1.1: send_request called - sending headers for {} {}",
+        request.method, request.uri
+    );
     let request_line = format!("{} {} {}\r\n", request.method, request.uri, request.version);
     AsyncWriteExt::write_all(stream, request_line.as_bytes()).await?;
 
@@ -265,6 +291,10 @@ pub async fn send_request(stream: &mut IOBufStream, request: &HttpRequest) -> Re
 
     AsyncWriteExt::write_all(stream, b"\r\n").await?;
     AsyncWriteExt::flush(stream).await?;
+    debug!(
+        "HTTP/1.1: send_request completed - headers sent for {} {}",
+        request.method, request.uri
+    );
 
     Ok(())
 }
@@ -327,9 +357,11 @@ pub async fn handle_connector(stream: &mut IOBufStream, ctx: ContextRef) -> Resu
     // Check if we have an existing HTTP request (forward proxy case)
     let request = if let Some(http_request) = ctx_read.http_request() {
         // HTTP Forward Proxy: use existing request
+        debug!("HTTP/1.1: handle_connector - HTTP forward proxy case, using existing request");
         http_request.as_ref().clone()
     } else {
         // SOCKS/Other → HTTP: create CONNECT request from target
+        debug!("HTTP/1.1: handle_connector - SOCKS->HTTP case, creating CONNECT request");
         let target = ctx_read.target();
         HttpRequest::new(
             HttpMethod::Connect,
@@ -341,6 +373,10 @@ pub async fn handle_connector(stream: &mut IOBufStream, ctx: ContextRef) -> Resu
     drop(ctx_read); // Release the lock
 
     // Send the request
+    debug!(
+        "HTTP/1.1: handle_connector - calling send_request for {} {}",
+        request.method, request.uri
+    );
     send_request(stream, &request).await?;
 
     // Read the response
@@ -364,66 +400,24 @@ async fn send_error_response_and_close(
     status_code: u16,
     status_text: &str,
 ) {
+    debug!(
+        "HTTP/1.1: Sending {} {} error response",
+        status_code, status_text
+    );
     let error_response =
         HttpResponse::new(HttpVersion::Http1_1, status_code, status_text.to_string());
 
     if let Err(e) = send_response(stream, &error_response).await {
         warn!("HTTP/1.1: Failed to send error response: {}", e);
+        return;
     }
-}
 
-/// Extract target address from HTTP request
-fn extract_target(request: &HttpRequest) -> Result<TargetAddress> {
-    if request.is_connect() {
-        // CONNECT request: target is in URI (host:port format)
-        if let Some(colon_pos) = request.uri.find(':') {
-            let host = &request.uri[..colon_pos];
-            let port_str = &request.uri[colon_pos + 1..];
-            let port: u16 = port_str.parse().map_err(|e| {
-                anyhow::anyhow!("Failed to parse CONNECT port '{}': {}", port_str, e)
-            })?;
-            Ok(TargetAddress::DomainPort(host.to_string(), port))
-        } else {
-            Err(anyhow::anyhow!(
-                "Invalid CONNECT target format '{}', expected 'host:port'",
-                request.uri
-            ))
-        }
+    debug!("HTTP/1.1: Error response sent successfully, flushing");
+    // Ensure error response is sent immediately
+    if let Err(e) = stream.flush().await {
+        warn!("HTTP/1.1: Failed to flush error response: {}", e);
     } else {
-        // Forward proxy request
-        if request.uri.starts_with("http://") || request.uri.starts_with("https://") {
-            // Absolute URI
-            let url = url::Url::parse(&request.uri).map_err(|e| {
-                anyhow::anyhow!("Failed to parse resource URI '{}': {}", request.uri, e)
-            })?;
-            let host = url
-                .host_str()
-                .ok_or_else(|| anyhow::anyhow!("Missing host in resource URI '{}'", request.uri))?;
-            let port = url
-                .port_or_known_default()
-                .ok_or_else(|| anyhow::anyhow!("Missing port in resource URI '{}'", request.uri))?;
-            Ok(TargetAddress::DomainPort(host.to_string(), port))
-        } else {
-            // Relative path: use Host header
-            let host_header = request.get_header("Host").ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Missing Host header for relative resource path '{}'",
-                    request.uri
-                )
-            })?;
-
-            // Add default port if missing
-            let target_with_port = if host_header.contains(':') {
-                host_header.clone()
-            } else {
-                // Default to port 80 for HTTP requests
-                format!("{}:80", host_header)
-            };
-
-            target_with_port.parse().map_err(|e| {
-                anyhow::anyhow!("Failed to parse Host header '{}': {}", host_header, e)
-            })
-        }
+        debug!("HTTP/1.1: Error response flushed successfully");
     }
 }
 
@@ -526,56 +520,33 @@ pub fn prepare_client_response(response: &mut HttpResponse, client_keep_alive: b
     }
 }
 
-/// Prepare HTTP request for sending to server (strip hop-by-hop headers, etc.)
-pub fn prepare_server_request(request: &mut HttpRequest, client_addr: std::net::SocketAddr) {
-    // Check if this is a WebSocket upgrade BEFORE removing headers
-    let is_websocket = request.is_websocket_upgrade();
-
-    // Remove hop-by-hop headers
-    request.remove_header("Connection");
-    request.remove_header("Keep-Alive");
+/// Prepare HTTP request for sending to server using common infrastructure
+pub fn prepare_server_request(
+    request: &mut HttpRequest,
+    ctx: &crate::context::Context,
+    client_addr: std::net::SocketAddr,
+) {
+    // Remove hop-by-hop headers first
     request.remove_header("Proxy-Authorization");
     request.remove_header("Proxy-Authenticate");
     request.remove_header("TE");
     request.remove_header("Trailer");
-    // Keep "Upgrade" for WebSocket support
+    // Connection and Keep-Alive will be set by set_connection_headers()
+    // Keep "Upgrade" for WebSocket support - set_connection_headers handles this
 
-    // Add Via header for proxy identification
-    let via_value = "1.1 redproxy".to_string();
-    if let Some(existing_via) = request.get_header("Via") {
-        request.set_header(
-            "Via".to_string(),
-            format!("{}, {}", existing_via, via_value),
-        );
-    } else {
-        request.add_header("Via".to_string(), via_value);
-    }
+    // Add proxy identification and forwarding headers using common functions
+    add_proxy_headers(request, ctx, client_addr.ip());
 
-    // Add X-Forwarded-For
-    let client_ip = client_addr.ip().to_string();
-    if let Some(existing_xff) = request.get_header("X-Forwarded-For") {
-        request.set_header(
-            "X-Forwarded-For".to_string(),
-            format!("{}, {}", existing_xff, client_ip),
-        );
-    } else {
-        request.add_header("X-Forwarded-For".to_string(), client_ip);
-    }
-
-    // Handle Connection header based on request type
-    if is_websocket {
-        // WebSocket upgrade: preserve Connection: Upgrade
-        request.set_header("Connection".to_string(), "Upgrade".to_string());
-    } else {
-        // Regular HTTP: force Connection: close (no connection pooling yet)
-        request.set_header("Connection".to_string(), "close".to_string());
-    }
+    // Set connection management headers based on protocol and context
+    set_connection_headers(request, ctx);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::context::{IOBufStream, make_buffered_stream};
+    use crate::protocols::http::context_ext::HttpContextExt;
+    use std::sync::Arc;
     use test_log::test;
     use tokio_test::io::Builder;
 
@@ -789,8 +760,8 @@ mod tests {
         assert!(should_keep_alive(&request, &response));
     }
 
-    #[test]
-    fn test_prepare_server_request() {
+    #[tokio::test]
+    async fn test_prepare_server_request() {
         let mut request = HttpRequest::new(
             HttpMethod::Get,
             "http://example.com/test".to_string(),
@@ -804,15 +775,28 @@ mod tests {
             "Bearer token".to_string(),
         );
 
+        // Create a test context with HTTP properties
+        let contexts = Arc::new(ContextManager::default());
+        let source = "127.0.0.1:1234".parse().unwrap();
+        let ctx = contexts.create_context("test".to_string(), source).await;
+        {
+            let mut ctx_write = ctx.write().await;
+            ctx_write
+                .set_http_protocol("http/1.1")
+                .set_http_keep_alive(true);
+        }
+
         let client_addr = "192.168.1.100:12345".parse().unwrap();
-        prepare_server_request(&mut request, client_addr);
+        let ctx_read = ctx.read().await;
+        prepare_server_request(&mut request, &ctx_read, client_addr);
 
         // Hop-by-hop headers should be removed
         assert!(request.get_header("Proxy-Authorization").is_none());
 
-        // Should have Via header
+        // Should have Via header (with redproxy identifier)
         assert!(request.get_header("Via").is_some());
-        assert_eq!(request.get_header("Via").unwrap(), "1.1 redproxy");
+        let via_header = request.get_header("Via").unwrap();
+        assert!(via_header.starts_with("1.1 redproxy-")); // Random ID suffix
 
         // Should have X-Forwarded-For
         assert!(request.get_header("X-Forwarded-For").is_some());
@@ -821,12 +805,12 @@ mod tests {
             "192.168.1.100"
         );
 
-        // Should force Connection: close
-        assert_eq!(request.get_header("Connection").unwrap(), "close");
+        // Should have Connection: keep-alive based on context setting
+        assert_eq!(request.get_header("Connection").unwrap(), "keep-alive");
     }
 
-    #[test]
-    fn test_prepare_server_request_websocket() {
+    #[tokio::test]
+    async fn test_prepare_server_request_websocket() {
         let mut request = HttpRequest::new(
             HttpMethod::Get,
             "ws://example.com/websocket".to_string(),
@@ -842,15 +826,26 @@ mod tests {
             "Bearer token".to_string(),
         );
 
+        // Create a test context
+        let contexts = Arc::new(ContextManager::default());
+        let source = "127.0.0.1:1234".parse().unwrap();
+        let ctx = contexts.create_context("test".to_string(), source).await;
+        {
+            let mut ctx_write = ctx.write().await;
+            ctx_write.set_http_protocol("http/1.1");
+        }
+
         let client_addr = "192.168.1.100:12345".parse().unwrap();
-        prepare_server_request(&mut request, client_addr);
+        let ctx_read = ctx.read().await;
+        prepare_server_request(&mut request, &ctx_read, client_addr);
 
         // Hop-by-hop headers should be removed except for WebSocket-specific ones
         assert!(request.get_header("Proxy-Authorization").is_none());
 
-        // Should have Via header
+        // Should have Via header (with redproxy identifier)
         assert!(request.get_header("Via").is_some());
-        assert_eq!(request.get_header("Via").unwrap(), "1.1 redproxy");
+        let via_header = request.get_header("Via").unwrap();
+        assert!(via_header.starts_with("1.1 redproxy-")); // Random ID suffix
 
         // Should have X-Forwarded-For
         assert!(request.get_header("X-Forwarded-For").is_some());

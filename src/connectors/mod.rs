@@ -6,6 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 
 mod direct;
 pub mod http;
+pub mod httpx;
 pub mod loadbalance;
 #[cfg(feature = "quic")]
 mod quic;
@@ -60,6 +61,7 @@ pub fn from_value(value: &Value) -> Result<ConnectorRef> {
     match tname {
         "direct" => direct::from_value(value),
         "http" => http::from_value(value),
+        "httpx" => httpx::from_value(value),
         "socks" => socks::from_value(value),
         "loadbalance" => loadbalance::from_value(value),
         #[cfg(feature = "quic")]
