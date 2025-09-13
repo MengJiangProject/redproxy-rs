@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Error, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use chashmap_async::CHashMap;
 use serde::{Deserialize, Serialize};
@@ -133,14 +133,17 @@ impl<S: SocketOps + Send + Sync + 'static> super::Connector for DirectConnector<
         ]
     }
 
-    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<(), Error> {
-        let target = ctx.read().await.target().clone();
+    async fn connect(self: Arc<Self>, ctx: ContextRef) -> Result<()> {
+        let target = ctx.read().await.target();
+        trace!("connecting to {}", target);
         let remote = match &target {
             TargetAddress::SocketAddr(addr) => *addr,
             TargetAddress::DomainPort(domain, port) => {
                 self.dns.lookup_host(domain.as_str(), *port).await?
             }
-            _ => unreachable!(),
+            TargetAddress::Unknown => {
+                bail!("Cannot connect to unknown target address");
+            }
         };
 
         trace!("target resolved to {}", remote);

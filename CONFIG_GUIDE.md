@@ -357,6 +357,106 @@ listeners:
     inactivityTimeoutSecs: 300
 ```
 
+---
+
+#### 4.7. HttpX Listener (`httpx`)
+
+The `httpx` listener is a unified HTTP listener that supports multiple HTTP protocol versions (HTTP/1.1, HTTP/2, HTTP/3) with automatic protocol negotiation via ALPN (Application-Layer Protocol Negotiation). This is an advanced listener type designed for modern HTTP proxy scenarios.
+
+-   **`type: httpx`**
+-   **Common Parameters**: `name`, `bind`.
+-   `protocols` (object): HTTP protocol configuration section that controls which HTTP versions are enabled.
+    -   `http1` (object, optional): HTTP/1.1 configuration.
+        -   `enable` (boolean, optional): Enable HTTP/1.1 support.
+            -   *Default value*: `true`.
+    -   `http2` (object, optional): HTTP/2 configuration.
+        -   `enable` (boolean, optional): Enable HTTP/2 support.
+            -   *Default value*: `false`.
+        -   `max_concurrent_streams` (integer, optional): Maximum concurrent streams per HTTP/2 connection.
+        -   `initial_window_size` (integer, optional): Initial window size for HTTP/2 flow control.
+    -   `http3` (object, optional): HTTP/3 configuration.
+        -   `enable` (boolean, optional): Enable HTTP/3 support.
+            -   *Default value*: `false`.
+        -   `bind` (string, optional): UDP bind address for HTTP/3 (must differ from TCP port).
+            -   *Example*: `"0.0.0.0:8443"`
+        -   `max_concurrent_streams` (integer, optional): Maximum concurrent streams per HTTP/3 connection.
+        -   `max_idle_timeout` (string, optional): Maximum idle timeout for HTTP/3 connections.
+            -   *Example*: `"30s"`
+-   `tls` (object, optional): TLS configuration for HTTPS support. Structure is the same as HTTP listener TLS configuration (see Section 4.3). Required for HTTP/2 and HTTP/3 protocols.
+    -   ALPN protocols are automatically configured based on enabled protocol versions.
+    -   Protocol preference order: HTTP/3 → HTTP/2 → HTTP/1.1
+-   `udp` (object, optional): UDP support configuration.
+    -   `enable` (boolean, optional): Enable UDP support (required for HTTP/3).
+        -   *Default value*: `true`.
+-   `loop_detect` (object, optional): Loop detection configuration to prevent proxy loops.
+    -   `enable` (boolean, optional): Enable loop detection.
+        -   *Default value*: `false`.
+    -   `max_hops` (integer, optional): Maximum allowed proxy hops before rejecting request.
+        -   *Default value*: `5`.
+-   `auth` (object, optional): Authentication configuration. Structure is similar to SOCKS authentication (see Section 4.4).
+
+**Protocol Requirements**:
+- At least one HTTP protocol (http1, http2, or http3) must be enabled.
+- HTTP/3 requires TLS configuration.
+- HTTP/3 requires UDP support to be enabled.
+- HTTP/3 UDP port must differ from the TCP port.
+
+**ALPN Negotiation**:
+The listener automatically configures ALPN protocols based on enabled versions:
+- HTTP/3: `h3`, `h3-29`
+- HTTP/2: `h2`
+- HTTP/1.1: `http/1.1`, `http/1.0`
+
+Examples:
+
+```yaml
+listeners:
+  # Basic HttpX listener with HTTP/1.1 only
+  - name: httpx-basic
+    type: httpx
+    bind: "0.0.0.0:8800"
+    protocols:
+      http1:
+        enable: true
+      http2:
+        enable: false
+      http3:
+        enable: false
+
+  # Advanced HttpX listener with multiple protocols and TLS
+  - name: httpx-advanced
+    type: httpx
+    bind: "0.0.0.0:8801"
+    protocols:
+      http1:
+        enable: true
+      http2:
+        enable: true
+        max_concurrent_streams: 100
+        initial_window_size: 65536
+      http3:
+        enable: true
+        bind: "0.0.0.0:8443"  # UDP port for HTTP/3
+        max_concurrent_streams: 50
+        max_idle_timeout: "30s"
+    tls:
+      cert: server.crt
+      key: server.key
+      client:
+        ca: client_ca.crt
+        required: false
+    udp:
+      enable: true
+    loop_detect:
+      enable: true
+      max_hops: 10
+    auth:
+      required: false
+      users:
+        - username: proxy_user
+          password: secure_pass
+```
+
 With this, the documentation for all listener types in the example `config.yaml` is complete.
 
 ---
@@ -686,6 +786,80 @@ connectors:
       password: testpass
     serverKeyVerification:
       type: insecureAcceptAny  # ⚠️ Development only!
+```
+
+---
+
+#### 5.7. HttpX Connector (`httpx`)
+
+The `httpx` connector is an advanced HTTP proxy connector that supports modern HTTP protocols (HTTP/1.1, HTTP/2, HTTP/3) with connection pooling, advanced configuration options, and WebSocket upgrade handling.
+
+-   **`type: httpx`**
+-   `server` (string): The hostname or IP address of the upstream HTTP proxy server.
+    -   *Example*: `"http-proxy"`
+-   `port` (integer): The port number of the upstream HTTP proxy server.
+    -   *Example*: `3128`
+-   `protocol` (object): HTTP protocol configuration with embedded protocol-specific settings.
+    -   **HTTP/1.1 Configuration**:
+        -   `type: "http/1.1"`
+        -   `keep_alive` (boolean, optional): Enable Connection: keep-alive for connection reuse.
+            -   *Default value*: `true`.
+    -   **HTTP/2 Configuration**:
+        -   `type: "h2"`
+        -   `max_concurrent_streams` (integer, optional): Maximum concurrent streams per connection.
+        -   `settings` (object, optional): HTTP/2 settings frame parameters.
+    -   **HTTP/3 Configuration**:
+        -   `type: "h3"`
+        -   `quic` (object, optional): QUIC connection settings.
+    -   **HTTP/1.1 over QUIC Configuration** (legacy):
+        -   `type: "http1-over-quic"`
+        -   `keep_alive` (boolean, optional): Enable Connection: keep-alive for connection reuse.
+            -   *Default value*: `true`.
+        -   `quic` (object, optional): QUIC connection settings.
+-   `enable_forward_proxy` (boolean, optional): Enable HTTP forward proxy mode for GET/POST/PUT/DELETE requests.
+    -   *Default value*: `false`.
+    -   When `true`, supports both HTTP CONNECT tunneling and HTTP forward proxy requests.
+    -   When `false`, only supports HTTP CONNECT tunneling.
+-   `intercept_websocket_upgrades` (boolean, optional): Intercepts WebSocket upgrade requests and routes them through HTTP CONNECT tunneling.
+    -   *Default value*: `false`.
+    -   When `true`, requests containing WebSocket upgrade headers (`Upgrade: websocket`) are automatically tunneled through HTTP CONNECT instead of being forwarded as regular HTTP requests.
+    -   When `false`, WebSocket upgrade requests are forwarded as regular HTTP requests, which may cause issues with HTTP proxies that strip hop-by-hop headers like `Upgrade` and `Connection`.
+    -   This option prevents HTTP proxies (like Squid) from removing WebSocket upgrade headers, ensuring proper WebSocket handshake completion.
+    -   Recommended to set to `true` when using upstream HTTP proxies that don't properly handle WebSocket upgrades.
+-   `pool` (object, optional): Connection pool configuration for performance optimization.
+    -   `enable` (boolean, optional): Enable connection pooling.
+        -   *Default value*: `true`.
+    -   `max_connections` (integer, optional): Maximum connections per target host.
+        -   *Default value*: `50`.
+    -   `idle_timeout_secs` (integer, optional): Idle timeout for pooled connections in seconds.
+        -   *Default value*: `30`.
+-   `tls` (object, optional): TLS configuration for HTTPS proxy connections. Structure is similar to other TLS configurations with `insecure`, `ca`, `auth`, etc.
+-   `connect_timeout_secs` (integer, optional): Connection timeout in seconds.
+    -   *Default value*: `10`.
+-   `resolve_timeout_secs` (integer, optional): DNS resolution timeout in seconds.
+    -   *Default value*: `5`.
+
+Example:
+```yaml
+connectors:
+  - name: httpx-advanced
+    type: httpx
+    server: "http-proxy"
+    port: 3128
+    protocol:
+      type: "http/1.1"
+      keep_alive: true
+    enable_forward_proxy: true
+    intercept_websocket_upgrades: true
+    pool:
+      enable: true
+      max_connections: 50
+      idle_timeout_secs: 30
+    connect_timeout_secs: 10
+    resolve_timeout_secs: 5
+    # tls: # Optional for HTTPS proxy
+    #   insecure: false
+    #   ca: proxy_ca.crt
 ```
 
 With this, the documentation for all connector types in the example `config.yaml` is complete.

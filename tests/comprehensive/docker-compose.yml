@@ -41,6 +41,7 @@ services:
     networks: [test-net]
     volumes:
       - ./config/squid.conf:/etc/squid/squid.conf:ro
+      - ./config/squid.passwd:/etc/squid/passwd:ro
     healthcheck:
       test: ["NONE"]
 
@@ -106,7 +107,7 @@ services:
       - ./config:/config:rw
       - ./logs:/logs:rw
     networks: [test-net]
-    depends_on: [http-echo, target-server, http-proxy, socks-proxy, quic-proxy, ssh-proxy]
+    depends_on: [http-echo, target-server, websocket-server, http-proxy, socks-proxy, quic-proxy, ssh-proxy]
     healthcheck:
       test: ["NONE"]
     #   test: ["CMD", "curl", "-f", "--connect-timeout", "3", "--max-time", "5", "http://localhost:9090/api/metrics"]

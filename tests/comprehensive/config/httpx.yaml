@@ -1,0 +1,120 @@
+# 3-Tier HttpX Test Configuration
+# Port 8800: Tier 1 - HttpX Listener + Direct Connector  
+# Port 8801: Tier 2 - HttpX Listener + HttpX Connector (special cases)
+# Port 8802: Tier 3 - Reverse Listener + HttpX Connector
+
+listeners:
+  # Tier 1: HttpX Listener + Direct Connector
+  - name: httpx-listener-tier1
+    type: httpx
+    bind: "0.0.0.0:8800"
+    protocols:
+      http1:
+        enable: true
+      http2:
+        enable: false
+      http3:
+        enable: false
+
+  # Tier 2: HttpX Listener + HttpX Connector 
+  - name: httpx-listener-tier2
+    type: httpx
+    bind: "0.0.0.0:8801"
+    protocols:
+      http1:
+        enable: true
+      http2:
+        enable: false
+      http3:
+        enable: false
+
+  # Tier 3: Reverse Listener + HttpX Connector
+  - name: reverse-listener-tier3
+    type: reverse
+    bind: "0.0.0.0:8802"
+    target: "http-echo:8080"
+
+connectors:
+  - name: direct
+    type: direct
+    
+  # Original httpx connector (no auth) using port 3128
+  - name: httpx
+    type: httpx
+    server: "http-proxy"
+    port: 3128
+    enable_forward_proxy: true
+    intercept_websocket_upgrades: true
+    protocol:
+      type: "http/1.1"
+      keep_alive: true
+    pool:
+      enable: true
+      max_connections: 50
+      idle_timeout_secs: 30
+    connect_timeout_secs: 10
+    resolve_timeout_secs: 5
+
+  # Authentication test connectors using port 3129 (auth-required)
+  # No auth credentials - should get 407 responses
+  - name: httpx-no-auth
+    type: httpx
+    server: "http-proxy"
+    port: 3129
+    enable_forward_proxy: true
+    protocol:
+      type: "http/1.1"
+      keep_alive: true
+    connect_timeout_secs: 10
+    resolve_timeout_secs: 5
+
+  # Valid auth credentials - should succeed
+  - name: httpx-valid-auth
+    type: httpx
+    server: "http-proxy"
+    port: 3129
+    enable_forward_proxy: true
+    auth:
+      username: "testuser"
+      password: "testpass"
+    protocol:
+      type: "http/1.1"
+      keep_alive: true
+    connect_timeout_secs: 10
+    resolve_timeout_secs: 5
+
+  # Invalid auth credentials - should get 407 responses
+  - name: httpx-invalid-auth
+    type: httpx
+    server: "http-proxy"
+    port: 3129
+    enable_forward_proxy: true
+    auth:
+      username: "wronguser"
+      password: "wrongpass"
+    protocol:
+      type: "http/1.1"
+      keep_alive: true
+    connect_timeout_secs: 10
+    resolve_timeout_secs: 5
+
+rules:
+  # Tier 1 routing: HttpX listener → direct
+  - filter: 'request.listener == "httpx-listener-tier1"'
+    target: direct
+    
+  # Tier 2 routing: HttpX listener → HttpX connector
+  - filter: 'request.listener == "httpx-listener-tier2"'
+    target: httpx
+    
+  # Tier 3 routing: Reverse listener → HttpX connector  
+  - filter: 'request.listener == "reverse-listener-tier3"'
+    target: httpx
+
+accessLog:
+  path: "/logs/httpx-integration.log"
+  format: "json"
+
+metrics:
+  bind: "0.0.0.0:9090"
+  apiPrefix: "/api"

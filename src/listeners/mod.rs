@@ -12,6 +12,7 @@ use crate::{
 
 mod http;
 pub mod http_forward_tests;
+mod httpx;
 mod reverse;
 mod socks;
 
@@ -64,6 +65,7 @@ pub fn from_value(value: &Value) -> Result<Box<dyn Listener>> {
     let tname = value.get("type").and_then(Value::as_str).unwrap_or(name);
     match tname {
         "http" => http::from_value(value),
+        "httpx" => httpx::from_value(value),
         "socks" => socks::from_value(value),
         "reverse" => reverse::from_value(value),
 
