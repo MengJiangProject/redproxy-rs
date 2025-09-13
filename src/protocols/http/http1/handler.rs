@@ -3,6 +3,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tracing::{debug, warn};
 
 use crate::context::{ContextManager, ContextRef, ContextRefOps, IOBufStream};
+use crate::common::http_proxy::decode_basic_auth;
 use crate::protocols::http::common::{
     add_proxy_headers, extract_target_from_request, set_connection_headers,
 };
@@ -133,6 +134,7 @@ pub async fn handle_listener_connection(
     queue: tokio::sync::mpsc::Sender<ContextRef>,
     listener_name: String,
     source: std::net::SocketAddr,
+    auth: Option<crate::common::auth::AuthData>,
 ) -> Result<()> {
     // Convert raw stream to IOBufStream immediately and use throughout
     let mut current_stream = crate::context::make_buffered_stream(stream);
@@ -157,6 +159,27 @@ pub async fn handle_listener_connection(
             "HTTP/1.1: Processing request {} {}",
             request.method, request.uri
         );
+
+        // Check authentication if required
+        if let Some(ref auth_data) = auth {
+            // Look for Proxy-Authorization or Authorization header
+            let auth_header = request.get_header("Proxy-Authorization")
+                .or_else(|| request.get_header("Authorization"))
+                .map(|s| s.as_str())
+                .unwrap_or("");
+
+            let user_credentials = if !auth_header.is_empty() {
+                decode_basic_auth(auth_header)
+            } else {
+                None
+            };
+
+            if !auth_data.check(&user_credentials).await {
+                warn!("HTTP/1.1: Client authentication failed from {}", source);
+                send_error_response_and_close(&mut current_stream, 407, "Proxy Authentication Required").await;
+                break;
+            }
+        }
 
         // Determine proxy mode
         let proxy_mode = if request.is_connect() {

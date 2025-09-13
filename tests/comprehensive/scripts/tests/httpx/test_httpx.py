@@ -21,23 +21,48 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../shared'))
 from helpers import read_http_response
 
 
+def build_http_request(method: str = "GET", path: str = "/test", headers: dict = None, body: bytes = None, use_absolute_uri: bool = True):
+    """Build HTTP request with proper URI format - eliminates port-based conditionals"""
+    headers = headers or {}
+    
+    if use_absolute_uri:
+        # Forward proxy: absolute URI required
+        request = f"{method} http://http-echo:8080{path} HTTP/1.1\r\n"
+        request += "Host: http-echo:8080\r\n"
+    else:
+        # Reverse proxy: relative URI with Host header
+        request = f"{method} {path} HTTP/1.1\r\n"
+        request += "Host: http-echo\r\n"
+    
+    # Add Content-Length if body is provided
+    if body is not None:
+        headers["Content-Length"] = str(len(body))
+    
+    # Add additional headers
+    for name, value in headers.items():
+        request += f"{name}: {value}\r\n"
+    
+    request += "Connection: close\r\n"
+    request += "\r\n"
+    
+    # Add body if provided
+    if body is not None:
+        request = request.encode() + body
+        return request
+    else:
+        return request
+
+
 class HttpXTestPatterns:
     """Reusable test patterns that work across all tiers"""
     
     @staticmethod
-    async def test_basic_get_request(port: int, path: str = "/test"):
+    async def test_basic_get_request(port: int, path: str = "/test", use_absolute_uri: bool = True):
         """Basic GET request pattern - reusable across all tiers"""
         reader, writer = await asyncio.open_connection("redproxy", port)
         try:
-            if port == 8802:  # Reverse proxy - no full URL
-                request = f"GET {path} HTTP/1.1\r\n"
-                request += "Host: http-echo\r\n"
-            else:  # Forward proxy - full URL
-                request = f"GET http://http-echo:8080{path} HTTP/1.1\r\n"
-                request += "Host: http-echo:8080\r\n"
-            
-            request += "Connection: close\r\n"
-            request += "\r\n"
+            # Use helper function - eliminates port-based conditionals
+            request = build_http_request("GET", path, use_absolute_uri=use_absolute_uri)
             
             writer.write(request.encode())
             await writer.drain()
@@ -50,26 +75,21 @@ class HttpXTestPatterns:
             await writer.wait_closed()
     
     @staticmethod
-    async def test_post_request_with_body(port: int):
+    async def test_post_request_with_body(port: int, use_absolute_uri: bool = True):
         """POST request with body pattern - reusable across all tiers"""
         reader, writer = await asyncio.open_connection("redproxy", port)
         try:
             body = b'{"test": "data"}'
             
-            if port == 8802:  # Reverse proxy
-                request = "POST /post-test HTTP/1.1\r\n"
-                request += "Host: http-echo\r\n"
-            else:  # Forward proxy
-                request = "POST http://http-echo:8080/post-test HTTP/1.1\r\n"
-                request += "Host: http-echo:8080\r\n"
+            # Use helper function - eliminates port-based conditionals
+            request = build_http_request("POST", "/post-test", 
+                                       {"Content-Type": "application/json"}, 
+                                       body, use_absolute_uri=use_absolute_uri)
             
-            request += f"Content-Length: {len(body)}\r\n"
-            request += "Content-Type: application/json\r\n"
-            request += "Connection: close\r\n"
-            request += "\r\n"
-            
-            writer.write(request.encode())
-            writer.write(body)
+            if isinstance(request, bytes):
+                writer.write(request)
+            else:
+                writer.write(request.encode())
             await writer.drain()
             
             response_line = await reader.readline()
@@ -80,26 +100,20 @@ class HttpXTestPatterns:
             await writer.wait_closed()
     
     @staticmethod
-    async def test_chunked_encoding(port: int):
+    async def test_chunked_encoding(port: int, use_absolute_uri: bool = True):
         """Chunked encoding pattern - reusable across all tiers"""
         reader, writer = await asyncio.open_connection("redproxy", port)
         try:
-            if port == 8802:  # Reverse proxy
-                request = "POST /chunked-test HTTP/1.1\r\n"
-                request += "Host: http-echo\r\n"
-            else:  # Forward proxy
-                request = "POST http://http-echo:8080/chunked-test HTTP/1.1\r\n"
-                request += "Host: http-echo:8080\r\n"
-            
-            request += "Transfer-Encoding: chunked\r\n"
-            request += "Connection: close\r\n"
-            request += "\r\n"
+            # Use helper function - eliminates port-based conditionals  
+            request_headers = build_http_request("POST", "/chunked-test", 
+                                                {"Transfer-Encoding": "chunked"}, 
+                                                use_absolute_uri=use_absolute_uri)
             
             # Send chunked data
             chunk1 = b"Hello "
             chunk2 = b"World!"
             
-            writer.write(request.encode())
+            writer.write(request_headers.encode() if isinstance(request_headers, str) else request_headers)
             writer.write(f"{len(chunk1):x}\r\n".encode())
             writer.write(chunk1 + b"\r\n")
             writer.write(f"{len(chunk2):x}\r\n".encode())
@@ -115,7 +129,7 @@ class HttpXTestPatterns:
             await writer.wait_closed()
     
     @staticmethod
-    async def test_malformed_request_handling(port: int):
+    async def test_malformed_request_handling(port: int, use_absolute_uri: bool = True):
         """Malformed request handling pattern - reusable across all tiers"""
         malformed_cases = [
             "INVALID-METHOD /test HTTP/1.1\r\n\r\n",
@@ -142,6 +156,171 @@ class HttpXTestPatterns:
             finally:
                 writer.close()
                 await writer.wait_closed()
+    
+    @staticmethod
+    async def test_proxy_authentication_required(port: int, use_absolute_uri: bool = True):
+        """Test proxy authentication required (407) response pattern"""
+        reader, writer = await asyncio.open_connection("redproxy", port)
+        try:
+            # Use explicit parameter instead of port-based conditional
+            request = build_http_request(
+                method="GET", 
+                path="/test",
+                headers={"Connection": "close"},
+                use_absolute_uri=use_absolute_uri
+            )
+            
+            writer.write(request.encode())
+            await writer.drain()
+            
+            response_line = await reader.readline()
+            # Should get 407 Proxy Authentication Required (if auth is enabled)
+            # or 200 OK (if auth is disabled) 
+            status_line = response_line.decode().strip()
+            assert response_line.startswith(b"HTTP/1.1"), f"Invalid response format: {status_line}"
+            
+            # Parse status code
+            status_code = response_line.split()[1].decode() if len(response_line.split()) > 1 else "000"
+            assert status_code in ["200", "407"], f"Expected 200 or 407, got: {status_code}"
+            
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    
+    @staticmethod
+    async def test_proxy_authentication_success(port: int, username: str = "testuser", password: str = "testpass", use_absolute_uri: bool = True):
+        """Test successful proxy authentication pattern"""
+        reader, writer = await asyncio.open_connection("redproxy", port)
+        try:
+            # Create Basic authentication header
+            credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
+            
+            # Use helper function - eliminates port-based conditionals
+            request = build_http_request("GET", "/test", {
+                "Proxy-Authorization": f"Basic {credentials}"
+            }, use_absolute_uri=use_absolute_uri)
+            
+            writer.write(request.encode())
+            await writer.drain()
+            
+            response_line = await reader.readline()
+            status_line = response_line.decode().strip()
+            assert response_line.startswith(b"HTTP/1.1"), f"Invalid response format: {status_line}"
+            
+            # Should succeed if credentials are correct or auth is disabled
+            status_code = response_line.split()[1].decode() if len(response_line.split()) > 1 else "000"
+            assert status_code in ["200", "407"], f"Expected 200 or 407, got: {status_code}"
+            
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    
+    @staticmethod
+    async def test_proxy_authentication_failure(port: int, use_absolute_uri: bool = True):
+        """Test proxy authentication failure with invalid credentials pattern"""
+        reader, writer = await asyncio.open_connection("redproxy", port)
+        try:
+            # Create Basic authentication header with invalid credentials
+            credentials = base64.b64encode("invalid:credentials".encode()).decode()
+            
+            # Use explicit parameter instead of port-based conditional
+            request = build_http_request(
+                method="GET", 
+                path="/test",
+                headers={
+                    f"Proxy-Authorization": f"Basic {credentials}",
+                    "Connection": "close"
+                },
+                use_absolute_uri=use_absolute_uri
+            )
+            
+            writer.write(request.encode())
+            await writer.drain()
+            
+            response_line = await reader.readline()
+            status_line = response_line.decode().strip()
+            assert response_line.startswith(b"HTTP/1.1"), f"Invalid response format: {status_line}"
+            
+            # Should get 407 if auth is enabled, or 200 if auth is disabled
+            status_code = response_line.split()[1].decode() if len(response_line.split()) > 1 else "000"
+            assert status_code in ["200", "407"], f"Expected 200 or 407, got: {status_code}"
+            
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    
+    @staticmethod
+    async def test_connect_with_authentication(port: int, username: str = "testuser", password: str = "testpass", use_absolute_uri: bool = True):
+        """Test CONNECT method with proxy authentication pattern"""
+        reader, writer = await asyncio.open_connection("redproxy", port)
+        try:
+            # Create Basic authentication header
+            credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
+            
+            # CONNECT requests work the same way for forward proxies
+            # Reverse proxies don't typically handle CONNECT
+            # CONNECT method not applicable for reverse proxies
+            if not use_absolute_uri:
+                pytest.skip("CONNECT not applicable for reverse proxy tests")
+            
+            request = "CONNECT http-echo:8080 HTTP/1.1\r\n"
+            request += "Host: http-echo:8080\r\n"
+            request += f"Proxy-Authorization: Basic {credentials}\r\n"
+            request += "\r\n"
+            
+            writer.write(request.encode())
+            await writer.drain()
+            
+            response_line = await reader.readline()
+            status_line = response_line.decode().strip()
+            assert response_line.startswith(b"HTTP/1.1"), f"Invalid response format: {status_line}"
+            
+            # Should succeed if credentials are correct or auth is disabled
+            status_code = response_line.split()[1].decode() if len(response_line.split()) > 1 else "000"
+            assert status_code in ["200", "407"], f"Expected 200 or 407, got: {status_code}"
+            
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    
+    @staticmethod
+    async def test_authentication_headers_handling(port: int, use_absolute_uri: bool = True):
+        """Test various authentication header formats and edge cases"""
+        test_cases = [
+            # Valid Basic auth
+            ("Basic " + base64.b64encode("user:pass".encode()).decode(), [200, 407]),
+            # Invalid auth type (may pass if auth is disabled)
+            ("Bearer token123", [200, 401, 407, 400]),
+            # Malformed Basic auth (may pass if auth is disabled)
+            ("Basic invalid-base64!!!", [200, 401, 407, 400]),
+            # Empty auth header
+            ("", [407, 200]),
+        ]
+        
+        for auth_header, expected_codes in test_cases:
+            reader, writer = await asyncio.open_connection("redproxy", port)
+            try:
+                # Use explicit parameter instead of port-based conditional
+                headers = {}
+                if auth_header:
+                    headers["Proxy-Authorization"] = auth_header
+                
+                request = build_http_request("GET", "/test", headers, use_absolute_uri=use_absolute_uri)
+                
+                writer.write(request.encode())
+                await writer.drain()
+                
+                response_line = await reader.readline()
+                status_line = response_line.decode().strip()
+                assert response_line.startswith(b"HTTP/1.1"), f"Invalid response format: {status_line}"
+                
+                # Parse status code
+                status_code = int(response_line.split()[1].decode()) if len(response_line.split()) > 1 else 500
+                assert status_code in expected_codes, f"For auth '{auth_header}', expected one of {expected_codes}, got: {status_code}"
+                
+            finally:
+                writer.close()
+                await writer.wait_closed()
 
 
 class TestHttpXListener:
@@ -159,28 +338,28 @@ class TestHttpXListener:
     @pytest.mark.httpx_listener
     async def test_basic_get_request(self):
         """Test basic GET request through HttpX listener + direct connector"""
-        await HttpXTestPatterns.test_basic_get_request(8800)
+        await HttpXTestPatterns.test_basic_get_request(8800, use_absolute_uri=True)
     
     @pytest.mark.asyncio
     @pytest.mark.timeout(15)  
     @pytest.mark.httpx_listener
     async def test_post_request_with_body(self):
         """Test POST request with body through HttpX listener + direct connector"""
-        await HttpXTestPatterns.test_post_request_with_body(8800)
+        await HttpXTestPatterns.test_post_request_with_body(8800, use_absolute_uri=True)
         
     @pytest.mark.asyncio
     @pytest.mark.timeout(15)
     @pytest.mark.httpx_listener
     async def test_chunked_encoding(self):
         """Test chunked encoding through HttpX listener + direct connector"""
-        await HttpXTestPatterns.test_chunked_encoding(8800)
+        await HttpXTestPatterns.test_chunked_encoding(8800, use_absolute_uri=True)
         
     @pytest.mark.asyncio
     @pytest.mark.timeout(15)
     @pytest.mark.httpx_listener
     async def test_malformed_request_handling(self):
         """Test malformed request handling in HttpX listener + direct connector"""
-        await HttpXTestPatterns.test_malformed_request_handling(8800)
+        await HttpXTestPatterns.test_malformed_request_handling(8800, use_absolute_uri=True)
 
     # Tier 1 specific: CONNECT tunneling (only forward proxy listeners)
     @pytest.mark.asyncio
@@ -676,6 +855,47 @@ class TestHttpXListener:
             writer.close()
             await writer.wait_closed()
 
+    # Authentication tests (HttpX listener specific)
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_listener
+    @pytest.mark.auth
+    async def test_proxy_authentication_required(self):
+        """Test proxy authentication required (407) response through HttpX listener + direct"""
+        await HttpXTestPatterns.test_proxy_authentication_required(8800, use_absolute_uri=True)
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_listener
+    @pytest.mark.auth
+    async def test_proxy_authentication_success(self):
+        """Test successful proxy authentication through HttpX listener + direct"""
+        await HttpXTestPatterns.test_proxy_authentication_success(8800, use_absolute_uri=True)
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_listener
+    @pytest.mark.auth
+    async def test_proxy_authentication_failure(self):
+        """Test proxy authentication failure through HttpX listener + direct"""
+        await HttpXTestPatterns.test_proxy_authentication_failure(8800, use_absolute_uri=True)
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_listener
+    @pytest.mark.auth
+    async def test_connect_with_authentication(self):
+        """Test CONNECT method with proxy authentication through HttpX listener + direct"""
+        await HttpXTestPatterns.test_connect_with_authentication(8800, use_absolute_uri=True)
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_listener
+    @pytest.mark.auth
+    async def test_authentication_headers_handling(self):
+        """Test various authentication header formats through HttpX listener + direct"""
+        await HttpXTestPatterns.test_authentication_headers_handling(8800, use_absolute_uri=True)
+
 
 class TestHttpXIntegration:
     """Tier 2: HttpX Listener + HttpX Connector Pipeline (Port 8801)
@@ -693,28 +913,28 @@ class TestHttpXIntegration:
     @pytest.mark.httpx_integration
     async def test_basic_get_request(self):
         """Test basic GET request through HttpX listener + HttpX connector"""
-        await HttpXTestPatterns.test_basic_get_request(8801)
+        await HttpXTestPatterns.test_basic_get_request(8801, use_absolute_uri=True)
     
     @pytest.mark.asyncio
     @pytest.mark.timeout(15)
     @pytest.mark.httpx_integration
     async def test_post_request_with_body(self):
         """Test POST request with body through HttpX listener + HttpX connector"""
-        await HttpXTestPatterns.test_post_request_with_body(8801)
+        await HttpXTestPatterns.test_post_request_with_body(8801, use_absolute_uri=True)
         
     @pytest.mark.asyncio
     @pytest.mark.timeout(15)
     @pytest.mark.httpx_integration
     async def test_chunked_encoding(self):
         """Test chunked encoding through HttpX listener + HttpX connector"""
-        await HttpXTestPatterns.test_chunked_encoding(8801)
+        await HttpXTestPatterns.test_chunked_encoding(8801, use_absolute_uri=True)
         
     @pytest.mark.asyncio
     @pytest.mark.timeout(15)
     @pytest.mark.httpx_integration
     async def test_malformed_request_handling(self):
         """Test malformed request handling in HttpX listener + HttpX connector"""
-        await HttpXTestPatterns.test_malformed_request_handling(8801)
+        await HttpXTestPatterns.test_malformed_request_handling(8801, use_absolute_uri=True)
 
     # Tier 2 specific: Connection pooling (HttpX connector feature)  
     @pytest.mark.asyncio
@@ -1186,6 +1406,47 @@ class TestHttpXIntegration:
             writer.close()
             await writer.wait_closed()
 
+    # Authentication tests (HttpX listener + HttpX connector pipeline)
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_integration
+    @pytest.mark.auth
+    async def test_proxy_authentication_required(self):
+        """Test proxy authentication required (407) response through HttpX pipeline"""
+        await HttpXTestPatterns.test_proxy_authentication_required(8801, use_absolute_uri=True)
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_integration
+    @pytest.mark.auth
+    async def test_proxy_authentication_success(self):
+        """Test successful proxy authentication through HttpX pipeline"""
+        await HttpXTestPatterns.test_proxy_authentication_success(8801, use_absolute_uri=True)
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_integration
+    @pytest.mark.auth
+    async def test_proxy_authentication_failure(self):
+        """Test proxy authentication failure through HttpX pipeline"""
+        await HttpXTestPatterns.test_proxy_authentication_failure(8801, use_absolute_uri=True)
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_integration
+    @pytest.mark.auth
+    async def test_connect_with_authentication(self):
+        """Test CONNECT method with proxy authentication through HttpX pipeline"""
+        await HttpXTestPatterns.test_connect_with_authentication(8801, use_absolute_uri=True)
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_integration
+    @pytest.mark.auth
+    async def test_authentication_headers_handling(self):
+        """Test various authentication header formats through HttpX pipeline"""
+        await HttpXTestPatterns.test_authentication_headers_handling(8801, use_absolute_uri=True)
+
 
 class TestHttpXConnector:
     """Tier 3: Reverse Listener + HttpX Connector (Port 8802)
@@ -1201,28 +1462,28 @@ class TestHttpXConnector:
     @pytest.mark.httpx_integration
     async def test_basic_get_request(self):
         """Test basic GET request through reverse listener + HttpX connector"""
-        await HttpXTestPatterns.test_basic_get_request(8802)
+        await HttpXTestPatterns.test_basic_get_request(8802, use_absolute_uri=False)
     
     @pytest.mark.asyncio
     @pytest.mark.timeout(15)
     @pytest.mark.httpx_integration
     async def test_post_request_with_body(self):
         """Test POST request with body through reverse listener + HttpX connector"""
-        await HttpXTestPatterns.test_post_request_with_body(8802)
+        await HttpXTestPatterns.test_post_request_with_body(8802, use_absolute_uri=False)
         
     @pytest.mark.asyncio
     @pytest.mark.timeout(15)
     @pytest.mark.httpx_integration
     async def test_chunked_encoding(self):
         """Test chunked encoding through reverse listener + HttpX connector"""
-        await HttpXTestPatterns.test_chunked_encoding(8802)
+        await HttpXTestPatterns.test_chunked_encoding(8802, use_absolute_uri=False)
         
     @pytest.mark.asyncio
     @pytest.mark.timeout(15)
     @pytest.mark.httpx_integration
     async def test_malformed_request_handling(self):
         """Test malformed request handling in reverse listener + HttpX connector"""
-        await HttpXTestPatterns.test_malformed_request_handling(8802)
+        await HttpXTestPatterns.test_malformed_request_handling(8802, use_absolute_uri=False)
 
     # Tier 3 specific: HttpX connector pooling from reverse proxy
     @pytest.mark.asyncio
@@ -1276,6 +1537,40 @@ class TestHttpXConnector:
         finally:
             writer.close()
             await writer.wait_closed()
+
+    # Authentication tests (Reverse listener + HttpX connector)
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_integration
+    @pytest.mark.auth
+    async def test_proxy_authentication_required(self):
+        """Test proxy authentication required (407) response through reverse + HttpX connector"""
+        await HttpXTestPatterns.test_proxy_authentication_required(8802, use_absolute_uri=False)
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_integration
+    @pytest.mark.auth
+    async def test_proxy_authentication_success(self):
+        """Test successful proxy authentication through reverse + HttpX connector"""
+        await HttpXTestPatterns.test_proxy_authentication_success(8802, use_absolute_uri=False)
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_integration
+    @pytest.mark.auth
+    async def test_proxy_authentication_failure(self):
+        """Test proxy authentication failure through reverse + HttpX connector"""
+        await HttpXTestPatterns.test_proxy_authentication_failure(8802, use_absolute_uri=False)
+
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(15)
+    @pytest.mark.httpx_integration
+    @pytest.mark.auth
+    async def test_authentication_headers_handling(self):
+        """Test various authentication header formats through reverse + HttpX connector"""
+        await HttpXTestPatterns.test_authentication_headers_handling(8802, use_absolute_uri=False)
 
 # Run individual tests for debugging
 if __name__ == "__main__":

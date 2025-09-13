@@ -41,6 +41,7 @@ services:
     networks: [test-net]
     volumes:
       - ./config/squid.conf:/etc/squid/squid.conf:ro
+      - ./config/squid.passwd:/etc/squid/passwd:ro
     healthcheck:
       test: ["NONE"]
 

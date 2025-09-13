@@ -405,7 +405,7 @@ impl<S: SocketOps + Send + Sync + 'static> HttpxListener<S> {
         // Delegate entire connection lifecycle to the appropriate protocol handler
         match protocol_choice {
             HttpVersion::Http1_1 | HttpVersion::Http1_0 => {
-                handle_listener_connection(stream, contexts, queue, self.name.clone(), source)
+                handle_listener_connection(stream, contexts, queue, self.name.clone(), source, Some(self.auth.clone()))
                     .await?;
             }
             HttpVersion::Http2 => {

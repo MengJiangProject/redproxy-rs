@@ -38,6 +38,7 @@ connectors:
   - name: direct
     type: direct
     
+  # Original httpx connector (no auth) using port 3128
   - name: httpx
     type: httpx
     server: "http-proxy"
@@ -51,6 +52,49 @@ connectors:
       enable: true
       max_connections: 50
       idle_timeout_secs: 30
+    connect_timeout_secs: 10
+    resolve_timeout_secs: 5
+
+  # Authentication test connectors using port 3129 (auth-required)
+  # No auth credentials - should get 407 responses
+  - name: httpx-no-auth
+    type: httpx
+    server: "http-proxy"
+    port: 3129
+    enable_forward_proxy: true
+    protocol:
+      type: "http/1.1"
+      keep_alive: true
+    connect_timeout_secs: 10
+    resolve_timeout_secs: 5
+
+  # Valid auth credentials - should succeed
+  - name: httpx-valid-auth
+    type: httpx
+    server: "http-proxy"
+    port: 3129
+    enable_forward_proxy: true
+    auth:
+      username: "testuser"
+      password: "testpass"
+    protocol:
+      type: "http/1.1"
+      keep_alive: true
+    connect_timeout_secs: 10
+    resolve_timeout_secs: 5
+
+  # Invalid auth credentials - should get 407 responses
+  - name: httpx-invalid-auth
+    type: httpx
+    server: "http-proxy"
+    port: 3129
+    enable_forward_proxy: true
+    auth:
+      username: "wronguser"
+      password: "wrongpass"
+    protocol:
+      type: "http/1.1"
+      keep_alive: true
     connect_timeout_secs: 10
     resolve_timeout_secs: 5
 

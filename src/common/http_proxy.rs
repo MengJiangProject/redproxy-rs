@@ -15,7 +15,7 @@ fn encode_basic_auth(username: &str, password: &str) -> String {
 }
 
 // Helper function to decode and validate basic auth credentials
-fn decode_basic_auth(auth_header: &str) -> Option<(String, String)> {
+pub fn decode_basic_auth(auth_header: &str) -> Option<(String, String)> {
     use base64::Engine;
     if !auth_header.starts_with("Basic ") {
         return None;

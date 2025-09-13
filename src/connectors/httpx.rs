@@ -138,6 +138,14 @@ impl Default for HttpProtocolConfig {
     }
 }
 
+/// HTTP authentication data for upstream proxy
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpAuthData {
+    pub username: String,
+    pub password: String,
+}
+
 /// HttpX connector configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpxConnectorConfig {
@@ -156,6 +164,8 @@ pub struct HttpxConnectorConfig {
     /// This prevents HTTP proxies from stripping WebSocket upgrade headers
     #[serde(default)]
     pub intercept_websocket_upgrades: bool,
+    /// HTTP proxy authentication for upstream proxy
+    pub auth: Option<HttpAuthData>,
     /// UDP protocol for legacy support
     pub udp_protocol: Option<UdpProtocol>,
     /// Connection pool configuration
@@ -317,6 +327,13 @@ impl<S: SocketOps> HttpxConnector<S> {
                     .set_http_forward_proxy(self.config.enable_forward_proxy)
                     .set_http_keep_alive(self.config.protocol.supports_keep_alive());
 
+                // Set auth in context if available
+                if let Some(auth_data) = &self.config.auth {
+                    ctx_write
+                        .set_extra("proxy_auth_username", &auth_data.username)
+                        .set_extra("proxy_auth_password", &auth_data.password);
+                }
+
                 // Set connection pool key for reuse
                 let pool_key = format!(
                     "{}://{}:{}",
@@ -380,8 +397,17 @@ impl<S: SocketOps> HttpxConnector<S> {
             let mut buffered_stream = make_buffered_stream(stream);
 
             // Send CONNECT request to proxy
-            let connect_request =
-                format!("CONNECT {} HTTP/1.1\r\nHost: {}\r\n\r\n", target, target);
+            let connect_request = if let Some(auth_data) = &self.config.auth {
+                use base64::{engine::general_purpose::STANDARD, Engine};
+                let credentials = format!("{}:{}", auth_data.username, auth_data.password);
+                let encoded = STANDARD.encode(credentials.as_bytes());
+                format!(
+                    "CONNECT {} HTTP/1.1\r\nHost: {}\r\nProxy-Authorization: Basic {}\r\n\r\n",
+                    target, target, encoded
+                )
+            } else {
+                format!("CONNECT {} HTTP/1.1\r\nHost: {}\r\n\r\n", target, target)
+            };
 
             use tokio::io::AsyncWriteExt;
             buffered_stream
@@ -437,6 +463,13 @@ impl<S: SocketOps> HttpxConnector<S> {
                     .set_http_protocol(self.config.protocol.protocol_id())
                     .set_http_forward_proxy(self.config.enable_forward_proxy)
                     .set_http_keep_alive(self.config.protocol.supports_keep_alive());
+
+                // Set auth in context if available
+                if let Some(auth_data) = &self.config.auth {
+                    ctx_write
+                        .set_extra("proxy_auth_username", &auth_data.username)
+                        .set_extra("proxy_auth_password", &auth_data.password);
+                }
 
                 // Set connection pool key for reuse (based on proxy, not target)
                 let pool_key = format!(

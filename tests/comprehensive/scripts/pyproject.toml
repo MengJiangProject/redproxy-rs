@@ -72,6 +72,7 @@ markers = [
     "http_continue: marks tests as HTTP 100-continue tests",
     "websocket: marks tests as WebSocket upgrade tests",
     "chunked: marks tests as chunked encoding tests",
+    "auth: marks tests as authentication/authorization tests",
 ]
 
 # Output and reporting
