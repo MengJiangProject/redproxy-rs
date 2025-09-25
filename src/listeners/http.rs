@@ -8,7 +8,7 @@ use tracing::{error, info, warn};
 
 use crate::common::auth::AuthData;
 use crate::common::http_proxy::http_forward_proxy_handshake;
-use crate::common::socket_ops::{AppTcpListener, RealSocketOps, SocketOps};
+use crate::common::socket_ops::{RealSocketOps, SocketOps, TcpListener};
 use crate::common::tls::TlsServerConfig;
 use crate::config::Timeouts;
 use crate::context::ContextManager;
@@ -93,7 +93,7 @@ impl<S: SocketOps + Send + Sync + 'static> Listener for HttpListener<S> {
 impl<S: SocketOps + Send + Sync + 'static> HttpListener<S> {
     async fn accept(
         self: Arc<Self>,
-        listener: Box<dyn AppTcpListener>,
+        listener: Box<dyn TcpListener>,
         contexts: Arc<ContextManager>,
         queue: Sender<ContextRef>,
     ) {
@@ -147,24 +147,12 @@ impl<S: SocketOps + Send + Sync + 'static> HttpListener<S> {
                         )
                         .await;
                         if let Err(e) = res {
-                            warn!(
-                                "{}: handshake failed: {}
-cause: {:?}",
-                                this.name,
-                                e,
-                                e.source(),
-                            );
+                            warn!("{}: handshake failed: {}", this.name, e,);
                         }
                     });
                 }
                 Err(e) => {
-                    error!(
-                        "{} accept error: {} 
-cause: {:?}",
-                        self.name,
-                        e,
-                        e.source(),
-                    );
+                    error!("{} accept error: {}", self.name, e,);
                     return;
                 }
             }

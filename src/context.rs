@@ -1,4 +1,11 @@
-use crate::{access_log::AccessLog, common::frames::FrameIO, config::IoParams, copy::copy_bidi};
+use crate::{
+    HttpRequest,
+    access_log::AccessLog,
+    common::{frames::FrameIO, http::HttpRequestV1},
+    config::IoParams,
+    copy::copy_bidi,
+    protocols::http::http_context::HttpContext,
+};
 use anyhow::{Context as AnyhowContext, Error, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize, de::Visitor, ser::SerializeStruct};
@@ -497,7 +504,7 @@ impl ContextManager {
             server_frames: None,
             callback: None,
             manager: self.clone(),
-            http_request: None,
+            http_context: None,
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             // Initialize BIND fields
             bind_task: None,
@@ -659,7 +666,7 @@ pub struct Context {
     server_frames: Option<FrameIO>,
     callback: Option<Arc<dyn ContextCallback + Send + Sync>>,
     manager: Arc<ContextManager>,
-    http_request: Option<Arc<crate::common::http::HttpRequest>>,
+    http_context: Option<HttpContext>,
     cancellation_token: tokio_util::sync::CancellationToken,
     // BIND-related fields - using JoinHandle for spawned task
     bind_task: Option<BindTask>,
@@ -849,13 +856,46 @@ impl Context {
         self
     }
 
-    pub fn set_http_request(&mut self, request: crate::common::http::HttpRequest) -> &mut Self {
-        self.http_request = Some(Arc::new(request));
+    pub fn set_http_request_v1(&mut self, request: HttpRequestV1) -> &mut Self {
+        self.set_http_request(request.into())
+    }
+
+    pub fn http_request_v1(&self) -> Option<Arc<HttpRequestV1>> {
+        self.http()
+            .and_then(|h| h.request.as_ref())
+            .map(|req| Arc::new(req.as_ref().clone().into()))
+    }
+
+    pub fn set_http_request(&mut self, request: HttpRequest) -> &mut Self {
+        // Store only in HttpContext - single source of truth
+        self.http_mut().set_request(request);
         self
     }
 
-    pub fn http_request(&self) -> Option<Arc<crate::common::http::HttpRequest>> {
-        self.http_request.clone()
+    pub fn http_request(&self) -> Option<Arc<HttpRequest>> {
+        // Get from HttpContext
+        self.http().and_then(|h| h.request.clone())
+    }
+
+    /// Get mutable HTTP context, creating if needed
+    pub fn http_mut(&mut self) -> &mut HttpContext {
+        self.http_context.get_or_insert_with(HttpContext::new)
+    }
+
+    /// Get HTTP context (read-only)
+    pub fn http(&self) -> Option<&HttpContext> {
+        self.http_context.as_ref()
+    }
+
+    /// Set HTTP context
+    pub fn set_http_context(&mut self, context: HttpContext) -> &mut Self {
+        self.http_context = Some(context);
+        self
+    }
+
+    /// Take HTTP context (for ownership transfer)
+    pub fn take_http_context(&mut self) -> Option<HttpContext> {
+        self.http_context.take()
     }
 
     pub fn cancellation_token(&self) -> &tokio_util::sync::CancellationToken {
@@ -872,7 +912,6 @@ impl Context {
     pub fn take_bind_task(&mut self) -> Option<BindTask> {
         self.bind_task.take()
     }
-
     /// Set the IO loop function for this context
     pub fn set_io_loop(&mut self, io_loop: IOLoopFn) -> &mut Self {
         self.io_loop = io_loop;
@@ -1049,5 +1088,161 @@ mod tests {
         )));
         let b = (0x01020304u32, 100).into();
         assert_eq!(a, b);
+    }
+
+    #[tokio::test]
+    async fn test_context_http_integration() {
+        let manager = Arc::new(ContextManager::default());
+        let source = "127.0.0.1:1234".parse().unwrap();
+        let ctx_ref = manager.create_context("test".to_string(), source).await;
+
+        let request = crate::HttpRequest {
+            method: crate::protocols::http::HttpMethod::Get,
+            uri: "/api/test".to_string(),
+            version: crate::protocols::http::HttpVersion::Http1_1,
+            headers: vec![("Host".to_string(), "example.com".to_string())],
+        };
+
+        // Test setting HTTP request through Context API
+        {
+            let mut ctx = ctx_ref.write().await;
+            ctx.set_http_request(request.clone());
+        }
+
+        // Test retrieving HTTP request
+        let retrieved = {
+            let ctx = ctx_ref.read().await;
+            ctx.http_request()
+        };
+
+        assert!(retrieved.is_some());
+        let retrieved_req = retrieved.unwrap();
+        assert_eq!(retrieved_req.uri, "/api/test");
+        assert_eq!(
+            retrieved_req.method,
+            crate::protocols::http::HttpMethod::Get
+        );
+
+        // Test HttpContext direct access
+        let ctx = ctx_ref.read().await;
+        let http_ctx = ctx.http().unwrap();
+        assert!(http_ctx.request.is_some());
+
+        // Verify single source of truth - same Arc instance
+        let direct_req = http_ctx.request.as_ref().unwrap();
+        assert!(Arc::ptr_eq(&retrieved_req, direct_req));
+    }
+
+    #[tokio::test]
+    async fn test_context_http_backward_compatibility() {
+        let manager = Arc::new(ContextManager::default());
+        let source = "127.0.0.1:1234".parse().unwrap();
+        let ctx_ref = manager.create_context("test".to_string(), source).await;
+
+        // Test old HttpRequestV1 compatibility
+        let old_request = crate::common::http::HttpRequestV1 {
+            method: "POST".to_string(),
+            resource: "/submit".to_string(),
+            version: "HTTP/1.1".to_string(),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+        };
+
+        {
+            let mut ctx = ctx_ref.write().await;
+            ctx.set_http_request_v1(old_request.clone());
+        }
+
+        // Should be accessible through both old and new APIs
+        let ctx = ctx_ref.read().await;
+
+        // New API
+        let new_req = ctx.http_request().unwrap();
+        assert_eq!(new_req.uri, "/submit");
+        assert_eq!(new_req.method, crate::protocols::http::HttpMethod::Post);
+
+        // Old API compatibility
+        let old_req = ctx.http_request_v1().unwrap();
+        assert_eq!(old_req.resource, "/submit");
+        assert_eq!(old_req.method, "POST");
+    }
+
+    #[tokio::test]
+    async fn test_context_http_properties_integration() {
+        use crate::protocols::http::context_ext::HttpContextExt;
+
+        let manager = Arc::new(ContextManager::default());
+        let source = "127.0.0.1:1234".parse().unwrap();
+        let ctx_ref = manager.create_context("test".to_string(), source).await;
+
+        {
+            let mut ctx = ctx_ref.write().await;
+            ctx.set_http_protocol("h2")
+                .set_http_forward_proxy(true)
+                .set_http_keep_alive(false)
+                .set_http_proxy_auth("user:secret")
+                .set_http_max_requests(50);
+        }
+
+        let ctx = ctx_ref.read().await;
+        assert_eq!(ctx.http_protocol(), Some("h2"));
+        assert!(ctx.http_forward_proxy());
+        assert!(!ctx.http_keep_alive());
+        assert_eq!(ctx.http_proxy_auth(), Some("user:secret"));
+        assert_eq!(ctx.http_max_requests(), Some(50));
+
+        // Verify HttpContext internal structure
+        let http_ctx = ctx.http().unwrap();
+        assert_eq!(http_ctx.protocol.as_deref(), Some("h2"));
+        assert!(http_ctx.forward_proxy);
+        assert!(!http_ctx.keep_alive);
+        assert_eq!(http_ctx.max_requests, Some(50));
+
+        // Verify ProxyAuth structure
+        let auth = http_ctx.proxy_auth.as_ref().unwrap();
+        assert_eq!(auth.username, "user");
+        assert_eq!(auth.password, "secret");
+        assert_eq!(auth.original_credentials, "user:secret");
+    }
+
+    #[test]
+    fn test_context_http_lazy_initialization() {
+        // Test that HttpContext is only created when needed
+        let manager = Arc::new(ContextManager::default());
+        let source = "127.0.0.1:1234".parse().unwrap();
+
+        // This is a synchronous test to avoid async complexity
+        let props = Arc::new(ContextProps {
+            id: 1,
+            source,
+            listener: "test".to_string(),
+            ..Default::default()
+        });
+
+        let mut context = Context {
+            props,
+            client_stream: None,
+            server_stream: None,
+            client_frames: None,
+            server_frames: None,
+            callback: None,
+            manager: manager.clone(),
+            http_context: None,
+            cancellation_token: tokio_util::sync::CancellationToken::new(),
+            bind_task: None,
+            io_loop: crate::copy::copy_bidi,
+        };
+
+        // Initially no HttpContext
+        assert!(context.http().is_none());
+
+        // Accessing http_mut() creates it
+        let _http = context.http_mut();
+        assert!(context.http().is_some());
+
+        // Verify default values
+        let http_ctx = context.http().unwrap();
+        assert!(http_ctx.keep_alive);
+        assert!(!http_ctx.forward_proxy);
+        assert_eq!(http_ctx.protocol(), "http/1.1");
     }
 }

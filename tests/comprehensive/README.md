@@ -1,6 +1,6 @@
-# RedProxy Comprehensive Test Suite
+# Comprehensive Test Suite
 
-Simplified, maintainable test suite for **basic** RedProxy functionality validation.
+Test suites for redproxy-rs functionality validation.
 
 **✅ Current Status: Matrix Implementation Complete (30/30 combinations)**  
 All core listener×connector protocol combinations are now implemented and tested.

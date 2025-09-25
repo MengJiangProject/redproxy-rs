@@ -60,6 +60,19 @@ markers = [
     "destructive: marks tests as destructive/error handling tests",
     "bind: marks tests as SOCKS BIND functionality tests",
     "ipv6: marks tests as IPv6 protocol tests",
+    "httpx: marks tests as HttpX unified HTTP tests",
+    "httpx_listener: marks tests as HttpX listener tests",
+    "httpx_connector: marks tests as HttpX connector tests", 
+    "httpx_integration: marks tests as HttpX integration tests",
+    "http_context: marks tests as HTTP context tests",
+    "compatibility: marks tests as backward compatibility tests",
+    "advanced: marks tests as advanced feature tests",
+    "connection_pooling: marks tests as connection pooling tests",
+    "keepalive: marks tests as keep-alive connection tests",
+    "http_continue: marks tests as HTTP 100-continue tests",
+    "websocket: marks tests as WebSocket upgrade tests",
+    "chunked: marks tests as chunked encoding tests",
+    "auth: marks tests as authentication/authorization tests",
 ]
 
 # Output and reporting

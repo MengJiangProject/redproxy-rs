@@ -11,7 +11,7 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::{mpsc, oneshot};
 
-    use crate::common::http::{HttpRequest, HttpResponse};
+    use crate::common::http::{HttpRequestV1, HttpResponseV1};
     use crate::context::{
         ContextManager, ContextRef, ContextRefOps, TargetAddress, make_buffered_stream,
     };
@@ -59,7 +59,7 @@ mod tests {
             if let Ok((stream, _)) = self.listener.accept().await {
                 let mut buffered_stream = make_buffered_stream(Box::new(stream));
 
-                match HttpRequest::read_from(&mut buffered_stream).await {
+                match HttpRequestV1::read_from(&mut buffered_stream).await {
                     Ok(request) => {
                         let mut body = Vec::new();
                         if let Ok(len) = request.header("Content-Length", "0").parse::<u64>()
@@ -83,7 +83,7 @@ mod tests {
                             let _ = sender.send(received);
                         }
 
-                        let mut http_response = HttpResponse::new(response_code, response_status);
+                        let mut http_response = HttpResponseV1::new(response_code, response_status);
                         for (k, v) in response_headers {
                             http_response = http_response.with_header(k, v);
                         }
@@ -155,7 +155,7 @@ mod tests {
                     // Send error response directly since connection failed
                     let mut ctx_write_guard = ctx_ref.write().await;
                     if let Some(mut client_stream) = ctx_write_guard.take_client_stream() {
-                        let response = HttpResponse::new(503, "Service Unavailable")
+                        let response = HttpResponseV1::new(503, "Service Unavailable")
                             .with_header("Content-Type", "text/plain")
                             .with_header("Connection", "close");
                         let body = format!("Error: Failed to connect to target: {}", e);
