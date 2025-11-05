@@ -48,8 +48,14 @@ services:
     hostname: socks-proxy
     image: serjs/go-socks5-proxy:latest
     networks: [test-net]
+    environment:
+      - REQUIRE_AUTH=false
     healthcheck:
-      test: ["NONE"]
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/1080' || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
 
   # Mock SOCKS server for BIND testing (using Python script from test-runner)
   mock-socks-server:
@@ -106,7 +112,19 @@ services:
       - ./config:/config:rw
       - ./logs:/logs:rw
     networks: [test-net]
-    depends_on: [http-echo, target-server, http-proxy, socks-proxy, quic-proxy, ssh-proxy]
+    depends_on:
+      socks-proxy:
+        condition: service_healthy
+      http-echo:
+        condition: service_started
+      target-server:
+        condition: service_started
+      http-proxy:
+        condition: service_started
+      quic-proxy:
+        condition: service_started
+      ssh-proxy:
+        condition: service_started
     healthcheck:
       test: ["NONE"]
     #   test: ["CMD", "curl", "-f", "--connect-timeout", "3", "--max-time", "5", "http://localhost:9090/api/metrics"]
