@@ -18,7 +18,7 @@ ssh = ["russh"]
 
 [dependencies]
 milu = { path = "milu" }
-tokio = { version = "1.47.1", features = ["full"] }
+tokio = { version = "1.48.0", features = ["full"] }
 tokio-rustls = { version="0.26" }
 rustls = {version = "0.23", features = ["aws_lc_rs"], default-features = false}
 aws-lc-rs = "1.14"
