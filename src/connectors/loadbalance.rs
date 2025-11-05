@@ -43,23 +43,18 @@ pub struct LoadBalanceConnector {
     pub registry: OnceLock<ConnectorRegistry>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum Algorithm {
     Random,
     #[serde(alias = "rr")]
+    #[default]
     RoundRobin,
     #[serde(alias = "hash")]
     HashBy(String),
     // TODO: Those Algorithms are not yet ready as i had to find a good way to collect data.
     // LeastConnection,
     // LeastRTT,
-}
-
-impl Default for Algorithm {
-    fn default() -> Algorithm {
-        Self::RoundRobin
-    }
 }
 
 impl Default for LoadBalanceConnector {
