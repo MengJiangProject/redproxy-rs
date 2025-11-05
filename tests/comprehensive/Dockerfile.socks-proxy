@@ -1,0 +1,14 @@
+# Wrapper for serjs/go-socks5-proxy with healthcheck support
+FROM alpine:latest
+
+# Install busybox-extras for nc command (for healthcheck)
+RUN apk add --no-cache busybox-extras
+
+# Copy the socks5 binary from the original image
+COPY --from=serjs/go-socks5-proxy:latest /socks5 /usr/local/bin/socks5
+
+# Set the working directory
+WORKDIR /home/nonroot
+
+# Use the same entrypoint as the original image
+ENTRYPOINT ["/usr/local/bin/socks5"]
