@@ -29,7 +29,7 @@
           ]);
         };
 
-        defaultPackage = (pkgs.makeRustPlatform {
+        packages.default = ((pkgs.makeRustPlatform {
           rustPlatform = toolchain;
           cargo = toolchain;
           rustc = toolchain;
@@ -37,13 +37,13 @@
           pname = "redproxy-rs";
           version = "0.10.0";
           src = ./.;
-          doChek = false;
+          doCheck = false;
           doInstallCheck = false;
           #cargoSha256 = "sha256-zvG0eT5xH/uk6jrxIDXV37i9nB24kVovwCsKrsBxFsk=";
           cargoLock = {
             lockFile = ./Cargo.lock;
           };
-        };
+        });
       }
     );
 }
