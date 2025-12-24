@@ -75,7 +75,7 @@ winapi = {version = "0.3.9", features = ["winsock2","in6addr","inaddr","ws2def",
 [dev-dependencies]
 tokio-test = "0.4.2"
 test-log = { version = "0.2.19", default-features = false, features = ["trace"] }
-tempfile = "3.23"
+tempfile = "3.24"
 hyper = { version = "1.8", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 
