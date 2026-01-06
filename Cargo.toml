@@ -41,7 +41,7 @@ libc = "0.2"
 hickory-resolver = "0.25"
 chashmap-async = "0.1.0"
 lru = "0.16"
-url = "2.5.7"
+url = "2.5.8"
 base64 = "0.22.1"
 hyper = { version = "1.8", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1", features = ["full"] }
