@@ -1937,7 +1937,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "clap",
- "nix 0.30.1",
+ "nix 0.31.0",
  "nom",
  "nom-language",
  "nom_locate",
@@ -2030,6 +2030,18 @@ name = "nix"
 version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db9f2b173ed7678e98df5c31c60c3d49595cb37e9b58c71e85ec03e88a278fae"
 dependencies = [
  "bitflags",
  "cfg-if",
@@ -2700,7 +2712,7 @@ dependencies = [
  "lru",
  "milu",
  "mime_guess",
- "nix 0.30.1",
+ "nix 0.31.0",
  "pin-project-lite",
  "prometheus",
  "quinn",
