@@ -54,9 +54,8 @@ impl Frame {
 
     // Read from UDP socket, set addr to source
     pub async fn recv_from(&mut self, socket: &UdpSocket) -> IoResult<(usize, SocketAddr)> {
-        let mut buf = BytesMut::zeroed(65536);
-        let (size, source) = socket.recv_from(&mut buf).await?;
-        buf.truncate(size);
+        let mut buf = BytesMut::with_capacity(65536);
+        let (size, source) = socket.recv_buf_from(&mut buf).await?;
         self.body = buf.freeze();
         self.addr = Some(source.into());
         Ok((size, source))
@@ -228,18 +227,14 @@ where
                 self.remaining = Some(BytesMut::with_capacity(65536 * 2));
             }
             let mut buf = self.remaining.take().unwrap();
-            let mut last = buf.split();
-            buf.reserve(65536);
-            unsafe {
-                buf.set_len(65536);
+            if buf.remaining_mut() < 65536 {
+                buf.reserve(65536);
             }
-            let len = self.inner.read(&mut buf).await?;
+            let len = self.inner.read_buf(&mut buf).await?;
             if len == 0 {
                 return Ok(None);
             }
-            buf.truncate(len);
-            last.unsplit(buf);
-            self.remaining = Some(last);
+            self.remaining = Some(buf);
         }
     }
 }
@@ -397,18 +392,14 @@ where
             }
 
             let mut buf = self.remaining.take().unwrap();
-            let mut last = buf.split();
-            buf.reserve(65536);
-            unsafe {
-                buf.set_len(65536);
+            if buf.remaining_mut() < 65536 {
+                buf.reserve(65536);
             }
-            let len = self.inner.read(&mut buf).await?;
+            let len = self.inner.read_buf(&mut buf).await?;
             if len == 0 {
                 return Ok(None);
             }
-            buf.truncate(len);
-            last.unsplit(buf);
-            self.remaining = Some(last);
+            self.remaining = Some(buf);
         }
     }
 }

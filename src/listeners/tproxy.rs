@@ -233,8 +233,12 @@ impl TProxyListener {
         timeouts: &Timeouts,
         queue: &Sender<ContextRef>,
     ) -> Result<()> {
-        let mut buf = BytesMut::zeroed(65536);
+        let mut buf = BytesMut::with_capacity(65536);
+        unsafe {
+            buf.set_len(65536);
+        }
         let (size, src, dst) = listener.recv_msg(&mut buf).await.context("accept")?;
+        buf.truncate(size);
         let src = try_map_v4_addr(src);
         let dst = try_map_v4_addr(dst);
         if match dst.ip() {
@@ -243,7 +247,6 @@ impl TProxyListener {
         } {
             return Ok(());
         }
-        buf.truncate(size);
         let mut buf = Frame::from_body(buf.freeze());
         buf.addr = Some(dst.into());
 
