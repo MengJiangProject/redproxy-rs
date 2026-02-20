@@ -1,4 +1,4 @@
-use redproxy_rs::connectors::ssh::{SshConnectorConfig, ServerKeyVerification};
+use redproxy_rs::connectors::ssh::{ServerKeyVerification, SshConnectorConfig};
 use serde_yaml_ng::Value;
 
 #[test]
@@ -14,9 +14,16 @@ auth:
   password: testpass
 "#;
     let result: Result<SshConnectorConfig, _> = serde_yaml_ng::from_str(yaml);
-    assert!(result.is_err(), "Deserialization should fail when serverKeyVerification is missing");
+    assert!(
+        result.is_err(),
+        "Deserialization should fail when serverKeyVerification is missing"
+    );
     let err = result.err().unwrap().to_string();
-    assert!(err.contains("missing field `serverKeyVerification`"), "Error message should mention missing field: {}", err);
+    assert!(
+        err.contains("missing field `serverKeyVerification`"),
+        "Error message should mention missing field: {}",
+        err
+    );
 }
 
 #[test]
@@ -33,8 +40,12 @@ auth:
 serverKeyVerification:
   type: insecureAcceptAny
 "#;
-    let config: SshConnectorConfig = serde_yaml_ng::from_str(yaml).expect("Deserialization should succeed with explicit insecureAcceptAny");
-    assert!(matches!(config.server_key_verification, ServerKeyVerification::InsecureAcceptAny));
+    let config: SshConnectorConfig = serde_yaml_ng::from_str(yaml)
+        .expect("Deserialization should succeed with explicit insecureAcceptAny");
+    assert!(matches!(
+        config.server_key_verification,
+        ServerKeyVerification::InsecureAcceptAny
+    ));
 }
 
 #[test]
@@ -52,7 +63,8 @@ serverKeyVerification:
   type: fingerprint
   fingerprint: "SHA256:abcd"
 "#;
-    let config: SshConnectorConfig = serde_yaml_ng::from_str(yaml).expect("Deserialization should succeed with explicit fingerprint");
+    let config: SshConnectorConfig = serde_yaml_ng::from_str(yaml)
+        .expect("Deserialization should succeed with explicit fingerprint");
     if let ServerKeyVerification::Fingerprint { fingerprint } = config.server_key_verification {
         assert_eq!(fingerprint, "SHA256:abcd");
     } else {
