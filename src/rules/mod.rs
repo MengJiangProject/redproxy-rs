@@ -120,16 +120,16 @@ impl Rule {
             rules_metrics().execute_time.start_timer()
         };
         let t = Instant::now();
-        let ret = if self.filter.is_none() {
-            true
-        } else {
-            match self.filter.as_ref().unwrap().evaluate(request).await {
+        let ret = if let Some(filter) = self.filter.as_ref() {
+            match filter.evaluate(request).await {
                 Ok(b) => b,
                 Err(e) => {
                     trace!("error evaluating filter: {:?}", e);
                     false
                 }
             }
+        } else {
+            true
         };
         let t = t.elapsed().as_nanos() as u64;
         #[cfg(feature = "metrics")]
