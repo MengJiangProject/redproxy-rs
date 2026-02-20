@@ -148,6 +148,9 @@ class MatrixGenerator:
                     "auth": {
                         "type": "password",
                         "password": "proxy123"
+                    },
+                    "serverKeyVerification": {
+                        "type": "insecureAcceptAny"
                     }
                 }
             ),

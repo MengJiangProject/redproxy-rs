@@ -23,7 +23,6 @@ pub struct SshConnectorConfig {
     pub port: u16,
     pub username: String,
     pub auth: SshAuth,
-    #[serde(default)]
     pub server_key_verification: ServerKeyVerification,
     #[serde(default = "default_connector_timeout")]
     pub inactivity_timeout_secs: u64,
@@ -46,29 +45,11 @@ pub enum SshAuth {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "type")]
-#[derive(Default)]
 pub enum ServerKeyVerification {
     #[serde(rename = "fingerprint")]
     Fingerprint { fingerprint: String },
     #[serde(rename = "insecureAcceptAny")]
-    #[default]
     InsecureAcceptAny,
-}
-
-impl Default for SshConnectorConfig {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            server: String::new(),
-            port: 22,
-            username: String::new(),
-            auth: SshAuth::Password {
-                password: String::new(),
-            },
-            server_key_verification: ServerKeyVerification::default(),
-            inactivity_timeout_secs: default_connector_timeout(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -249,6 +230,8 @@ username: testuser
 auth:
   type: password
   password: testpass
+serverKeyVerification:
+  type: insecureAcceptAny
 "#;
         let value: Value = serde_yaml_ng::from_str(yaml).expect("Failed to parse test YAML");
         let connector = from_value(&value).expect("Failed to deserialize SSH connector config");
@@ -267,6 +250,8 @@ auth:
   type: privateKey
   path: /path/to/key
   passphrase: keypass
+serverKeyVerification:
+  type: insecureAcceptAny
 "#;
         let value: Value = serde_yaml_ng::from_str(yaml).expect("Failed to parse test YAML");
         let connector = from_value(&value).expect("Failed to deserialize SSH connector config");
@@ -284,6 +269,8 @@ username: keyuser
 auth:
   type: privateKey
   path: /path/to/key
+serverKeyVerification:
+  type: insecureAcceptAny
 "#;
         let value: Value = serde_yaml_ng::from_str(yaml).expect("Failed to parse test YAML");
         let _connector = from_value(&value).expect("Failed to deserialize SSH connector config");
@@ -317,6 +304,8 @@ username: testuser
 auth:
   type: password
   password: testpass
+serverKeyVerification:
+  type: insecureAcceptAny
 "#;
         let value: Value = serde_yaml_ng::from_str(yaml).expect("Failed to parse test YAML");
         let result = from_value(&value);
@@ -334,6 +323,8 @@ username: testuser
 auth:
   type: password
   password: testpass
+serverKeyVerification:
+  type: insecureAcceptAny
 "#;
         let value: Value = serde_yaml_ng::from_str(yaml).expect("Failed to parse test YAML");
         let _connector = from_value(&value).expect("Failed to deserialize SSH connector config");
