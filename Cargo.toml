@@ -21,7 +21,7 @@ milu = { path = "milu" }
 tokio = { version = "1.49.0", features = ["full"] }
 tokio-rustls = { version="0.26" }
 rustls = {version = "0.23", features = ["aws_lc_rs"], default-features = false}
-aws-lc-rs = "1.15"
+aws-lc-rs = "1.16"
 tokio-util = {version="0.7", features = ["full"]}
 bytes = "1.11.0"
 rustls-pemfile = "2.2"
