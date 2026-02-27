@@ -49,7 +49,7 @@ h2 = "0.4"
 
 # features quic
 quinn = { version = "0.11", optional = true}
-futures-util = { version = "0.3.24", optional = true}
+futures-util = { version = "0.3.32", optional = true}
 pin-project-lite = { version = "0.2.17", optional = true }
 
 # features metrics
