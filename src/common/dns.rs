@@ -1,14 +1,15 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, SocketAddr},
     sync::Arc,
 };
 
 use anyhow::{Context, Result, anyhow};
 use hickory_resolver::{
     Resolver,
-    config::{NameServerConfig, ResolverConfig, ResolverOpts},
-    name_server::TokioConnectionProvider,
-    proto::xfer::Protocol,
+    config::{
+        CLOUDFLARE, ConnectionConfig, GOOGLE, NameServerConfig, ResolverConfig, ResolverOpts,
+    },
+    net::runtime::TokioRuntimeProvider,
     system_conf::read_system_conf,
 };
 use rand::seq::IteratorRandom;
@@ -20,7 +21,7 @@ pub struct DnsConfig {
     #[serde(default)]
     pub family: AddressFamily,
     #[serde(skip)]
-    resolver: Option<Arc<Resolver<TokioConnectionProvider>>>,
+    resolver: Option<Arc<Resolver<TokioRuntimeProvider>>>,
 }
 
 impl Default for DnsConfig {
@@ -46,9 +47,10 @@ impl DnsConfig {
     pub fn init(&mut self) -> Result<()> {
         let config = Self::parse_servers(&self.servers)?;
         self.resolver = Some(Arc::new(
-            Resolver::builder_with_config(config.0, TokioConnectionProvider::default())
+            Resolver::builder_with_config(config.0, TokioRuntimeProvider::default())
                 .with_options(config.1)
-                .build(),
+                .build()
+                .context("Failed to build DNS resolver")?,
         ));
         Ok(())
     }
@@ -58,54 +60,62 @@ impl DnsConfig {
         if servers == "system" {
             read_system_conf().context("Failed to read system configuration")
         } else if servers == "google" {
-            Ok((ResolverConfig::google(), ResolverOpts::default()))
+            Ok((
+                ResolverConfig::udp_and_tcp(&GOOGLE),
+                ResolverOpts::default(),
+            ))
         } else if servers == "cloudflare" {
-            Ok((ResolverConfig::cloudflare(), ResolverOpts::default()))
+            Ok((
+                ResolverConfig::udp_and_tcp(&CLOUDFLARE),
+                ResolverOpts::default(),
+            ))
         } else {
-            let mut config = ResolverConfig::new();
+            let mut name_servers = Vec::new();
             for server in servers.split(',') {
                 let socket_addr = server
                     .parse::<IpAddr>()
                     .map(|addr| SocketAddr::new(addr, 53))
                     .or_else(|_| server.parse::<SocketAddr>())
                     .with_context(|| format!("Failed to parse DNS server address: {}", server))?;
-                config.add_name_server(NameServerConfig {
-                    socket_addr,
-                    protocol: Protocol::Udp,
-                    tls_dns_name: None,
-                    bind_addr: None,
-                    trust_negative_responses: true,
-                    http_endpoint: None,
-                });
+                let mut connection = ConnectionConfig::udp();
+                connection.port = socket_addr.port();
+                name_servers.push(NameServerConfig::new(
+                    socket_addr.ip(),
+                    true,
+                    vec![connection],
+                ));
             }
-            Ok((config, ResolverOpts::default()))
+            Ok((
+                ResolverConfig::from_parts(None, Vec::new(), name_servers),
+                ResolverOpts::default(),
+            ))
         }
     }
     pub async fn lookup_host(&self, host: &str, port: u16) -> Result<SocketAddr> {
         let resolver = self.resolver.as_ref().unwrap();
         let addr = match self.family {
             AddressFamily::V4Only => resolver
-                .ipv4_lookup(host)
+                .lookup_ip(host)
                 .await
-                .context("ipv4_lookup")?
-                .into_iter()
+                .context("lookup_ip")?
+                .iter()
+                .filter(|a| a.is_ipv4())
                 .choose(&mut rand::rng())
-                .ok_or_else(|| anyhow!("No IPv4 address found for {}", host))
-                .map(|a| IpAddr::V4(Ipv4Addr::from(a.octets())))?,
+                .ok_or_else(|| anyhow!("No IPv4 address found for {}", host))?,
             AddressFamily::V6Only => resolver
-                .ipv6_lookup(host)
+                .lookup_ip(host)
                 .await
-                .context("ipv6_lookup")?
-                .into_iter()
+                .context("lookup_ip")?
+                .iter()
+                .filter(|a| a.is_ipv6())
                 .choose(&mut rand::rng())
-                .ok_or_else(|| anyhow!("No IPv6 address found for {}", host))
-                .map(|a| IpAddr::V6(Ipv6Addr::from(a.octets())))?,
+                .ok_or_else(|| anyhow!("No IPv6 address found for {}", host))?,
             AddressFamily::V4First => {
                 let (v4, v6): (Vec<_>, Vec<_>) = resolver
                     .lookup_ip(host)
                     .await
                     .context("lookup_ip")?
-                    .into_iter()
+                    .iter()
                     .partition(|a| a.is_ipv4());
                 v4.into_iter()
                     .choose(&mut rand::rng())
@@ -117,7 +127,7 @@ impl DnsConfig {
                     .lookup_ip(host)
                     .await
                     .context("lookup_ip")?
-                    .into_iter()
+                    .iter()
                     .partition(|a| a.is_ipv4());
                 v6.into_iter()
                     .choose(&mut rand::rng())

@@ -516,7 +516,7 @@ where
 
 /// Generate a random proxy identifier for Via header (per-instance, not per-request)
 fn generate_proxy_id() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     format!("id-{:08x}", rand::rng().random::<u32>())
 }
 
