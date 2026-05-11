@@ -226,6 +226,36 @@ jobs:
         with:
           files: ${{ steps.artifact.outputs.pkg_path }}
 
+  # Publish the Nix-built binary to Cachix after master or release builds
+  cachix-binary:
+    needs: [build-cross, comprehensive-tests]
+    name: Update Cachix Binary Cache
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || (github.event_name == 'push' && github.ref == 'refs/heads/master')
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            trusted-public-keys = mengjiangproject.cachix.org-1:gUqx3YBHzSCW7SBsVsZq1cTfLJX/8cFrcFO97NM4/Lk= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+            substituters = https://mengjiangproject.cachix.org https://cache.nixos.org/
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@v17
+        with:
+          name: mengjiangproject
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Build Nix package
+        run: nix build .#default --print-build-logs
+
   # Auto-merge dependabot PRs
   dependabot:
     needs: [build-cross, comprehensive-tests]
