@@ -55,7 +55,7 @@ pin-project-lite = { version = "0.2.17", optional = true }
 # features metrics
 axum = { version = "0.8", optional = true }
 tower = { version = "0.5", optional = true }
-tower-http = { version = "0.6", optional = true, features = ["add-extension","fs","set-header","trace"] }
+tower-http = { version = "0.7", optional = true, features = ["add-extension","fs","set-header","trace"] }
 prometheus = {version = "0.14", optional = true, features = ["process"] }
 
 # features ssh
