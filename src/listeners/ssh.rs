@@ -17,9 +17,9 @@ use crate::{
         TargetAddress, make_buffered_stream,
     },
 };
-use russh::Channel;
 use russh::keys::ssh_key;
-use russh::server::{Auth, Msg, Server};
+use russh::server::{Auth, ChannelOpenHandle, Msg, Server};
+use russh::{Channel, ChannelOpenFailure};
 
 fn default_listener_timeout() -> u64 {
     300
@@ -357,8 +357,9 @@ impl russh::server::Handler for SshServer {
         port_to_connect: u32,
         originator_address: &str,
         originator_port: u32,
+        reply: ChannelOpenHandle,
         _session: &mut russh::server::Session,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<(), Self::Error> {
         debug!(
             "SSH direct-tcpip request: {}:{} from {}:{}",
             host_to_connect, port_to_connect, originator_address, originator_port
@@ -412,25 +413,28 @@ impl russh::server::Handler for SshServer {
             host_to_connect, port_to_connect
         );
 
-        // Wait for the connection result before returning to SSH client
+        // Wait for the connection result before replying to the SSH client
         match result_rx.await {
-            Ok(success) => {
-                if success {
-                    debug!(
-                        "SSH tunnel connection successful for {}:{}",
-                        host_to_connect, port_to_connect
-                    );
-                } else {
-                    debug!(
-                        "SSH tunnel connection failed for {}:{}",
-                        host_to_connect, port_to_connect
-                    );
-                }
-                Ok(success)
+            Ok(true) => {
+                debug!(
+                    "SSH tunnel connection successful for {}:{}",
+                    host_to_connect, port_to_connect
+                );
+                reply.accept().await;
+                Ok(())
+            }
+            Ok(false) => {
+                debug!(
+                    "SSH tunnel connection failed for {}:{}",
+                    host_to_connect, port_to_connect
+                );
+                reply.reject(ChannelOpenFailure::ConnectFailed).await;
+                Ok(())
             }
             Err(_) => {
                 warn!("SSH tunnel callback channel closed unexpectedly");
-                Ok(false)
+                reply.reject(ChannelOpenFailure::ConnectFailed).await;
+                Ok(())
             }
         }
     }

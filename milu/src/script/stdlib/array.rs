@@ -116,16 +116,14 @@ function!(IndexOf(array: Type::array_of(Type::Any), search_element: Any, from_in
     let from_idx_i64: i64 = from_index.try_into()?;
 
     let len = arr_val.len();
-    let start_usize: usize;
-
-    if from_idx_i64 >= len as i64 {
+    let start_usize = if from_idx_i64 >= len as i64 {
         return Ok(Value::Integer(-1));
     } else if from_idx_i64 < 0 {
         let effective_start = len as i64 + from_idx_i64;
-        start_usize = if effective_start < 0 { 0 } else { effective_start as usize };
+        if effective_start < 0 { 0 } else { effective_start as usize }
     } else {
-        start_usize = from_idx_i64 as usize;
-    }
+        from_idx_i64 as usize
+    };
 
     if start_usize >= len {
          return Ok(Value::Integer(-1));
@@ -150,16 +148,14 @@ function!(Includes(array: Type::array_of(Type::Any), value_to_find: Any, from_in
     if len == 0 {
         return Ok(Value::Boolean(false));
     }
-    let start_usize: usize;
-
-    if from_idx_i64 >= len as i64 {
+    let start_usize = if from_idx_i64 >= len as i64 {
         return Ok(Value::Boolean(false));
     } else if from_idx_i64 < 0 {
         let effective_start = len as i64 + from_idx_i64;
-        start_usize = if effective_start < 0 { 0 } else { effective_start as usize };
+        if effective_start < 0 { 0 } else { effective_start as usize }
     } else {
-        start_usize = from_idx_i64 as usize;
-    }
+        from_idx_i64 as usize
+    };
 
     for item in arr_val.iter().skip(start_usize) {
         let item_val = item.value_of(ctx.clone()).await?;
