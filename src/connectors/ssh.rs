@@ -203,7 +203,7 @@ impl russh::client::Handler for SshClientHandler {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &ssh_key::PublicKey,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         match &self.verification {
             ServerKeyVerification::InsecureAcceptAny => {
@@ -213,8 +213,9 @@ impl russh::client::Handler for SshClientHandler {
             ServerKeyVerification::Fingerprint {
                 fingerprint: expected,
             } => {
-                let fingerprint =
-                    server_public_key.fingerprint(russh::keys::ssh_key::HashAlg::Sha256);
+                let fingerprint = server_public_key
+                    .public_key()
+                    .fingerprint(ssh_key::HashAlg::Sha256);
                 if fingerprint.to_string() == *expected {
                     Ok(true)
                 } else {
