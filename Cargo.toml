@@ -40,7 +40,7 @@ rand = "0.10"
 libc = "0.2"
 hickory-resolver = "0.26"
 chashmap-async = "0.1.0"
-lru = "0.18"
+lru = "0.19"
 url = "2.5.8"
 base64 = "0.23.0"
 hyper = { version = "1.10", features = ["http1", "http2", "server", "client"] }
