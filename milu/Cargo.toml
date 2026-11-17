@@ -16,6 +16,6 @@ async-trait = "0.1"
 clap = "4.6"
 rustyline = "19"
 rustyline-derive = "0.13"
-nix = {version = "0.31",features = ["fs"]}
+nix = {version = "0.32",features = ["fs"]}
 tokio-test = "0.4"
 tokio = { version = "1", features = ["full"] }
